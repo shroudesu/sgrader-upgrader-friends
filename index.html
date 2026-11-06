@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SGRADER UP | Демо-игра</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ================= ЭКРАН АВТОРИЗАЦИИ ================= -->
+<div class="auth-screen" id="authScreen">
+  <div class="auth-box">
+    <div class="auth-logo">SGRADER<span></span></div>
+    <h1 class="auth-title" id="authTitle">Вход</h1>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-mode="login">Вход</button>
+      <button class="auth-tab" data-mode="register">Регистрация</button>
+    </div>
+
+    <form class="auth-form" id="authForm" autocomplete="off">
+      <input type="text" id="authUsername" class="auth-input" placeholder="Логин" maxlength="16" autocomplete="username">
+      <input type="password" id="authPassword" class="auth-input" placeholder="Пароль (от 4 символов)" autocomplete="current-password">
+      <input type="password" id="authPasswordConfirm" class="auth-input" placeholder="Повторите пароль" style="display:none" autocomplete="new-password">
+      <label class="auth-promo-wrap" id="authPromoWrap" style="display:none">
+        Промокод при регистрации
+        <input type="text" id="authPromo" class="auth-input" placeholder="Например, SGRADER" maxlength="24" autocomplete="off">
+      </label>
+      <div class="auth-error" id="authError"></div>
+      <button type="submit" class="auth-btn" id="authSubmit">Войти</button>
+    </form>
+
+    <div class="auth-hint">Демо-игра: баланс — виртуальные фантики, не деньги. Аккаунты хранятся только в этом браузере. Первый созданный аккаунт получает локальную роль администратора.</div>
+  </div>
+</div>
+
+<!-- ================= ОСНОВНОЙ САЙТ ================= -->
+<div class="app" id="app" style="display:none">
+
+<header class="header">
+  <div class="logo">SGRADER<span>UP</span></div>
+
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="upgrade">Апгрейд</button>
+    <button class="nav-tab" data-tab="profile">Профиль</button>
+    <button class="nav-tab" data-tab="admin" id="adminNav" style="display:none">Админка</button>
+  </nav>
+
+  <div class="volume-control" title="Громкость звука победы">
+    <span class="volume-icon" id="volumeIcon">🔊</span>
+    <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="70">
+    <span class="volume-value" id="volumeValue">70%</span>
+  </div>
+
+  <div class="user-info">
+    <span class="user-name" id="userName">—</span>
+    <button class="btn-logout" id="logoutBtn" title="Выйти">Выйти</button>
+  </div>
+
+  <div class="balance">
+    <span class="balance-label">Фантики</span>
+    <span class="balance-value" id="balance">0.00</span>
+  </div>
+  <div class="player-id" id="playerId">ID: —</div>
+</header>
+
+<main class="container">
+
+  <!-- АПГРЕЙД -->
+  <section class="tab-page active" id="page-upgrade">
+    <h1 class="title">Апгрейд скинов</h1>
+
+    <div class="layout">
+      <aside class="col">
+        <div class="panel">
+          <h2 class="panel-title">Каталог скинов</h2>
+          <input type="text" id="invSearch" class="search-input" placeholder="Поиск: ak redline ft, ★ karambit, awp asiimov...">
+          <div class="price-filter">
+            <input type="number" id="invPriceFrom" class="price-input" placeholder="от фантиков" min="0" step="any">
+            <span class="price-sep">—</span>
+            <input type="number" id="invPriceTo" class="price-input" placeholder="до фантиков" min="0" step="any">
+          </div>
+          <div class="filter-row">
+            <select id="invSort" class="sort-select">
+              <option value="price-asc">Цена ↑</option>
+              <option value="price-desc">Цена ↓</option>
+              <option value="name-asc">Имя A→Z</option>
+              <option value="name-desc">Имя Z→A</option>
+            </select>
+            <span class="filter-count" id="invCount">—</span>
+          </div>
+          <div class="quick-filters">
+            <button class="qf-btn active" data-qf="all">Все</button>
+            <button class="qf-btn" data-qf="knives">Ножи</button>
+            <button class="qf-btn" data-qf="gloves">Перчатки</button>
+            <button class="qf-btn" data-qf="top">Топ-дорогие</button>
+          </div>
+          <div class="loading" id="invLoading">Загрузка каталога...</div>
+          <div class="grid" id="inventoryGrid"></div>
+        </div>
+      </aside>
+
+      <section class="col-center">
+        <div class="wheel-wrap">
+          <div class="wheel" id="wheel">
+            <canvas id="wheelCanvas" width="340" height="340"></canvas>
+          </div>
+          <div class="pointer-rotor" id="pointerRotor">
+            <div class="pointer-arrow"></div>
+          </div>
+          <div class="wheel-center">
+            <span class="wheel-chance" id="chanceValue">—</span>
+            <span class="wheel-sub">шанс</span>
+          </div>
+        </div>
+
+        <div class="multiplier-row">Множитель: <span id="multiplier">—</span></div>
+        <div class="warning" id="warning"></div>
+
+        <button class="btn-upgrade" id="upgradeBtn" disabled>
+          <span class="btn-text">КРУТИТЬ</span>
+        </button>
+
+        <div class="result" id="result"></div>
+
+        <div class="slots-row">
+          <div class="slot">
+            <div class="slot-label">Ставка</div>
+            <div class="slot-card" id="betSlot"><div class="slot-empty">—</div></div>
+          </div>
+          <div class="slot-arrow">→</div>
+          <div class="slot">
+            <div class="slot-label">Цель</div>
+            <div class="slot-card" id="targetSlot"><div class="slot-empty">—</div></div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="col">
+        <div class="panel">
+          <h2 class="panel-title">Желаемый скин</h2>
+          <input type="text" id="targetSearch" class="search-input" placeholder="Поиск: ak redline ft, ★ karambit, awp asiimov...">
+          <div class="price-filter">
+            <input type="number" id="targetPriceFrom" class="price-input" placeholder="от фантиков" min="0" step="any">
+            <span class="price-sep">—</span>
+            <input type="number" id="targetPriceTo" class="price-input" placeholder="до фантиков" min="0" step="any">
+          </div>
+          <div class="filter-row">
+            <select id="targetSort" class="sort-select">
+              <option value="price-asc">Цена ↑</option>
+              <option value="price-desc">Цена ↓</option>
+              <option value="name-asc">Имя A→Z</option>
+              <option value="name-desc">Имя Z→A</option>
+            </select>
+            <span class="filter-count" id="targetCount">—</span>
+          </div>
+          <div class="quick-filters">
+            <button class="qf-btn active" data-tqf="all">Все</button>
+            <button class="qf-btn" data-tqf="knives">Ножи</button>
+            <button class="qf-btn" data-tqf="gloves">Перчатки</button>
+            <button class="qf-btn" data-tqf="top">Топ-дорогие</button>
+          </div>
+          <div class="loading" id="targetLoading">Загрузка каталога...</div>
+          <div class="grid small" id="targetGrid"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title-row">
+            <h2 class="panel-title" style="margin-bottom:0">Мой инвентарь</h2>
+            <span class="inv-count" id="myInvCount">0</span>
+          </div>
+          <div class="grid small" id="myInventory"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ПРОФИЛЬ -->
+  <section class="tab-page" id="page-profile">
+    <h1 class="title">Профиль</h1>
+
+    <div class="profile-stats">
+      <div class="stat-card">
+        <div class="stat-label">Баланс</div>
+        <div class="stat-value" id="profBalance">0.00 фант.</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Скинов в инвентаре</div>
+        <div class="stat-value" id="profCount">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Стоимость инвентаря</div>
+        <div class="stat-value" id="profInvValue">0.00 фант.</div>
+      </div>
+      <div class="stat-card best-drop">
+        <div class="stat-label">Лучший дроп</div>
+        <div class="best-drop-content" id="profBestDrop">
+          <div class="best-drop-empty">Пока нет</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel profile-inventory-panel">
+      <div class="panel-title-row">
+        <h2 class="panel-title" style="margin-bottom:0">Мой инвентарь</h2>
+        <div class="profile-actions">
+          <button class="btn-small" id="sellAllBtn" title="Обменять все скины на виртуальные фантики">Обменять всё</button>
+          <button class="btn-small danger" id="resetBtn" title="Сбросить прогресс">Сброс</button>
+        </div>
+      </div>
+      <div class="grid profile-grid" id="profileInventory"></div>
+    </div>
+
+    <div class="panel credit-panel">
+      <h2 class="panel-title">Виртуальные фантики</h2>
+      <p>В этой демо-версии нет оплаты, вывода денег или денежных призов. Чтобы попросить администратора начислить игровые фантики, напишите в Telegram и укажите свой ID игрока.</p>
+      <p id="promoStatus"></p>
+      <a class="btn-small telegram-link" id="telegramLink" href="https://t.me/perkasanya" target="_blank" rel="noopener noreferrer">Связаться с администратором в Telegram</a>
+    </div>
+  </section>
+
+  <!-- ЛОКАЛЬНАЯ ДЕМО-АДМИНКА -->
+  <section class="tab-page" id="page-admin">
+    <h1 class="title">Локальная админ-панель</h1>
+    <div class="panel admin-panel">
+      <p class="admin-notice">Только для этой демо-копии: пользователи и начисления хранятся в localStorage текущего браузера и не синхронизируются между устройствами. Фантики не имеют денежной стоимости.</p>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Фантики</th><th>Начислить фантики</th></tr></thead>
+          <tbody id="adminUsers"></tbody>
+        </table>
+      </div>
+      <div class="auth-error admin-feedback" id="adminFeedback" role="status"></div>
+    </div>
+  </section>
+
+  <!-- Модалки -->
+  <div class="modal-overlay" id="buyModal">
+    <div class="modal">
+      <h3 class="modal-title">Купить скин?</h3>
+      <div class="modal-item" id="modalItem"></div>
+      <div class="modal-price" id="modalPrice"></div>
+      <div class="modal-actions">
+        <button class="btn-modal btn-cancel" id="modalCancel">Отмена</button>
+        <button class="btn-modal btn-confirm" id="modalConfirm">Купить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="sellModal">
+    <div class="modal">
+      <h3 class="modal-title">Обменять скин на фантики?</h3>
+      <div class="modal-item" id="sellModalItem"></div>
+      <div class="sell-info">
+        <div class="sell-row"><span>Цена скина:</span><span id="sellBasePrice">0 фант.</span></div>
+        <div class="sell-row"><span id="sellFeeLabel">Комиссия (10%):</span><span id="sellFee" class="text-dim">−0 фант.</span></div>
+        <div class="sell-row total"><span>Зачислится на баланс:</span><span id="sellReceive">0 фант.</span></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-modal btn-cancel" id="sellCancel">Отмена</button>
+        <button class="btn-modal btn-confirm" id="sellConfirm">Обменять</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal">
+      <h3 class="modal-title" id="confirmTitle">Подтвердите</h3>
+      <p class="confirm-text" id="confirmText"></p>
+      <div class="modal-actions">
+        <button class="btn-modal btn-cancel" id="confirmCancel">Отмена</button>
+        <button class="btn-modal btn-confirm" id="confirmOk">Да</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer class="footer">
+  Демо-игра. Все балансы и цены условные, внутриигровые фантики нельзя купить, вывести или обменять на деньги.
+</footer>
+
+</div><!-- /.app -->
+
+<audio id="winSound" src="win.mp3" preload="auto"></audio>
+
+<script src="script.js"></script>
+</body>
+</html>
