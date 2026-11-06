@@ -128,8 +128,18 @@ function calcPrice(item, catalogType = 'skin') {
     music_kits: { 'High Grade': 300 },
     stickers: { Default: 10, 'High Grade': 40, Remarkable: 250, Exotic: 1500, Extraordinary: 8000, Contraband: 80000 },
   };
+  let price;
   if (catalogType !== 'skin') {
-    return demoItemBasePrices[catalogType]?.[rarityName] || 40;
+    price = demoItemBasePrices[catalogType]?.[rarityName] || 40;
+    if (catalogType === 'stickers') {
+      const stickerName = String(item.name || '');
+      const effect = String(item.effect || '');
+      if (/katowice\s*2014/i.test(stickerName)) price *= /holo/i.test(effect + stickerName) ? 1200 : 40;
+      else if (/cologne\s*2014|katowice\s*2015/i.test(stickerName)) price *= /holo/i.test(effect + stickerName) ? 80 : 10;
+      else if (/holo|gold/i.test(effect + stickerName)) price *= 2.5;
+      else if (/foil/i.test(effect + stickerName)) price *= 1.5;
+    }
+    return Math.round(price * stableCatalogFactor(item.id || item.name));
   }
 
   const wearName = item.wear?.name || 'Field-Tested';
@@ -157,10 +167,10 @@ function calcPrice(item, catalogType = 'skin') {
       'Battle-Scarred': 0.7,
     }[wearName] || 1;
 
-    let price = base * knifeWear * patternMult;
-    if (item.stattrak) price *= 1.5;
-    price *= 0.85 + Math.random() * 0.3;
-    return Math.round(price);
+    price = base * knifeWear * patternMult;
+    if (item.stattrak) price *= 1.45;
+    if (item.souvenir) price *= 1.2;
+    return Math.round(price * stableCatalogFactor(item.id || item.name));
   }
 
   // ---- ПЕРЧАТКИ ----
@@ -173,10 +183,9 @@ function calcPrice(item, catalogType = 'skin') {
     for (const [pat, mult] of Object.entries(PATTERN_MULT)) {
       if (skinName.includes(pat) || item.name.includes(pat)) { patternMult = mult; break; }
     }
-    let price = base * wearMult * patternMult;
-    if (item.stattrak) price *= 1.4;
-    price *= 0.85 + Math.random() * 0.3;
-    return Math.round(price);
+    price = base * wearMult * patternMult;
+    if (item.stattrak) price *= 1.35;
+    return Math.round(price * stableCatalogFactor(item.id || item.name));
   }
 
   // ---- ОБЫЧНОЕ ОРУЖИЕ ----
@@ -194,15 +203,20 @@ function calcPrice(item, catalogType = 'skin') {
   }
   base *= pMult;
 
-  let price = base * wearMult;
+  price = base * wearMult;
   if (item.stattrak) price *= 1.4;
+  if (item.souvenir) price *= 1.25;
+  return Math.max(1, Math.round(price * stableCatalogFactor(item.id || item.name)));
+}
 
-  if (Math.random() < 0.05 && rarityName === 'Covert') {
-    price *= 2 + Math.random() * 3;
+function stableCatalogFactor(value) {
+  const text = String(value || 'cs2-item');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
   }
-
-  price *= 0.8 + Math.random() * 0.4;
-  return Math.max(1, Math.round(price));
+  return 0.94 + ((hash >>> 0) % 1201) / 10000;
 }
 
 const SELL_COMMISSION = 0.10;
@@ -213,7 +227,9 @@ const SELL_COMMISSION = 0.10;
 const VOLUME_KEY = 'cs2up_volume';
 const SPIN_STRENGTH_KEY = 'cs2up_spin_strength';
 const SPIN_MODE_KEY = 'cs2up_spin_mode';
+const CURRENCY_KEY = 'cs2up_currency';
 const TELEGRAM_URL = 'https://t.me/perkasanya';
+const RUB_PER_USD = 90;
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
 const supabaseUrl = String(window.SUPABASE_URL || '');
@@ -243,6 +259,20 @@ const authSubmit = document.getElementById('authSubmit');
 const userNameEl = document.getElementById('userName');
 const logoutBtn = document.getElementById('logoutBtn');
 const playerIdEl = document.getElementById('playerId');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsModal = document.getElementById('settingsModal');
+const settingsClose = document.getElementById('settingsClose');
+const currencySelect = document.getElementById('currencySelect');
+const passwordChangeForm = document.getElementById('passwordChangeForm');
+const settingsFeedback = document.getElementById('settingsFeedback');
+const avatarFile = document.getElementById('avatarFile');
+const headerAvatarImage = document.getElementById('headerAvatarImage');
+const headerAvatarFallback = document.getElementById('headerAvatarFallback');
+const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
+const catalogToggle = document.getElementById('catalogToggle');
+const catalogTools = document.getElementById('catalogTools');
+const upgradeInventoryPanel = document.getElementById('upgradeInventoryPanel');
+const upgradeInventoryTitle = document.getElementById('upgradeInventoryTitle');
 const adminNav = document.getElementById('adminNav');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
@@ -257,6 +287,7 @@ const betSelectionStatus = document.getElementById('betSelectionStatus');
 const spinStrengthSlider = document.getElementById('spinStrength');
 const spinStrengthValue = document.getElementById('spinStrengthValue');
 const spinModeButtons = document.querySelectorAll('.spin-mode');
+const targetShortcutButtons = document.querySelectorAll('.target-shortcut');
 const battleInventory = document.getElementById('battleInventory');
 const battleSelectionStatus = document.getElementById('battleSelectionStatus');
 const createBattleBtn = document.getElementById('createBattleBtn');
@@ -339,6 +370,10 @@ const volumeIcon = $('volumeIcon');
 // СОСТОЯНИЕ
 // ============================================================
 let currentUser = null;
+let displayCurrency = (() => {
+  try { return localStorage.getItem(CURRENCY_KEY) === 'USD' ? 'USD' : 'RUB'; } catch (e) { return 'RUB'; }
+})();
+let catalogMode = false;
 let stateSaveQueue = Promise.resolve();
 let state = {
   balance: 0,
@@ -387,7 +422,33 @@ function escapeHtml(value) {
 }
 
 function fmt(n) {
-  return Number(n || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+  const rubles = Number(n || 0);
+  if (displayCurrency === 'USD') return '$' + (rubles / RUB_PER_USD).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return rubles.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+}
+
+function amountToRub(amount) {
+  const numeric = Number(amount || 0);
+  return Math.round((displayCurrency === 'USD' ? numeric * RUB_PER_USD : numeric) * 100) / 100;
+}
+
+function renderCurrencyLabels() {
+  const symbol = displayCurrency === 'USD' ? '$' : '₽';
+  document.querySelectorAll('[data-currency-symbol]').forEach(element => { element.textContent = symbol; });
+  document.querySelectorAll('[data-price-placeholder]').forEach(element => {
+    element.placeholder = `${element.dataset.pricePlaceholder} ${symbol}`;
+  });
+}
+
+function formatChance(percent) {
+  if (percent < 0.1) return `${percent.toFixed(2).padStart(5, '0')}%`;
+  return `${percent.toFixed(1).padStart(5, '0')}%`;
+}
+
+function catalogEffect(item) {
+  const directEffect = typeof item.effect === 'string' ? item.effect : item.effect?.name;
+  if (directEffect) return directEffect;
+  return String(item.name || '').match(/\((Holo|Foil|Gold|Glitter|Lenticular|Embroidered|Patch|Paper)\)/i)?.[1] || null;
 }
 
 function makeInstanceId() {
@@ -537,11 +598,14 @@ async function loginAs(authUser) {
   appEl.style.display = 'block';
   userNameEl.textContent = currentUser.username;
   playerIdEl.textContent = `ID игрока: ${currentUser.playerId}`;
+  renderHeaderAvatar();
+  currencySelect.value = displayCurrency;
+  renderCurrencyLabels();
   adminNav.style.display = currentUser.role === 'admin' ? '' : 'none';
   telegramLink.href = TELEGRAM_URL;
   topupFeedback.textContent = '';
   promoStatus.textContent = currentUser.promoCode === PROMO_CODE
-    ? `Промокод ${PROMO_CODE} активен: +10% к каждому виртуальному начислению администратора.`
+    ? `Промокод ${PROMO_CODE} активен: +10% к начислению.`
     : 'Промокод SGRADER можно применить только при регистрации.';
 
   updateBalanceUI();
@@ -557,20 +621,21 @@ topupRequestForm.addEventListener('submit', event => {
   event.preventDefault();
   if (!currentUser) return;
 
-  const amount = Number(topupAmountInput.value);
-  if (!Number.isInteger(amount) || amount < 1 || amount > 100000000) {
-    topupFeedback.textContent = 'Укажи сумму от 1 до 100 000 000 демо-рублей.';
+  const enteredAmount = Number(topupAmountInput.value);
+  const amount = amountToRub(enteredAmount);
+  if (!Number.isFinite(enteredAmount) || enteredAmount <= 0 || amount > 100000000) {
+    topupFeedback.textContent = 'Укажи допустимую сумму.';
     return;
   }
 
   const method = topupMethodSelect.value;
   const promoText = currentUser.promoCode === PROMO_CODE ? ` Промокод: ${PROMO_CODE} (+10%).` : '';
   const message = [
-    'Демо-заявка на внутриигровые рубли (оплата не проводилась).',
+    'Заявка на пополнение игрового баланса. Платёж не проводится.',
     `Игрок: ${currentUser.username}`,
     `ID игрока: ${currentUser.playerId}`,
-    `Запрошено: ${amount} демо-рублей`,
-    `Условный способ: ${method}.${promoText}`
+    `Запрошено: ${fmt(amount)}`,
+    `Способ: ${method}.${promoText}`
   ].join('\n');
   const url = `${TELEGRAM_URL}?text=${encodeURIComponent(message)}`;
   window.open(url, '_blank', 'noopener,noreferrer');
@@ -580,6 +645,7 @@ topupRequestForm.addEventListener('submit', event => {
 logoutBtn.addEventListener('click', async () => {
   await stateSaveQueue;
   if (supabaseClient) await supabaseClient.auth.signOut();
+  closeSettings();
   currentUser = null;
   state = { balance: 0, inventory: [], betId: null, betItemIds: [], targetName: null, bestDrop: null };
   betData = null;
@@ -590,6 +656,119 @@ logoutBtn.addEventListener('click', async () => {
   authError.textContent = '';
   setAuthMode('login');
   showAuthScreen();
+});
+
+function renderHeaderAvatar() {
+  const avatar = state.avatar || '';
+  headerAvatarImage.src = avatar;
+  headerAvatarImage.hidden = !avatar;
+  headerAvatarFallback.hidden = !!avatar;
+  settingsAvatarPreview.src = avatar || '';
+  settingsAvatarPreview.classList.toggle('has-avatar', !!avatar);
+}
+
+function openSettings() {
+  if (!currentUser) return;
+  settingsFeedback.textContent = '';
+  currencySelect.value = displayCurrency;
+  renderHeaderAvatar();
+  settingsModal.classList.add('show');
+  settingsModal.setAttribute('aria-hidden', 'false');
+}
+
+function closeSettings() {
+  settingsModal.classList.remove('show');
+  settingsModal.setAttribute('aria-hidden', 'true');
+  settingsFeedback.textContent = '';
+  passwordChangeForm.reset();
+}
+
+settingsBtn.addEventListener('click', openSettings);
+document.getElementById('headerAvatarButton').addEventListener('click', openSettings);
+settingsClose.addEventListener('click', closeSettings);
+settingsModal.addEventListener('click', event => { if (event.target === settingsModal) closeSettings(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && settingsModal.classList.contains('show')) closeSettings(); });
+
+currencySelect.addEventListener('change', () => {
+  displayCurrency = currencySelect.value === 'USD' ? 'USD' : 'RUB';
+  try { localStorage.setItem(CURRENCY_KEY, displayCurrency); } catch (e) {}
+  renderCurrencyLabels();
+  updateBalanceUI();
+  if ($('page-profile').classList.contains('active')) renderProfile();
+  if ($('page-admin').classList.contains('active')) void renderAdminUsers();
+  renderInventory(); renderTargets(); renderMyInventory();
+  updateChance();
+});
+
+async function resizeAvatarFile(file) {
+  if (!file || !/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error('Выбери PNG, JPEG или WebP изображение.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('Размер изображения должен быть не больше 5 МБ.');
+  const source = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  const size = 192;
+  const scale = Math.min(1, size / Math.max(source.width, source.height));
+  canvas.width = Math.max(1, Math.round(source.width * scale));
+  canvas.height = Math.max(1, Math.round(source.height * scale));
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+  source.close?.();
+  return canvas.toDataURL('image/jpeg', 0.82);
+}
+
+avatarFile.addEventListener('change', async () => {
+  const file = avatarFile.files?.[0];
+  if (!file || !currentUser) return;
+  settingsFeedback.textContent = 'Обрабатываю изображение…';
+  try {
+    state.avatar = await resizeAvatarFile(file);
+    await saveState();
+    renderHeaderAvatar();
+    settingsFeedback.textContent = 'Аватар обновлён.';
+  } catch (error) {
+    settingsFeedback.textContent = error.message || 'Не удалось загрузить изображение.';
+  } finally {
+    avatarFile.value = '';
+  }
+});
+
+passwordChangeForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const oldPassword = document.getElementById('oldPassword').value;
+  const newPassword = document.getElementById('newPassword').value;
+  const confirmation = document.getElementById('newPasswordConfirm').value;
+  if (!currentUser || !supabaseClient) return;
+  if (newPassword.length < 6) { settingsFeedback.textContent = 'Новый пароль должен содержать не меньше 6 символов.'; return; }
+  if (newPassword !== confirmation) { settingsFeedback.textContent = 'Новые пароли не совпадают.'; return; }
+  const submit = passwordChangeForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  settingsFeedback.textContent = 'Проверяю старый пароль…';
+  try {
+    const email = usernameAuthEmail(currentUser.username);
+    const { error: verifyError } = await supabaseClient.auth.signInWithPassword({ email, password: oldPassword });
+    if (verifyError) throw new Error('Старый пароль неверный.');
+    const { error: updateError } = await supabaseClient.auth.updateUser({ password: newPassword });
+    if (updateError) throw updateError;
+    settingsFeedback.textContent = 'Пароль изменён.';
+    passwordChangeForm.reset();
+  } catch (error) {
+    settingsFeedback.textContent = error.message || 'Не удалось изменить пароль.';
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+userNameEl.addEventListener('click', () => activateTab('profile'));
+
+catalogToggle.addEventListener('click', () => {
+  catalogMode = !catalogMode;
+  upgradeInventoryPanel.classList.toggle('catalog-mode', catalogMode);
+  catalogTools.hidden = !catalogMode;
+  inventoryGrid.hidden = !catalogMode;
+  myInventory.hidden = catalogMode;
+  upgradeInventoryTitle.textContent = catalogMode ? 'Каталог предметов' : 'Мой инвентарь';
+  catalogToggle.setAttribute('aria-label', catalogMode ? 'Вернуться в инвентарь' : 'Открыть каталог');
+  catalogToggle.title = catalogMode ? 'Вернуться в инвентарь' : 'Открыть каталог';
+  catalogToggle.querySelector('iconify-icon').setAttribute('icon', catalogMode ? 'mdi:package-variant-closed' : 'mdi:cart-outline');
+  renderInventory(); renderMyInventory();
 });
 
 // ============================================================
@@ -648,6 +827,15 @@ function migrateCatalogIdsInInventory() {
     if (currentIds.has(String(item.catalogId))) continue;
     const key = catalogNameKey(item.name);
     let replacementId = exactIdsByName.get(key);
+    if (!replacementId && key) {
+      const candidates = SKINS_CATALOG.filter(candidate => {
+        if (candidate.catalogType !== 'skin' || candidate.stattrak || candidate.souvenir) return false;
+        const candidateKey = catalogNameKey(candidate.name);
+        return candidateKey === `${key} field tested` || candidateKey === `${key} minimal wear` || candidateKey === key;
+      });
+      const fieldTested = candidates.find(candidate => candidate.wear === 'Field-Tested');
+      replacementId = fieldTested?.id || candidates[0]?.id;
+    }
     if (!replacementId && key && !String(item.name || '').includes('|')) {
       const candidates = idsByPrefix.get(key);
       if (candidates?.size === 1) replacementId = [...candidates][0];
@@ -767,21 +955,21 @@ document.addEventListener('click', () => {
 // НАВИГАЦИЯ
 // ============================================================
 document.querySelectorAll('.nav-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    const page = tab.dataset.tab;
-    $('page-' + page).classList.add('active');
-    if (page === 'profile') renderProfile();
-    if (page === 'admin') renderAdminUsers();
-    if (page === 'battles') {
-      renderBattleInventory();
-      drawBattleWheel();
-      void loadBattles();
-    }
-  });
+  tab.addEventListener('click', () => activateTab(tab.dataset.tab));
 });
+
+function activateTab(page) {
+  const tab = document.querySelector(`.nav-tab[data-tab="${page}"]`);
+  const panel = $(`page-${page}`);
+  if (!tab || !panel) return;
+  document.querySelectorAll('.nav-tab').forEach(element => element.classList.remove('active'));
+  document.querySelectorAll('.tab-page').forEach(element => element.classList.remove('active'));
+  tab.classList.add('active');
+  panel.classList.add('active');
+  if (page === 'profile') renderProfile();
+  if (page === 'admin') void renderAdminUsers();
+  if (page === 'battles') { renderBattleInventory(); drawBattleWheel(); void loadBattles(); }
+}
 
 // ============================================================
 // БАЛАНС
@@ -852,11 +1040,11 @@ async function renderAdminUsers() {
       <td>${escapeHtml(promo)}</td>
       <td>${fmt(Number(user.balance))}</td>
       <td><form class="admin-grant-form" data-player-id="${escapeHtml(user.player_id)}">
-        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сколько демо-рублей начислить">
+        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сумма начисления">
         <button class="btn-small" type="submit">Начислить</button>
       </form></td>
       <td><form class="admin-debit-form" data-player-id="${escapeHtml(user.player_id)}">
-        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сколько демо-рублей снять">
+        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сумма списания">
         <button class="btn-small danger" type="submit">Снять</button>
       </form></td>
     </tr>`;
@@ -870,9 +1058,9 @@ adminUsersEl.addEventListener('submit', async event => {
   if (!currentUser || currentUser.role !== 'admin') return;
   const debit = form.matches('.admin-debit-form');
   const amountInput = form.querySelector('.admin-amount');
-  const amount = Number(amountInput.value);
+  const amount = amountToRub(amountInput.value);
   if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) {
-    adminFeedback.textContent = `Укажите сумму от 0,01 до 100 000 000 демо-рублей для ${debit ? 'списания' : 'начисления'}.`;
+    adminFeedback.textContent = `Укажите допустимую сумму для ${debit ? 'списания' : 'начисления'}.`;
     adminFeedback.classList.add('show');
     return;
   }
@@ -888,7 +1076,7 @@ adminUsersEl.addEventListener('submit', async event => {
     const isInsufficient = String(error.message || '').toLowerCase().includes('insufficient balance');
     adminFeedback.textContent = isInsufficient
       ? 'Нельзя снять больше, чем есть на балансе игрока.'
-      : `Не удалось ${debit ? 'снять' : 'начислить'} демо-рубли. Проверьте права администратора и соединение.`;
+      : `Не удалось ${debit ? 'снять' : 'начислить'} баланс. Проверьте права администратора и соединение.`;
     adminFeedback.classList.add('show');
     console.error('Admin grant failed:', error);
     return;
@@ -909,8 +1097,7 @@ adminUsersEl.addEventListener('submit', async event => {
 // ============================================================
 function calculateChance(betPrice, targetPrice) {
   if (!betPrice || !targetPrice || targetPrice <= 0) return 0;
-  const raw = (betPrice / targetPrice) * 100;
-  return Math.min(90, Math.max(1, Math.round(raw)));
+  return Math.min(100, (betPrice / targetPrice) * 100);
 }
 
 // ============================================================
@@ -920,24 +1107,15 @@ function drawWheel(chancePercent) {
   const size = canvas.width;
   const r = size / 2;
   const cx = r, cy = r;
-  const arc = (Math.PI * 2) / SECTOR_COUNT;
-  const winSectors = Math.max(1, Math.round((chancePercent / 100) * SECTOR_COUNT));
-
   ctx.clearRect(0, 0, size, size);
-  for (let i = 0; i < SECTOR_COUNT; i++) {
-    const start = i * arc - Math.PI / 2;
-    const end = start + arc;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.arc(cx, cy, r - 4, start, end);
-    ctx.closePath();
-    const isWin = i < winSectors;
-    ctx.fillStyle = isWin ? '#ffffff' : (i % 2 === 0 ? '#1a1a1a' : '#111111');
-    ctx.fill();
-    ctx.strokeStyle = '#080808';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
+  const start = -Math.PI / 2;
+  const winAngle = Math.PI * 2 * Math.max(0, Math.min(100, chancePercent)) / 100;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r - 4, start, start + winAngle); ctx.closePath();
+  ctx.fillStyle = '#ffffff'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r - 4, start + winAngle, start + Math.PI * 2); ctx.closePath();
+  ctx.fillStyle = '#171717'; ctx.fill();
+  ctx.strokeStyle = '#080808'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, r - 9, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1; ctx.stroke();
 }
 drawWheel(0);
 
@@ -947,7 +1125,7 @@ drawWheel(0);
 async function loadSkins() {
   try {
     const catalogFiles = [
-      { file: 'skins.json', type: 'skin', category: null },
+      { file: 'skins_variants.json', type: 'skin', category: null },
       { file: 'stickers.json', type: 'stickers', category: 'Stickers' },
       { file: 'agents.json', type: 'agents', category: 'Agents' },
       { file: 'graffiti.json', type: 'graffiti', category: 'Graffiti' },
@@ -971,9 +1149,15 @@ async function loadSkins() {
       catalogType: entry.type,
       weapon: item.weapon?.name,
       wear: item.wear?.name,
+      floatMin: item.float_min == null ? null : Number(item.float_min),
+      floatMax: item.float_max == null ? null : Number(item.float_max),
       stattrak: item.stattrak,
       marketHashName: item.market_hash_name || item.marketHashName,
       sourceItemId: item.id || String(idx),
+      baseSkinId: item.skin_id || null,
+      pattern: item.pattern || null,
+      souvenir: item.souvenir === true,
+      effect: catalogEffect(item),
       releaseDate: item.release_date || null,
       releaseYear: item.release_year ? String(item.release_year) : null,
       collectionNames: Array.isArray(item.collection_names) ? item.collection_names : [],
@@ -989,13 +1173,15 @@ async function loadSkins() {
         const fetchedDate = metadata.fetchedAtUtc
           ? new Date(metadata.fetchedAtUtc).toLocaleDateString('ru-RU')
           : '';
-        const totalItems = Object.values(metadata.counts || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+        const itemCounts = metadata.counts || {};
+        const totalItems = Object.values(itemCounts).reduce((sum, count) => sum + Number(count || 0), 0);
+        const baseDesigns = Number(metadata.skinDesigns || 0);
         catalogReleaseYear = String(metadata.currentYear || new Date().getFullYear());
         document.querySelectorAll('[data-qf="new"], [data-tqf="new"]').forEach(button => {
           button.textContent = `Новинки ${catalogReleaseYear}`;
         });
         const currentYearItems = Number(metadata.releaseYearCounts?.[catalogReleaseYear] || 0);
-        catalogSourceNote.textContent = `CS2 · ${totalItems.toLocaleString('ru-RU')} предметов · ${catalogReleaseYear}: ${currentYearItems.toLocaleString('ru-RU')} · снимок ${fetchedDate}`;
+        catalogSourceNote.textContent = `CS2 · ${totalItems.toLocaleString('ru-RU')} вариантов · ${baseDesigns.toLocaleString('ru-RU')} моделей · ${catalogReleaseYear}: ${currentYearItems.toLocaleString('ru-RU')} · ${fetchedDate}`;
         catalogSourceNote.title = `Источник: ${metadata.source || 'CS2 item catalog'} · данные из файлов игры · лицензия ${metadata.license || 'см. источник'}`;
       }
     }
@@ -1061,11 +1247,11 @@ function filterItems({ search = '', priceFrom = null, priceTo = null, sort = 'pr
 
   let from = null, to = null;
   if (priceFrom !== null && priceFrom !== undefined && priceFrom !== '') {
-    const n = parseFloat(priceFrom);
+    const n = amountToRub(parseFloat(priceFrom));
     if (!isNaN(n) && n >= 0) from = n;
   }
   if (priceTo !== null && priceTo !== undefined && priceTo !== '') {
-    const n = parseFloat(priceTo);
+    const n = amountToRub(parseFloat(priceTo));
     if (!isNaN(n) && n >= 0) to = n;
   }
   if (from !== null && to !== null && from > to) {
@@ -1166,6 +1352,7 @@ function updateChance() {
     upgradeBtn.disabled = true;
     warningEl.classList.remove('show');
     warningEl.textContent = '';
+    updateTargetShortcuts();
     drawWheel(0);
     return;
   }
@@ -1177,6 +1364,7 @@ function updateChance() {
     upgradeBtn.disabled = true;
     warningEl.textContent = '⚠ Нельзя выбрать тот же скин и для ставки, и для цели';
     warningEl.classList.add('show');
+    updateTargetShortcuts();
     drawWheel(0);
     return;
   }
@@ -1188,6 +1376,7 @@ function updateChance() {
     upgradeBtn.disabled = true;
     warningEl.textContent = '⚠ Ставка дороже цели — выберите другой скин';
     warningEl.classList.add('show');
+    updateTargetShortcuts();
     drawWheel(0);
     return;
   }
@@ -1196,11 +1385,51 @@ function updateChance() {
   warningEl.textContent = '';
 
   currentChance = calculateChance(betData.price, targetData.price);
-  chanceValue.textContent = currentChance + '%';
+  if (currentChance < 0.01) {
+    currentChance = 0;
+    chanceValue.textContent = '00.00%';
+    multiplierEl.textContent = `x${(targetData.price / betData.price).toFixed(2)}`;
+    upgradeBtn.disabled = true;
+    warningEl.textContent = 'Шанс ниже минимального значения 0.01%.';
+    warningEl.classList.add('show');
+    updateTargetShortcuts();
+    drawWheel(0);
+    return;
+  }
+  chanceValue.textContent = formatChance(currentChance);
   multiplierEl.textContent = 'x' + (targetData.price / betData.price).toFixed(2);
   upgradeBtn.disabled = false;
+  updateTargetShortcuts();
   drawWheel(currentChance);
 }
+
+function updateTargetShortcuts() {
+  targetShortcutButtons.forEach(button => { button.disabled = !betData || spinning; });
+}
+
+function chooseRandomTarget(desiredChance) {
+  if (!betData || spinning) return;
+  const desiredPrice = betData.price / (Number(desiredChance) / 100);
+  const candidates = SKINS_CATALOG.filter(item => {
+    if (item.price < betData.price || isSkinAlreadyStaked(item)) return false;
+    return calculateChance(betData.price, item.price) >= 0.01;
+  });
+  if (!candidates.length) {
+    warningEl.textContent = 'Для этой цели пока нет подходящего предмета.';
+    warningEl.classList.add('show');
+    return;
+  }
+  const distance = item => Math.abs(Math.log(item.price / desiredPrice));
+  const closest = Math.min(...candidates.map(distance));
+  const tolerance = Math.max(closest + 0.025, 0.08);
+  const near = candidates.filter(item => distance(item) <= tolerance);
+  const chosen = near[Math.floor(Math.random() * near.length)];
+  selectTarget(chosen);
+}
+
+targetShortcutButtons.forEach(button => {
+  button.addEventListener('click', () => chooseRandomTarget(Number(button.dataset.targetChance)));
+});
 
 // ============================================================
 // СЛОТЫ
@@ -1261,13 +1490,19 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   const isCurrentYearItem = item.releaseYear === catalogReleaseYear;
   const selected = source === 'catalog' && state.inventory.some(inv => inv.catalogId === item.id && state.betItemIds.includes(inv.instanceId));
   if (selected) card.classList.add('active');
+  const qualityParts = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect].filter(Boolean);
+  if (item.floatMin != null && item.floatMax != null && item.floatMax > item.floatMin) {
+    qualityParts.push(`${Number(item.floatMin).toFixed(2)}–${Number(item.floatMax).toFixed(2)}`);
+  }
+  if (item.pattern && item.pattern !== item.name) qualityParts.push(item.pattern);
 
   card.innerHTML = `
-    ${owned ? '<div class="card-badge owned">✓</div>' : (source === 'catalog' ? '<div class="card-badge buy">₽</div>' : '')}
+    ${owned ? '<div class="card-badge owned">✓</div>' : (source === 'catalog' ? `<div class="card-badge buy">${displayCurrency === 'USD' ? '$' : '₽'}</div>` : '')}
     ${isCurrentYearItem ? `<div class="card-badge new">${escapeHtml(catalogReleaseYear)}</div>` : ''}
     <div class="item-img"><img src="${escapeHtml(item.img || '')}" alt="" loading="lazy"></div>
     <div class="item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
     <div class="item-price">${fmt(item.price)}</div>
+    ${qualityParts.length ? `<div class="item-quality">${qualityParts.map(part => escapeHtml(part)).join(' · ')}</div>` : ''}
     <div class="item-rarity">${escapeHtml(item.rarity?.name || item.category || 'Предмет')}</div>
   `;
 
@@ -1351,7 +1586,7 @@ function renderTargets() {
   const shown = items.slice(0, MAX_RENDER);
 
   shown.forEach((item, i) => {
-    const disabled = (betData && item.price < betData.price) || isSkinAlreadyStaked(item);
+    const disabled = (betData && (item.price < betData.price || calculateChance(betData.price, item.price) < 0.01)) || isSkinAlreadyStaked(item);
     const card = buildCatalogCard(item, {
       disabled, source: 'target',
       onClick: () => selectTarget(item)
@@ -1386,11 +1621,13 @@ function renderMyInventory() {
     const card = document.createElement('div');
     const selected = state.betItemIds.includes(inv.instanceId);
     card.className = 'inv-card' + (selected ? ' active selected-bet' : '');
+    const qualities = [inv.wear, inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
     card.innerHTML = `
       ${selected ? '<div class="card-badge owned">Ставка</div>' : (multiSelectMode ? '<div class="card-badge buy">+</div>' : '')}
       <div class="item-img"><img src="${inv.img}" alt=""></div>
       <div class="item-name" title="${inv.name}">${inv.name}</div>
       <div class="item-price">${fmt(inv.price)}</div>
+      ${qualities.length ? `<div class="item-quality">${qualities.map(value => escapeHtml(value)).join(' · ')}</div>` : ''}
     `;
     card.addEventListener('click', () => selectBet(inv));
     card.style.animationDelay = (i * 0.01) + 's';
@@ -1755,6 +1992,11 @@ function selectTarget(item) {
     warningEl.classList.add('show');
     return;
   }
+  if (betData && calculateChance(betData.price, item.price) < 0.01) {
+    warningEl.textContent = 'Шанс на выбранный предмет ниже минимального значения 0.01%.';
+    warningEl.classList.add('show');
+    return;
+  }
   targetData = item;
   state.targetName = item.name;
   saveState();
@@ -1789,7 +2031,7 @@ modalConfirm.addEventListener('click', async () => {
   const { item } = pendingBuy;
 
   if (!await spendBalance(item.price)) {
-    warningEl.textContent = '⚠ Недостаточно демо-рублей или нет связи с базой';
+    warningEl.textContent = '⚠ Недостаточно средств или нет связи с базой';
     warningEl.classList.add('show');
     setTimeout(() => warningEl.classList.remove('show'), 2000);
     closeBuyModal();
@@ -1802,7 +2044,15 @@ modalConfirm.addEventListener('click', async () => {
     name: item.name,
     price: item.price,
     img: item.img,
-    rarity: item.rarity
+    rarity: item.rarity,
+    catalogType: item.catalogType,
+    wear: item.wear,
+    floatMin: item.floatMin,
+    floatMax: item.floatMax,
+    stattrak: item.stattrak,
+    souvenir: item.souvenir,
+    effect: item.effect,
+    pattern: item.pattern
   });
   saveState();
   renderMyInventory();
@@ -1851,7 +2101,7 @@ sellConfirm.addEventListener('click', async () => {
   const receive = Math.round(item.price * (1 - SELL_COMMISSION) * 100) / 100;
 
   if (!await addBalance(receive)) {
-    warningEl.textContent = '⚠ Не удалось зачислить демо-рубли. Проверьте соединение.';
+    warningEl.textContent = '⚠ Не удалось зачислить сумму. Проверьте соединение.';
     warningEl.classList.add('show');
     closeSellModal();
     return;
@@ -1912,11 +2162,11 @@ sellAllBtn.addEventListener('click', () => {
   total = Math.round(total * 100) / 100;
 
   openConfirm(
-    'Обменять всё на демо-рубли?',
+    'Обменять всё на баланс?',
     `Вы обменяете ${state.inventory.length} скин(ов) на ${fmt(total)} (комиссия ${Math.round(SELL_COMMISSION*100)}% уже учтена).`,
     async () => {
       if (!await addBalance(total)) {
-        warningEl.textContent = '⚠ Не удалось зачислить демо-рубли. Инвентарь сохранён.';
+        warningEl.textContent = '⚠ Не удалось зачислить сумму. Инвентарь сохранён.';
         warningEl.classList.add('show');
         return;
       }
@@ -1993,6 +2243,7 @@ function renderProfile() {
     card.innerHTML = `
       <div class="item-img"><img src="${item.img}" alt=""></div>
       <div class="item-name" title="${item.name}">${item.name}</div>
+      <div class="item-quality">${[item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect, item.pattern].filter(Boolean).map(escapeHtml).join(' · ')}</div>
       <div class="item-price">${fmt(item.price)}</div>
       <button class="btn-sell">Обменять за ${fmt(receive)}</button>
     `;
@@ -2066,25 +2317,16 @@ upgradeBtn.addEventListener('click', () => {
 
   spinning = true;
   upgradeBtn.disabled = true;
+  updateTargetShortcuts();
   resultEl.classList.remove('show', 'win', 'lose');
   resultEl.textContent = '';
 
   const win = Math.random() * 100 < currentChance;
-
-  const arcDeg = 360 / SECTOR_COUNT;
-  const winSectors = Math.max(1, Math.round((currentChance / 100) * SECTOR_COUNT));
-
-  let targetSector;
-  if (win) {
-    targetSector = Math.floor(Math.random() * winSectors);
-  } else {
-    const loseStart = winSectors;
-    targetSector = loseStart + Math.floor(Math.random() * (SECTOR_COUNT - loseStart));
-  }
-
-  const sectorCenterDeg = targetSector * arcDeg + arcDeg / 2;
-  const jitter = (Math.random() - 0.5) * (arcDeg * 0.6);
-  const finalAngle = sectorCenterDeg + jitter;
+  const winArcDeg = currentChance * 3.6;
+  const edgePadding = Math.min(0.0001, winArcDeg / 4, (360 - winArcDeg) / 4);
+  const finalAngle = win
+    ? edgePadding + Math.random() * Math.max(0, winArcDeg - edgePadding * 2)
+    : winArcDeg + edgePadding + Math.random() * Math.max(0, 360 - winArcDeg - edgePadding * 2);
 
   const fullSpins = 2 + Number(spinStrength) + Math.floor(Math.random() * 3);
   const startAngle = rotorAngle % 360;
@@ -2100,7 +2342,6 @@ upgradeBtn.addEventListener('click', () => {
 
   setTimeout(() => {
     spinning = false;
-    upgradeBtn.disabled = false;
 
     const wagerIds = new Set(wagerItems.map(item => item.instanceId));
     state.inventory = state.inventory.filter(item => !wagerIds.has(item.instanceId));
@@ -2112,7 +2353,15 @@ upgradeBtn.addEventListener('click', () => {
         name: prizeData.name,
         price: prizeData.price,
         img: prizeData.img,
-        rarity: prizeData.rarity
+        rarity: prizeData.rarity,
+        catalogType: prizeData.catalogType,
+        wear: prizeData.wear,
+        floatMin: prizeData.floatMin,
+        floatMax: prizeData.floatMax,
+        stattrak: prizeData.stattrak,
+        souvenir: prizeData.souvenir,
+        effect: prizeData.effect,
+        pattern: prizeData.pattern
       });
 
       if (!state.bestDrop || prizeData.price > state.bestDrop.price) {

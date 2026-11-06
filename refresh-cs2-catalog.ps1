@@ -16,7 +16,7 @@ $fileMap = @(
 
 $script:CollectionReleaseDateById = @{}
 
-function Get-CompactCatalogEntry($item, $entry) {
+function Get-CompactCatalogEntry($item, $entry, $releaseItem = $item) {
   $itemId = [string]$item.id
   if ([string]::IsNullOrWhiteSpace($itemId)) {
     throw "The upstream entry in $($entry.file) has no stable id."
@@ -29,7 +29,7 @@ function Get-CompactCatalogEntry($item, $entry) {
 
   $releaseDates = @()
   $collectionNames = @()
-  foreach ($collection in @($item.collections)) {
+  foreach ($collection in @($releaseItem.collections)) {
     $collectionId = [string]$collection.id
     if ($collection.name) { $collectionNames += [string]$collection.name }
     if ($collectionId -and $script:CollectionReleaseDateById.ContainsKey($collectionId)) {
@@ -42,8 +42,17 @@ function Get-CompactCatalogEntry($item, $entry) {
     $releaseDate = ($releaseDates | Sort-Object -Descending | Select-Object -First 1)
     if ($releaseDate -match '^(\d{4})') { $releaseYear = $Matches[1] }
   }
-  if (-not $releaseYear -and [string]$item.tournament.name -match '(?<!\d)(20\d{2})(?!\d)') {
+  if (-not $releaseYear -and [string]$releaseItem.tournament.name -match '(?<!\d)(20\d{2})(?!\d)') {
     $releaseYear = $Matches[1]
+  }
+
+  $effect = $null
+  if ($item.effect.name) {
+    $effect = [string]$item.effect.name
+  } elseif ($item.effect -is [string]) {
+    $effect = [string]$item.effect
+  } elseif ([string]$item.name -match '\((Holo|Foil|Gold|Glitter|Lenticular|Embroidered|Patch|Paper)\)') {
+    $effect = $Matches[1]
   }
 
   return [ordered]@{
@@ -56,7 +65,12 @@ function Get-CompactCatalogEntry($item, $entry) {
     wear = $item.wear
     stattrak = $item.stattrak
     souvenir = $item.souvenir
+    effect = $effect
     market_hash_name = [string]$item.market_hash_name
+    pattern = if ($item.pattern.name) { [string]$item.pattern.name } else { $null }
+    skin_id = if ($item.skin_id) { [string]$item.skin_id } else { $null }
+    float_min = $item.min_float
+    float_max = $item.max_float
     release_date = $releaseDate
     release_year = $releaseYear
     collection_names = @($collectionNames | Sort-Object -Unique)
@@ -77,6 +91,24 @@ foreach ($collection in $collections) {
 }
 
 $datasets = [ordered]@{}
+$baseSkinsUri = "$upstreamRoot/skins.json"
+Write-Host "Downloading $baseSkinsUri for variant metadata"
+$baseSkinsResponse = Invoke-WebRequest -Uri $baseSkinsUri -Headers @{ 'User-Agent' = 'SGRADER-UP-demo-catalog-refresh' }
+$baseSkins = @($baseSkinsResponse.Content | ConvertFrom-Json)
+$baseSkinsById = @{}
+foreach ($baseSkin in $baseSkins) { $baseSkinsById[[string]$baseSkin.id] = $baseSkin }
+
+$variantsUri = "$upstreamRoot/skins_not_grouped.json"
+Write-Host "Downloading $variantsUri"
+$variantsResponse = Invoke-WebRequest -Uri $variantsUri -Headers @{ 'User-Agent' = 'SGRADER-UP-demo-catalog-refresh' }
+$variants = @($variantsResponse.Content | ConvertFrom-Json)
+if ($variants.Count -eq 0) { throw 'The upstream skins_not_grouped.json file was empty. No catalog files were changed.' }
+$variantEntry = @{ file = 'skins_variants.json'; type = 'skin'; category = $null }
+$datasets['skins_variants.json'] = @($variants | ForEach-Object {
+  $base = $baseSkinsById[[string]$_.skin_id]
+  Get-CompactCatalogEntry $_ $variantEntry $base
+})
+
 foreach ($entry in $fileMap) {
   $uri = "$upstreamRoot/$($entry.file)"
   Write-Host "Downloading $uri"
@@ -103,18 +135,20 @@ $metadata = [ordered]@{
   license = 'MIT'
   currentYear = (Get-Date).Year.ToString()
   counts = [ordered]@{
-    skins = $datasets['skins.json'].Count
+    skins = $datasets['skins_variants.json'].Count
     stickers = $datasets['stickers.json'].Count
     agents = $datasets['agents.json'].Count
     graffiti = $datasets['graffiti.json'].Count
     musicKits = $datasets['music_kits.json'].Count
   }
+  skinDesigns = $datasets['skins.json'].Count
   collectionCount = $collections.Count
   releaseYearCounts = [ordered]@{}
 }
 
-foreach ($year in ($datasets.Values | ForEach-Object { $_ } | Where-Object { $_.release_year } | ForEach-Object { $_.release_year } | Sort-Object -Unique)) {
-  $metadata.releaseYearCounts[$year] = @($datasets.Values | ForEach-Object { $_ } | Where-Object { $_.release_year -eq $year }).Count
+foreach ($year in (($datasets['skins_variants.json'] + $datasets['stickers.json'] + $datasets['agents.json'] + $datasets['graffiti.json'] + $datasets['music_kits.json']) | Where-Object { $_.release_year } | ForEach-Object { $_.release_year } | Sort-Object -Unique)) {
+  $yearItems = $datasets['skins_variants.json'] + $datasets['stickers.json'] + $datasets['agents.json'] + $datasets['graffiti.json'] + $datasets['music_kits.json']
+  $metadata.releaseYearCounts[$year] = @($yearItems | Where-Object { $_.release_year -eq $year }).Count
 }
 
 $destinations = @($projectRoot)
@@ -129,6 +163,8 @@ foreach ($destination in $destinations) {
     $json = ConvertTo-Json -InputObject @($datasets[$entry.file]) -Depth 10 -Compress
     Set-Content -LiteralPath (Join-Path $destination $entry.file) -Value $json -Encoding utf8NoBOM -NoNewline
   }
+  $variantJson = ConvertTo-Json -InputObject @($datasets['skins_variants.json']) -Depth 10 -Compress
+  Set-Content -LiteralPath (Join-Path $destination 'skins_variants.json') -Value $variantJson -Encoding utf8NoBOM -NoNewline
   $metadataJson = ConvertTo-Json -InputObject $metadata -Depth 10
   Set-Content -LiteralPath (Join-Path $destination 'catalog-source.json') -Value $metadataJson -Encoding utf8NoBOM
   Set-Content -LiteralPath (Join-Path $destination 'CS2-API-LICENSE.txt') -Value $license -Encoding utf8NoBOM

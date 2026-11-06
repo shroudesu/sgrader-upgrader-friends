@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SGRADER UP | Демо-игра</title>
+  <title>SGRADER UP | CS2</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -32,7 +32,7 @@
     </form>
 
     <div class="auth-hint" id="backendSetupHint" role="status"></div>
-    <div class="auth-hint">Игровые аккаунты и демо-рубли общие для всех устройств. Указывай только игровой ник; email не требуется. Восстановление пароля не настроено — используй отдельный пароль для демо.</div>
+    <div class="auth-hint">Указывай игровой ник; email не требуется.</div>
   </div>
 </div>
 
@@ -56,15 +56,23 @@
   </div>
 
   <div class="user-info">
-    <span class="user-name" id="userName">—</span>
-    <button class="btn-logout" id="logoutBtn" title="Выйти">Выйти</button>
+    <button type="button" class="header-avatar" id="headerAvatarButton" aria-label="Изменить аватар в настройках">
+      <img id="headerAvatarImage" alt="" hidden>
+      <iconify-icon id="headerAvatarFallback" icon="mdi:account-circle-outline"></iconify-icon>
+    </button>
+    <div class="user-identity">
+      <button type="button" class="user-name" id="userName" title="Открыть профиль">—</button>
+      <span class="player-id" id="playerId">ID игрока: —</span>
+    </div>
+    <button type="button" class="settings-trigger" id="settingsBtn" aria-label="Настройки" title="Настройки">
+      <iconify-icon icon="mdi:chevron-down"></iconify-icon>
+    </button>
   </div>
 
   <div class="balance">
-    <span class="balance-label">Демо-рубли</span>
+    <span class="balance-label">Баланс</span>
     <span class="balance-value" id="balance">0.00</span>
   </div>
-  <div class="player-id" id="playerId">ID: —</div>
 </header>
 
 <main class="container">
@@ -75,38 +83,44 @@
 
     <div class="layout">
       <aside class="col">
-        <div class="panel">
-          <h2 class="panel-title">Каталог предметов</h2>
-          <div class="catalog-source-note"><span id="catalogSourceNote">Загрузка базы предметов CS2…</span> · <a href="https://github.com/CS2Cap/CS2-API" target="_blank" rel="noopener noreferrer">источник каталога</a></div>
-          <input type="text" id="invSearch" class="search-input" placeholder="Поиск оружия, стикеров, агентов, граффити...">
-          <div class="price-filter">
-            <input type="number" id="invPriceFrom" class="price-input" placeholder="от ₽" min="0" step="any">
-            <span class="price-sep">—</span>
-            <input type="number" id="invPriceTo" class="price-input" placeholder="до ₽" min="0" step="any">
+        <div class="panel upgrade-inventory-panel" id="upgradeInventoryPanel">
+          <div class="panel-title-row inventory-panel-heading">
+            <h2 class="panel-title" id="upgradeInventoryTitle">Мой инвентарь</h2>
+            <div class="inventory-heading-actions"><span class="inv-count" id="myInvCount">0</span><button type="button" class="catalog-toggle" id="catalogToggle" aria-label="Открыть каталог" title="Открыть каталог"><iconify-icon icon="mdi:cart-outline"></iconify-icon></button></div>
           </div>
-          <div class="filter-row">
-            <select id="invSort" class="sort-select">
-              <option value="price-asc">Цена ↑</option>
-              <option value="price-desc">Цена ↓</option>
-              <option value="name-asc">Имя A→Z</option>
-              <option value="name-desc">Имя Z→A</option>
-            </select>
-            <span class="filter-count" id="invCount">—</span>
-          </div>
-          <div class="quick-filters">
-            <button class="qf-btn active" data-qf="all">Все</button>
-            <button class="qf-btn" data-qf="weapons">Оружие</button>
-            <button class="qf-btn" data-qf="knives">Ножи</button>
-            <button class="qf-btn" data-qf="gloves">Перчатки</button>
-            <button class="qf-btn" data-qf="stickers">Стикеры</button>
-            <button class="qf-btn" data-qf="agents">Агенты</button>
-            <button class="qf-btn" data-qf="graffiti">Граффити</button>
-            <button class="qf-btn" data-qf="music">Киты музыки</button>
-            <button class="qf-btn" data-qf="new">Новинки 2026</button>
-            <button class="qf-btn" data-qf="top">Топ-дорогие</button>
+          <div id="catalogTools" hidden>
+            <div class="catalog-source-note"><span id="catalogSourceNote">Загрузка базы предметов CS2…</span> · <a href="https://github.com/CS2Cap/CS2-API" target="_blank" rel="noopener noreferrer">источник</a></div>
+            <input type="text" id="invSearch" class="search-input" placeholder="Поиск предметов и вариантов качества...">
+            <div class="price-filter">
+              <input type="number" id="invPriceFrom" class="price-input" placeholder="от ₽" data-price-placeholder="от" min="0" step="any">
+              <span class="price-sep">—</span>
+              <input type="number" id="invPriceTo" class="price-input" placeholder="до ₽" data-price-placeholder="до" min="0" step="any">
+            </div>
+            <div class="filter-row">
+              <select id="invSort" class="sort-select">
+                <option value="price-asc">Цена ↑</option>
+                <option value="price-desc">Цена ↓</option>
+                <option value="name-asc">Имя A→Z</option>
+                <option value="name-desc">Имя Z→A</option>
+              </select>
+              <span class="filter-count" id="invCount">—</span>
+            </div>
+            <div class="quick-filters">
+              <button class="qf-btn active" data-qf="all">Все</button>
+              <button class="qf-btn" data-qf="weapons">Оружие</button>
+              <button class="qf-btn" data-qf="knives">Ножи</button>
+              <button class="qf-btn" data-qf="gloves">Перчатки</button>
+              <button class="qf-btn" data-qf="stickers">Стикеры</button>
+              <button class="qf-btn" data-qf="agents">Агенты</button>
+              <button class="qf-btn" data-qf="graffiti">Граффити</button>
+              <button class="qf-btn" data-qf="music">Киты музыки</button>
+              <button class="qf-btn" data-qf="new">Новинки 2026</button>
+              <button class="qf-btn" data-qf="top">Топ-дорогие</button>
+            </div>
           </div>
           <div class="loading" id="invLoading">Загрузка каталога...</div>
-          <div class="grid" id="inventoryGrid"></div>
+          <div class="grid small upgrade-my-inventory" id="myInventory"></div>
+          <div class="grid catalog-grid" id="inventoryGrid" hidden></div>
         </div>
       </aside>
 
@@ -122,6 +136,15 @@
             <span class="wheel-chance" id="chanceValue">—</span>
             <span class="wheel-sub">шанс</span>
           </div>
+        </div>
+
+        <div class="target-shortcuts" role="group" aria-label="Случайная цель апгрейда">
+          <button type="button" class="target-shortcut" data-target-chance="50" data-target-label="x2" disabled>x2</button>
+          <button type="button" class="target-shortcut" data-target-chance="25" data-target-label="x4" disabled>x4</button>
+          <button type="button" class="target-shortcut" data-target-chance="12.5" data-target-label="x8" disabled>x8</button>
+          <button type="button" class="target-shortcut" data-target-chance="10" data-target-label="10%" disabled>10%</button>
+          <button type="button" class="target-shortcut" data-target-chance="50" data-target-label="50%" disabled>50%</button>
+          <button type="button" class="target-shortcut" data-target-chance="75" data-target-label="75%" disabled>75%</button>
         </div>
 
         <div class="multiplier-row">Множитель: <span id="multiplier">—</span></div>
@@ -165,9 +188,9 @@
           <h2 class="panel-title">Цель апгрейда</h2>
           <input type="text" id="targetSearch" class="search-input" placeholder="Поиск оружия, стикеров, агентов, граффити...">
           <div class="price-filter">
-            <input type="number" id="targetPriceFrom" class="price-input" placeholder="от ₽" min="0" step="any">
+            <input type="number" id="targetPriceFrom" class="price-input" placeholder="от ₽" data-price-placeholder="от" min="0" step="any">
             <span class="price-sep">—</span>
-            <input type="number" id="targetPriceTo" class="price-input" placeholder="до ₽" min="0" step="any">
+            <input type="number" id="targetPriceTo" class="price-input" placeholder="до ₽" data-price-placeholder="до" min="0" step="any">
           </div>
           <div class="filter-row">
             <select id="targetSort" class="sort-select">
@@ -194,13 +217,6 @@
           <div class="grid small" id="targetGrid"></div>
         </div>
 
-        <div class="panel">
-          <div class="panel-title-row">
-            <h2 class="panel-title" style="margin-bottom:0">Мой инвентарь</h2>
-            <span class="inv-count" id="myInvCount">0</span>
-          </div>
-          <div class="grid small" id="myInventory"></div>
-        </div>
       </aside>
     </div>
   </section>
@@ -208,7 +224,7 @@
   <!-- БАТЛЫ СКИНОВ -->
   <section class="tab-page" id="page-battles">
     <h1 class="title">Батлы скинов</h1>
-    <p class="demo-note">Победитель определяется сервером с вероятностью 50/50 и забирает оба условных скина. Это демо-игра, без реальных денег и предметов.</p>
+    <p class="demo-note">Колесо выбирает победителя с вероятностью 50/50; победитель получает весь банк.</p>
     <div class="battle-layout">
       <div class="panel battle-create-panel">
         <h2 class="panel-title">Создать батл</h2>
@@ -266,7 +282,7 @@
       <div class="panel-title-row">
         <h2 class="panel-title" style="margin-bottom:0">Мой инвентарь</h2>
         <div class="profile-actions">
-          <button class="btn-small" id="sellAllBtn" title="Обменять все скины на демо-рубли">Обменять всё</button>
+          <button class="btn-small" id="sellAllBtn" title="Обменять все скины на баланс">Обменять всё</button>
           <button class="btn-small danger" id="resetBtn" title="Сбросить прогресс">Сброс</button>
         </div>
       </div>
@@ -274,16 +290,16 @@
     </div>
 
     <div class="panel credit-panel">
-      <h2 class="panel-title">Демо-пополнение рублей</h2>
-      <p>Это только заявка для игры: настоящие деньги не списываются и платёж не проводится. Выбери условный способ и сумму — Telegram откроется с готовым сообщением. Администратор сможет начислить демо-рубли по ID игрока.</p>
+      <h2 class="panel-title">Пополнение баланса</h2>
+      <p>Это заявка: платёж не проводится. Выбери способ и сумму — откроется Telegram с готовым сообщением. Начисление выполняется после подтверждения администратором.</p>
       <form class="topup-form" id="topupRequestForm">
-        <label for="topupAmount">Сумма, ₽ (демо)</label>
+        <label for="topupAmount">Сумма (<span data-currency-symbol>₽</span>)</label>
         <input id="topupAmount" type="number" min="1" max="100000000" step="1" inputmode="numeric" placeholder="Введите сумму" required>
-        <label for="topupMethod">Условный способ (демо)</label>
+        <label for="topupMethod">Способ</label>
         <select id="topupMethod" required>
-          <option value="Карта (демо)">Банковская карта (демо)</option>
-          <option value="СБП (демо)">СБП (демо)</option>
-          <option value="Другой способ (демо)">Другой способ (демо)</option>
+          <option value="Карта">Банковская карта</option>
+          <option value="СБП">СБП</option>
+          <option value="Другой способ">Другой способ</option>
         </select>
         <button class="btn-small" type="submit">Сформировать сообщение в Telegram</button>
         <div class="topup-feedback" id="topupFeedback" role="status" aria-live="polite"></div>
@@ -297,10 +313,10 @@
   <section class="tab-page" id="page-admin">
     <h1 class="title">Админ-панель</h1>
     <div class="panel admin-panel">
-      <p class="admin-notice">Игроки и начисления хранятся в общей базе. ₽ на сайте — только условная игровая валюта, без денежной стоимости.</p>
+      <p class="admin-notice">Игроки и начисления хранятся в общей базе.</p>
       <div class="admin-table-wrap">
         <table class="admin-table">
-          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс, ₽ демо</th><th>Начислить ₽</th><th>Снять ₽</th></tr></thead>
+          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th></tr></thead>
           <tbody id="adminUsers"></tbody>
         </table>
       </div>
@@ -323,7 +339,7 @@
 
   <div class="modal-overlay" id="sellModal">
     <div class="modal">
-      <h3 class="modal-title">Обменять скин на демо-рубли?</h3>
+      <h3 class="modal-title">Обменять скин на баланс?</h3>
       <div class="modal-item" id="sellModalItem"></div>
       <div class="sell-info">
         <div class="sell-row"><span>Цена скина:</span><span id="sellBasePrice">0 ₽</span></div>
@@ -334,6 +350,25 @@
         <button class="btn-modal btn-cancel" id="sellCancel">Отмена</button>
         <button class="btn-modal btn-confirm" id="sellConfirm">Обменять</button>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay settings-overlay" id="settingsModal" aria-hidden="true">
+    <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="settings-heading"><h3 class="modal-title" id="settingsTitle">Настройки аккаунта</h3><button type="button" class="settings-close" id="settingsClose" aria-label="Закрыть настройки">×</button></div>
+      <label class="settings-label" for="currencySelect">Валюта сайта</label>
+      <select id="currencySelect" class="settings-select"><option value="RUB">RUB · ₽</option><option value="USD">USD · $</option></select>
+      <div class="settings-rate">Курс отображения: 1 USD = 90 RUB</div>
+      <div class="settings-avatar-row"><img id="settingsAvatarPreview" alt="Аватар"><div><strong>Аватар</strong><p>Выбери изображение с устройства</p><label class="btn-small avatar-file-label" for="avatarFile">Изменить аватар</label><input type="file" id="avatarFile" accept="image/png,image/jpeg,image/webp" hidden></div></div>
+      <form class="password-change-form" id="passwordChangeForm">
+        <h4>Смена пароля</h4>
+        <input class="auth-input" type="password" id="oldPassword" placeholder="Старый пароль" autocomplete="current-password" required>
+        <input class="auth-input" type="password" id="newPassword" placeholder="Новый пароль (от 6 символов)" minlength="6" autocomplete="new-password" required>
+        <input class="auth-input" type="password" id="newPasswordConfirm" placeholder="Повтори новый пароль" minlength="6" autocomplete="new-password" required>
+        <div class="settings-feedback" id="settingsFeedback" role="status" aria-live="polite"></div>
+        <button class="btn-small settings-submit" type="submit">Сменить пароль</button>
+      </form>
+      <button type="button" class="btn-small danger settings-logout" id="logoutBtn">Выйти из аккаунта</button>
     </div>
   </div>
 
@@ -351,14 +386,15 @@
 </main>
 
 <footer class="footer">
-  Демо-игра. Все ₽ на сайте — условные демо-рубли, а цены и скины вымышленные: их нельзя купить, вывести или обменять на деньги и реальные предметы.
+  Баланс и цены используются внутри игры.
 </footer>
 
 </div><!-- /.app -->
 
-<audio id="winSound" src="sounds/win.mp3" preload="auto"></audio>
+<audio id="winSound" src="win.mp3" preload="auto"></audio>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
 <script src="script.js"></script>
 </body>
