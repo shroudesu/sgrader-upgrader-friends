@@ -247,7 +247,8 @@ const betSelectionStatus = document.getElementById('betSelectionStatus');
 const spinStrengthSlider = document.getElementById('spinStrength');
 const spinStrengthValue = document.getElementById('spinStrengthValue');
 const spinModeButtons = document.querySelectorAll('.spin-mode');
-const battleSkinSelect = document.getElementById('battleSkinSelect');
+const battleInventory = document.getElementById('battleInventory');
+const battleSelectionStatus = document.getElementById('battleSelectionStatus');
 const createBattleBtn = document.getElementById('createBattleBtn');
 const battleFeedback = document.getElementById('battleFeedback');
 const battleList = document.getElementById('battleList');
@@ -352,6 +353,12 @@ let spinStrength = 5;
 let spinMode = 'fast';
 let battleWheelAngle = 0;
 let lastBattleResults = new Set();
+let queuedBattleResults = new Set();
+let deferredBattleResults = new Set();
+let battleOutcomeQueue = [];
+let battleAnimationInProgress = false;
+let latestBattles = [];
+let selectedBattleSkinId = null;
 let battlePollInFlight = false;
 let invQuickFilter = 'all';
 let targetQuickFilter = 'all';
@@ -714,7 +721,7 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     if (page === 'profile') renderProfile();
     if (page === 'admin') renderAdminUsers();
     if (page === 'battles') {
-      renderBattleStakeOptions();
+      renderBattleInventory();
       drawBattleWheel();
       void loadBattles();
     }
@@ -778,7 +785,7 @@ async function renderAdminUsers() {
   if (!currentUser || currentUser.role !== 'admin') return;
   const { data, error } = await supabaseClient.rpc('admin_list_players');
   if (error) {
-    adminUsersEl.innerHTML = '<tr><td colspan="5">Не удалось загрузить список игроков.</td></tr>';
+    adminUsersEl.innerHTML = '<tr><td colspan="6">Не удалось загрузить список игроков.</td></tr>';
     console.error('Could not load admin player list:', error);
     return;
   }
@@ -790,40 +797,50 @@ async function renderAdminUsers() {
       <td>${escapeHtml(promo)}</td>
       <td>${fmt(Number(user.balance))}</td>
       <td><form class="admin-grant-form" data-player-id="${escapeHtml(user.player_id)}">
-        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Демо-рубли" aria-label="Количество демо-рублей">
+        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сколько демо-рублей начислить">
         <button class="btn-small" type="submit">Начислить</button>
       </form></td>
+      <td><form class="admin-debit-form" data-player-id="${escapeHtml(user.player_id)}">
+        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сколько демо-рублей снять">
+        <button class="btn-small danger" type="submit">Снять</button>
+      </form></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="5">Пользователей пока нет.</td></tr>';
+  }).join('') || '<tr><td colspan="6">Пользователей пока нет.</td></tr>';
 }
 
 adminUsersEl.addEventListener('submit', async event => {
-  const form = event.target.closest('.admin-grant-form');
+  const form = event.target.closest('.admin-grant-form, .admin-debit-form');
   if (!form) return;
   event.preventDefault();
   if (!currentUser || currentUser.role !== 'admin') return;
+  const debit = form.matches('.admin-debit-form');
   const amountInput = form.querySelector('.admin-amount');
   const amount = Number(amountInput.value);
   if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) {
-    adminFeedback.textContent = 'Укажите сумму от 0,01 до 100 000 000 демо-рублей.';
+    adminFeedback.textContent = `Укажите сумму от 0,01 до 100 000 000 демо-рублей для ${debit ? 'списания' : 'начисления'}.`;
     adminFeedback.classList.add('show');
     return;
   }
   const playerId = Number(form.dataset.playerId);
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
-  const { data, error } = await supabaseClient.rpc('admin_grant_demo_credits', {
+  const { data, error } = await supabaseClient.rpc(debit ? 'admin_debit_demo_credits' : 'admin_grant_demo_credits', {
     p_player_id: playerId,
     p_amount: amount
   });
   button.disabled = false;
   if (error) {
-    adminFeedback.textContent = 'Не удалось начислить демо-рубли. Проверьте права администратора и соединение.';
+    const isInsufficient = String(error.message || '').toLowerCase().includes('insufficient balance');
+    adminFeedback.textContent = isInsufficient
+      ? 'Нельзя снять больше, чем есть на балансе игрока.'
+      : `Не удалось ${debit ? 'снять' : 'начислить'} демо-рубли. Проверьте права администратора и соединение.`;
     adminFeedback.classList.add('show');
     console.error('Admin grant failed:', error);
     return;
   }
-  adminFeedback.textContent = `Начислено ${fmt(Number(data.amount))}${Number(data.bonus) ? ` + бонус ${fmt(Number(data.bonus))} по ${PROMO_CODE}` : ''} игроку ${data.username} (ID ${data.player_id}).`;
+  adminFeedback.textContent = debit
+    ? `Снято ${fmt(Number(data.amount))} с баланса игрока ${data.username} (ID ${data.player_id}). Остаток: ${fmt(Number(data.balance))}.`
+    : `Начислено ${fmt(Number(data.amount))}${Number(data.bonus) ? ` + бонус ${fmt(Number(data.bonus))} по ${PROMO_CODE}` : ''} игроку ${data.username} (ID ${data.player_id}).`;
   adminFeedback.classList.add('show');
   amountInput.value = '';
   await renderAdminUsers();
@@ -1011,6 +1028,11 @@ function getSelectedBetItems() {
   return ids.map(id => state.inventory.find(item => item.instanceId === id)).filter(Boolean);
 }
 
+function isSkinAlreadyStaked(item) {
+  const catalogId = item?.catalogId ?? item?.id;
+  return catalogId != null && getSelectedBetItems().some(staked => String(staked.catalogId) === String(catalogId));
+}
+
 function makeBetData(items) {
   if (!items.length) return null;
   const first = items[0];
@@ -1053,6 +1075,17 @@ function updateChance() {
     upgradeBtn.disabled = true;
     warningEl.classList.remove('show');
     warningEl.textContent = '';
+    drawWheel(0);
+    return;
+  }
+
+  if (isSkinAlreadyStaked(targetData)) {
+    currentChance = 0;
+    chanceValue.textContent = '—';
+    multiplierEl.textContent = '—';
+    upgradeBtn.disabled = true;
+    warningEl.textContent = '⚠ Нельзя выбрать тот же скин и для ставки, и для цели';
+    warningEl.classList.add('show');
     drawWheel(0);
     return;
   }
@@ -1174,7 +1207,7 @@ function renderInventory() {
 
   shown.forEach((item, i) => {
     const owned = isInMyInventory(item.id);
-    const disabled = targetData && item.price > targetData.price;
+    const disabled = (targetData && item.price > targetData.price) || (targetData && isSkinAlreadyStaked(item));
 
     const card = buildCatalogCard(item, {
       disabled, source: 'catalog',
@@ -1222,7 +1255,7 @@ function renderTargets() {
   const shown = items.slice(0, MAX_RENDER);
 
   shown.forEach((item, i) => {
-    const disabled = betData && item.price < betData.price;
+    const disabled = (betData && item.price < betData.price) || isSkinAlreadyStaked(item);
     const card = buildCatalogCard(item, {
       disabled, source: 'target',
       onClick: () => selectTarget(item)
@@ -1246,7 +1279,7 @@ function renderMyInventory() {
   if (!currentUser) return;
   myInvCount.textContent = state.inventory.length;
   myInventory.innerHTML = '';
-  renderBattleStakeOptions();
+  renderBattleInventory();
 
   if (state.inventory.length === 0) {
     myInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#555;font-size:11px;padding:16px">Пусто. Купи скин в каталоге слева.</div>';
@@ -1269,14 +1302,37 @@ function renderMyInventory() {
   });
 }
 
-function renderBattleStakeOptions() {
-  if (!battleSkinSelect || !createBattleBtn) return;
-  const oldValue = battleSkinSelect.value;
-  battleSkinSelect.innerHTML = '<option value="">Выбери скин для ставки</option>' + state.inventory.map(item =>
-    `<option value="${escapeHtml(item.instanceId)}">${escapeHtml(item.name)} — ${fmt(item.price)}</option>`
-  ).join('');
-  if (state.inventory.some(item => item.instanceId === oldValue)) battleSkinSelect.value = oldValue;
-  createBattleBtn.disabled = !state.inventory.length;
+function renderBattleInventory() {
+  if (!battleInventory || !createBattleBtn) return;
+  if (!state.inventory.some(item => item.instanceId === selectedBattleSkinId)) selectedBattleSkinId = null;
+  battleInventory.innerHTML = '';
+  if (!state.inventory.length) {
+    battleInventory.innerHTML = '<div class="battle-empty">Инвентарь пуст. Получи скин, чтобы играть в батлы.</div>';
+  } else {
+    state.inventory.forEach(item => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = `battle-inventory-item${item.instanceId === selectedBattleSkinId ? ' selected' : ''}`;
+      card.setAttribute('aria-pressed', String(item.instanceId === selectedBattleSkinId));
+      card.innerHTML = `<img src="${escapeHtml(item.img || '')}" alt=""><span class="battle-inventory-name">${escapeHtml(item.name)}</span><span class="battle-inventory-price">${fmt(Number(item.price || 0))}</span>`;
+      card.addEventListener('click', () => {
+        selectedBattleSkinId = item.instanceId;
+        battleSelectionStatus.textContent = `Выбран: ${item.name} · ${fmt(Number(item.price || 0))}`;
+        renderBattleInventory();
+        renderBattleList();
+      });
+      battleInventory.appendChild(card);
+    });
+  }
+  const selected = state.inventory.find(item => item.instanceId === selectedBattleSkinId);
+  battleSelectionStatus.textContent = selected
+    ? `Выбран: ${selected.name} · ${fmt(Number(selected.price || 0))}`
+    : 'Выбери скин из инвентаря';
+  createBattleBtn.disabled = !selected;
+}
+
+function minimumGuestStake(creatorPrice) {
+  return Math.ceil(Number(creatorPrice || 0) * 95 - 1e-7) / 100;
 }
 
 function drawBattleWheel() {
@@ -1308,23 +1364,71 @@ function drawBattleWheel() {
   battleWheelCtx.stroke();
 }
 
-function showBattleOutcome(battle, animate = true) {
-  if (!battle?.id || lastBattleResults.has(battle.id)) return;
-  lastBattleResults.add(battle.id);
+function startNextBattleOutcome() {
+  if (battleAnimationInProgress || !battleOutcomeQueue.length) return;
+  const battle = battleOutcomeQueue.shift();
+  battleAnimationInProgress = true;
+  battleResult.textContent = 'Колесо прокручивается…';
+  battleResult.classList.remove('is-winner');
+
   const targetAngle = battle.winner_side === 'creator' ? 90 : 270;
-  if (animate) {
-    const startAngle = battleWheelAngle % 360;
-    const delta = ((targetAngle - startAngle + 360) % 360) + 5 * 360;
-    battleWheelAngle += delta;
-    battleWheel.style.transition = 'transform 5.2s cubic-bezier(0.08, 0.72, 0.12, 1)';
-    battleWheel.style.transform = `rotate(${battleWheelAngle}deg)`;
-  } else {
-    battleWheel.style.transition = 'none';
-    battleWheelAngle = targetAngle;
-    battleWheel.style.transform = `rotate(${targetAngle}deg)`;
+  const startAngle = battleWheelAngle % 360;
+  const delta = ((targetAngle - startAngle + 360) % 360) + 5 * 360;
+  battleWheelAngle += delta;
+  battleWheel.style.transition = 'transform 5.2s cubic-bezier(0.08, 0.72, 0.12, 1)';
+
+  let completed = false;
+  const finish = async () => {
+    if (completed) return;
+    completed = true;
+    clearTimeout(fallbackTimer);
+    battleWheel.removeEventListener('transitionend', onTransitionEnd);
+
+    if (battle.creator_user_id === currentUser?.id || battle.guest_user_id === currentUser?.id || battle.winner_user_id === currentUser?.id) {
+      try {
+        await loadUserState();
+        renderMyInventory();
+        renderProfile();
+        restoreSlotsFromState();
+      } catch (error) {
+        console.error('Could not refresh player inventory after battle:', error);
+      }
+    }
+
+    lastBattleResults.add(battle.id);
+    queuedBattleResults.delete(battle.id);
+    deferredBattleResults.delete(battle.id);
+    battleAnimationInProgress = false;
+    battleResult.textContent = `🏆 ${battle.winner_name || 'Игрок'} забирает оба скина из банка (${fmt(Number(battle.bank_value || 0))})`;
+    battleResult.classList.add('is-winner');
+    renderBattleList();
+    window.setTimeout(startNextBattleOutcome, 120);
+  };
+  const onTransitionEnd = event => {
+    if (event.target === battleWheel && event.propertyName === 'transform') void finish();
+  };
+  battleWheel.addEventListener('transitionend', onTransitionEnd);
+  const fallbackTimer = window.setTimeout(() => void finish(), 5600);
+  battleWheel.style.transform = `rotate(${battleWheelAngle}deg)`;
+}
+
+function queueBattleOutcome(battle) {
+  if (!battle?.id || lastBattleResults.has(battle.id) || queuedBattleResults.has(battle.id)) return;
+  queuedBattleResults.add(battle.id);
+  deferredBattleResults.add(battle.id);
+  battleOutcomeQueue.push(battle);
+  startNextBattleOutcome();
+}
+
+function showBattleOutcome(battle) {
+  if (battle?.id) {
+    const found = latestBattles.some(item => item.id === battle.id);
+    latestBattles = found
+      ? latestBattles.map(item => item.id === battle.id ? { ...item, ...battle, status: 'completed' } : item)
+      : [{ ...battle, status: 'completed' }, ...latestBattles];
   }
-  battleResult.textContent = `🏆 ${battle.winner_name || 'Игрок'} забирает оба скина из банка (${fmt(Number(battle.bank_value || 0))})`;
-  battleResult.classList.add('is-winner');
+  queueBattleOutcome(battle);
+  renderBattleList();
 }
 
 function renderBattleCard(battle) {
@@ -1332,6 +1436,10 @@ function renderBattleCard(battle) {
   const guestSkin = battle.guest_skin || {};
   const waiting = battle.status === 'waiting';
   const ownBattle = battle.creator_user_id === currentUser.id;
+  const outcomeDeferred = battle.status === 'completed' && deferredBattleResults.has(battle.id);
+  const selectedStake = state.inventory.find(item => item.instanceId === selectedBattleSkinId);
+  const minimumStake = minimumGuestStake(creatorSkin.price);
+  const guestCanJoin = Boolean(selectedStake) && Number(selectedStake.price) + 1e-8 >= minimumStake;
   const skins = [creatorSkin, guestSkin].filter(Boolean);
   const bankValue = skins.reduce((sum, item) => sum + Number(item.price || 0), 0);
   const guestName = battle.guest_name || 'Ждёт соперника';
@@ -1354,18 +1462,31 @@ function renderBattleCard(battle) {
     </div>`;
   let action = '';
   if (waiting && !ownBattle) {
-    action = `<button type="button" class="btn-small battle-join-btn" data-battle-id="${escapeHtml(battle.id)}" ${state.inventory.length ? '' : 'disabled'}>Вступить на выбранный скин</button>`;
+    const requirement = selectedStake
+      ? (guestCanJoin
+        ? `Выбран скин за ${fmt(Number(selectedStake.price || 0))} — условие 95% выполнено.`
+        : `Нужен скин минимум за ${fmt(minimumStake)} (95% ставки создателя).`)
+      : `Для входа выбери скин минимум за ${fmt(minimumStake)}.`;
+    action = `<div class="battle-join-requirement">${requirement}</div><button type="button" class="btn-small battle-join-btn" data-battle-id="${escapeHtml(battle.id)}" ${guestCanJoin ? '' : 'disabled'}>Вступить на выбранный скин</button>`;
   } else if (waiting) {
     action = `<button type="button" class="btn-small danger battle-cancel-btn" data-battle-id="${escapeHtml(battle.id)}">Отменить и вернуть скин</button>`;
   } else {
-    action = `<div class="battle-winner-line">${battle.status === 'completed' ? `Победитель: ${escapeHtml(battle.winner_name || '—')}` : 'Батл отменён'}</div>`;
+    action = `<div class="battle-winner-line">${battle.status === 'completed' ? (outcomeDeferred ? 'Ждём остановки колеса…' : `Победитель: ${escapeHtml(battle.winner_name || '—')}`) : 'Батл отменён'}</div>`;
   }
-  const stateLabel = waiting ? 'Открыт' : (battle.status === 'completed' ? 'Завершён' : 'Отменён');
+  const stateLabel = waiting ? 'Открыт' : (battle.status === 'completed' ? (outcomeDeferred ? 'Колесо крутится…' : 'Завершён') : 'Отменён');
   return `<article class="battle-card ${waiting ? 'battle-open' : 'battle-finished'}">
     <div class="battle-card-head"><span>Батл ${escapeHtml(String(battle.id).slice(0, 8))}</span><span>${stateLabel}</span></div>
     <div class="battle-matchup">${creatorMarkup}<div class="battle-vs"><strong>VS</strong><span>Банк<br>${fmt(bankValue)}</span></div>${guestMarkup}</div>
     <div class="battle-card-actions">${action}</div>
   </article>`;
+}
+
+function renderBattleList() {
+  if (!latestBattles.length) {
+    battleList.innerHTML = '<div class="battle-empty">Открытых батлов пока нет. Создай первый!</div>';
+    return;
+  }
+  battleList.innerHTML = latestBattles.map(renderBattleCard).join('');
 }
 
 let battleStatuses = new Map();
@@ -1378,26 +1499,19 @@ async function loadBattles() {
       .select('id, creator_user_id, creator_name, creator_skin, guest_user_id, guest_name, guest_skin, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
       .order('created_at', { ascending: false }).limit(40);
     if (error) throw error;
-    const battles = data || [];
-    if (!battles.length) battleList.innerHTML = '<div class="battle-empty">Открытых батлов пока нет. Создай первый!</div>';
-    else battleList.innerHTML = battles.map(renderBattleCard).join('');
-
-    let currentUserWon = false;
-    battles.forEach(battle => {
+    latestBattles = data || [];
+    latestBattles.forEach(battle => {
       const previous = battleStatuses.get(battle.id);
       if (battle.status === 'completed' && previous === 'waiting') {
-        showBattleOutcome({ ...battle, bank_value: Number(battle.bank_value || 0) });
-        currentUserWon ||= battle.winner_user_id === currentUser.id;
+        queueBattleOutcome({ ...battle, bank_value: Number(battle.bank_value || 0) });
+      } else if (battle.status === 'completed' && previous === undefined && !queuedBattleResults.has(battle.id)) {
+        // Do not replay old results when a player opens the page for the first time.
+        lastBattleResults.add(battle.id);
       }
-      if (battle.status === 'completed') lastBattleResults.add(battle.id);
       battleStatuses.set(battle.id, battle.status);
     });
-    if (currentUserWon) {
-      await loadUserState();
-      renderMyInventory();
-      renderProfile();
-      restoreSlotsFromState();
-    }
+    renderBattleList();
+    startNextBattleOutcome();
   } catch (error) {
     console.error('Could not load battles:', error);
     battleList.innerHTML = '<div class="battle-empty">Батлы пока не подключены к базе. Примените файл supabase/skin-battles.sql.</div>';
@@ -1407,7 +1521,7 @@ async function loadBattles() {
 }
 
 createBattleBtn.addEventListener('click', async () => {
-  const inventoryItemId = battleSkinSelect.value;
+  const inventoryItemId = selectedBattleSkinId;
   if (!inventoryItemId) {
     battleFeedback.textContent = 'Сначала выбери скин из инвентаря.';
     return;
@@ -1419,9 +1533,10 @@ createBattleBtn.addEventListener('click', async () => {
     battleFeedback.textContent = error.message.includes('Could not find the function')
       ? 'Батлы ещё не включены в базе. Примените SQL-файл из папки supabase.'
       : 'Не удалось создать батл. Возможно, выбранный скин уже использован.';
-    createBattleBtn.disabled = !state.inventory.length;
+    renderBattleInventory();
     return;
   }
+  selectedBattleSkinId = null;
   await loadUserState();
   renderMyInventory();
   renderProfile();
@@ -1440,26 +1555,34 @@ battleList.addEventListener('click', async event => {
   const battleId = button.dataset.battleId;
   button.disabled = true;
   if (joinButton) {
-    if (!battleSkinSelect.value) {
-      battleFeedback.textContent = 'Выбери скин для ставки в форме выше.';
+    const selectedStake = state.inventory.find(item => item.instanceId === selectedBattleSkinId);
+    const battle = latestBattles.find(item => item.id === battleId);
+    if (!selectedStake) {
+      battleFeedback.textContent = 'Сначала выбери скин в инвентаре над списком батлов.';
+      button.disabled = false;
+      return;
+    }
+    if (battle && Number(selectedStake.price) + 1e-8 < minimumGuestStake(battle.creator_skin?.price)) {
+      battleFeedback.textContent = `Скин для входа должен стоить не меньше ${fmt(minimumGuestStake(battle.creator_skin?.price))} (95% ставки создателя).`;
       button.disabled = false;
       return;
     }
     const { data, error } = await supabaseClient.rpc('join_skin_battle', {
       p_battle_id: battleId,
-      p_inventory_item_id: battleSkinSelect.value
+      p_inventory_item_id: selectedStake.instanceId
     });
     if (error) {
-      battleFeedback.textContent = error.message.includes('already started')
-        ? 'Этот батл уже начался. Обнови список.'
-        : 'Не удалось вступить. Возможно, батл уже закрыт.';
+      const message = String(error.message || '').toLowerCase();
+      battleFeedback.textContent = message.includes('95%')
+        ? 'Этот скин дешевле минимальной ставки. Выбери скин не дешевле 95% цены скина создателя.'
+        : (message.includes('already started')
+          ? 'Этот батл уже начался. Обнови список.'
+          : 'Не удалось вступить. Возможно, батл уже закрыт.');
     } else {
-      await loadUserState();
-      renderMyInventory();
-      renderProfile();
-      restoreSlotsFromState();
+      selectedBattleSkinId = null;
+      renderBattleInventory();
+      battleFeedback.textContent = 'Ставка принята. Колесо прокручивается…';
       showBattleOutcome(data);
-      battleFeedback.textContent = 'Результат батла рассчитан сервером с шансом 50/50.';
     }
   } else {
     const { error } = await supabaseClient.rpc('cancel_skin_battle', { p_battle_id: battleId });
@@ -1490,10 +1613,27 @@ function selectBet(item) {
     : state.inventory.find(inv => inv.catalogId === (item.id || item.catalogId));
   if (!inventoryItem) return;
 
+  if (targetData && String(targetData.id) === String(inventoryItem.catalogId)) {
+    warningEl.textContent = '⚠ Этот скин уже выбран как цель. Сначала выбери другую цель.';
+    warningEl.classList.add('show');
+    return;
+  }
+
   const selected = new Set(state.betItemIds || []);
   if (multiSelectMode) {
     if (selected.has(inventoryItem.instanceId)) selected.delete(inventoryItem.instanceId);
-    else selected.add(inventoryItem.instanceId);
+    else {
+      const duplicateSkin = [...selected].some(id => {
+        const chosen = state.inventory.find(inv => inv.instanceId === id);
+        return chosen && String(chosen.catalogId) === String(inventoryItem.catalogId);
+      });
+      if (duplicateSkin) {
+        warningEl.textContent = '⚠ Один и тот же скин можно добавить в ставку только один раз.';
+        warningEl.classList.add('show');
+        return;
+      }
+      selected.add(inventoryItem.instanceId);
+    }
     state.betItemIds = [...selected];
   } else {
     state.betItemIds = [inventoryItem.instanceId];
@@ -1514,6 +1654,11 @@ multiBetToggle.addEventListener('click', () => {
 
 function selectTarget(item) {
   if (spinning) return;
+  if (isSkinAlreadyStaked(item)) {
+    warningEl.textContent = '⚠ Нельзя выбрать тот же скин и для ставки, и для цели';
+    warningEl.classList.add('show');
+    return;
+  }
   targetData = item;
   state.targetName = item.name;
   saveState();

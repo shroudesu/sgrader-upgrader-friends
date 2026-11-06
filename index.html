@@ -199,10 +199,11 @@
     <div class="battle-layout">
       <div class="panel battle-create-panel">
         <h2 class="panel-title">Создать батл</h2>
-        <p class="battle-help">Выбери скин из инвентаря. Он будет поставлен в банк и станет зелёной стороной создателя.</p>
-        <label for="battleSkinSelect">Твой скин</label>
-        <select id="battleSkinSelect" class="sort-select battle-skin-select"></select>
-        <button type="button" class="btn-small battle-create-btn" id="createBattleBtn">Создать батл</button>
+        <p class="battle-help">Выбери скин прямо в инвентаре ниже. Для входа в чужой батл ставка гостя должна быть не меньше 95% цены скина создателя.</p>
+        <div class="battle-inventory-heading">Твой инвентарь</div>
+        <div class="battle-inventory" id="battleInventory" aria-label="Инвентарь для батлов"></div>
+        <div class="battle-selection-status" id="battleSelectionStatus" role="status">Выбери скин из инвентаря</div>
+        <button type="button" class="btn-small battle-create-btn" id="createBattleBtn" disabled>Создать батл</button>
         <div class="battle-feedback" id="battleFeedback" role="status" aria-live="polite"></div>
       </div>
       <div class="panel battle-wheel-panel">
@@ -286,7 +287,7 @@
       <p class="admin-notice">Игроки и начисления хранятся в общей базе. ₽ на сайте — только условная игровая валюта, без денежной стоимости.</p>
       <div class="admin-table-wrap">
         <table class="admin-table">
-          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс, ₽ демо</th><th>Начислить ₽</th></tr></thead>
+          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс, ₽ демо</th><th>Начислить ₽</th><th>Снять ₽</th></tr></thead>
           <tbody id="adminUsers"></tbody>
         </table>
       </div>
@@ -342,7 +343,7 @@
 
 </div><!-- /.app -->
 
-<audio id="winSound" src="win.mp3" preload="auto"></audio>
+<audio id="winSound" src="sounds/win.mp3" preload="auto"></audio>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase-config.js"></script>
