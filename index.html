@@ -32,7 +32,7 @@
     </form>
 
     <div class="auth-hint" id="backendSetupHint" role="status"></div>
-    <div class="auth-hint">Игровые аккаунты и фантики общие для всех устройств. Указывай только игровой ник; email не требуется. Восстановление пароля не настроено — используй отдельный пароль для демо.</div>
+    <div class="auth-hint">Игровые аккаунты и демо-рубли общие для всех устройств. Указывай только игровой ник; email не требуется. Восстановление пароля не настроено — используй отдельный пароль для демо.</div>
   </div>
 </div>
 
@@ -44,6 +44,7 @@
 
   <nav class="nav-tabs">
     <button class="nav-tab active" data-tab="upgrade">Апгрейд</button>
+    <button class="nav-tab" data-tab="battles">Батлы</button>
     <button class="nav-tab" data-tab="profile">Профиль</button>
     <button class="nav-tab" data-tab="admin" id="adminNav" style="display:none">Админка</button>
   </nav>
@@ -60,7 +61,7 @@
   </div>
 
   <div class="balance">
-    <span class="balance-label">Фантики</span>
+    <span class="balance-label">Демо-рубли</span>
     <span class="balance-value" id="balance">0.00</span>
   </div>
   <div class="player-id" id="playerId">ID: —</div>
@@ -78,9 +79,9 @@
           <h2 class="panel-title">Каталог скинов</h2>
           <input type="text" id="invSearch" class="search-input" placeholder="Поиск: ak redline ft, ★ karambit, awp asiimov...">
           <div class="price-filter">
-            <input type="number" id="invPriceFrom" class="price-input" placeholder="от фантиков" min="0" step="any">
+            <input type="number" id="invPriceFrom" class="price-input" placeholder="от ₽" min="0" step="any">
             <span class="price-sep">—</span>
-            <input type="number" id="invPriceTo" class="price-input" placeholder="до фантиков" min="0" step="any">
+            <input type="number" id="invPriceTo" class="price-input" placeholder="до ₽" min="0" step="any">
           </div>
           <div class="filter-row">
             <select id="invSort" class="sort-select">
@@ -119,6 +120,16 @@
         <div class="multiplier-row">Множитель: <span id="multiplier">—</span></div>
         <div class="warning" id="warning"></div>
 
+        <div class="spin-settings">
+          <label class="spin-strength-label" for="spinStrength">Сила прокрута указателя <strong id="spinStrengthValue">5</strong></label>
+          <input type="range" id="spinStrength" min="1" max="10" value="5" aria-label="Сила прокрута указателя">
+          <div class="spin-speed" role="group" aria-label="Скорость прокрутки">
+            <button type="button" class="spin-mode" data-spin-mode="slow">Азартная медленная</button>
+            <button type="button" class="spin-mode active" data-spin-mode="fast">Быстрая</button>
+          </div>
+          <div class="spin-note">Скорость и сила меняют анимацию, но не шанс выигрыша.</div>
+        </div>
+
         <button class="btn-upgrade" id="upgradeBtn" disabled>
           <span class="btn-text">КРУТИТЬ</span>
         </button>
@@ -136,6 +147,10 @@
             <div class="slot-card" id="targetSlot"><div class="slot-empty">—</div></div>
           </div>
         </div>
+        <div class="bet-selection-bar">
+          <button type="button" class="btn-small" id="multiBetToggle" aria-pressed="false">Выбрать несколько</button>
+          <span id="betSelectionStatus">Выбери скин в инвентаре</span>
+        </div>
       </section>
 
       <aside class="col">
@@ -143,9 +158,9 @@
           <h2 class="panel-title">Желаемый скин</h2>
           <input type="text" id="targetSearch" class="search-input" placeholder="Поиск: ak redline ft, ★ karambit, awp asiimov...">
           <div class="price-filter">
-            <input type="number" id="targetPriceFrom" class="price-input" placeholder="от фантиков" min="0" step="any">
+            <input type="number" id="targetPriceFrom" class="price-input" placeholder="от ₽" min="0" step="any">
             <span class="price-sep">—</span>
-            <input type="number" id="targetPriceTo" class="price-input" placeholder="до фантиков" min="0" step="any">
+            <input type="number" id="targetPriceTo" class="price-input" placeholder="до ₽" min="0" step="any">
           </div>
           <div class="filter-row">
             <select id="targetSort" class="sort-select">
@@ -177,6 +192,37 @@
     </div>
   </section>
 
+  <!-- БАТЛЫ СКИНОВ -->
+  <section class="tab-page" id="page-battles">
+    <h1 class="title">Батлы скинов</h1>
+    <p class="demo-note">Победитель определяется сервером с вероятностью 50/50 и забирает оба условных скина. Это демо-игра, без реальных денег и предметов.</p>
+    <div class="battle-layout">
+      <div class="panel battle-create-panel">
+        <h2 class="panel-title">Создать батл</h2>
+        <p class="battle-help">Выбери скин из инвентаря. Он будет поставлен в банк и станет зелёной стороной создателя.</p>
+        <label for="battleSkinSelect">Твой скин</label>
+        <select id="battleSkinSelect" class="sort-select battle-skin-select"></select>
+        <button type="button" class="btn-small battle-create-btn" id="createBattleBtn">Создать батл</button>
+        <div class="battle-feedback" id="battleFeedback" role="status" aria-live="polite"></div>
+      </div>
+      <div class="panel battle-wheel-panel">
+        <h2 class="panel-title">Колесо 50/50</h2>
+        <div class="battle-wheel-wrap">
+          <div class="battle-wheel" id="battleWheel">
+            <canvas id="battleWheelCanvas" width="240" height="240"></canvas>
+          </div>
+          <div class="battle-pointer"></div>
+        </div>
+        <div class="battle-wheel-legend"><span><i class="creator-color"></i>Создатель</span><span><i class="guest-color"></i>Гость</span></div>
+        <div class="battle-result" id="battleResult" aria-live="polite">Выбери открытый батл, чтобы присоединиться.</div>
+      </div>
+    </div>
+    <div class="panel battle-list-panel">
+      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Открытые и завершённые батлы</h2><button type="button" class="btn-small" id="refreshBattlesBtn">Обновить</button></div>
+      <div class="battle-list" id="battleList"><div class="battle-empty">Загружаю батлы…</div></div>
+    </div>
+  </section>
+
   <!-- ПРОФИЛЬ -->
   <section class="tab-page" id="page-profile">
     <h1 class="title">Профиль</h1>
@@ -184,7 +230,7 @@
     <div class="profile-stats">
       <div class="stat-card">
         <div class="stat-label">Баланс</div>
-        <div class="stat-value" id="profBalance">0.00 фант.</div>
+        <div class="stat-value" id="profBalance">0.00 ₽</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Скинов в инвентаре</div>
@@ -192,7 +238,7 @@
       </div>
       <div class="stat-card">
         <div class="stat-label">Стоимость инвентаря</div>
-        <div class="stat-value" id="profInvValue">0.00 фант.</div>
+        <div class="stat-value" id="profInvValue">0.00 ₽</div>
       </div>
       <div class="stat-card best-drop">
         <div class="stat-label">Лучший дроп</div>
@@ -206,7 +252,7 @@
       <div class="panel-title-row">
         <h2 class="panel-title" style="margin-bottom:0">Мой инвентарь</h2>
         <div class="profile-actions">
-          <button class="btn-small" id="sellAllBtn" title="Обменять все скины на виртуальные фантики">Обменять всё</button>
+          <button class="btn-small" id="sellAllBtn" title="Обменять все скины на демо-рубли">Обменять всё</button>
           <button class="btn-small danger" id="resetBtn" title="Сбросить прогресс">Сброс</button>
         </div>
       </div>
@@ -214,10 +260,10 @@
     </div>
 
     <div class="panel credit-panel">
-      <h2 class="panel-title">Виртуальные фантики</h2>
-      <p>Это только демо-заявка: деньги не списываются и платёж не проводится. Выбери условный способ и сумму — Telegram откроется с готовым сообщением. Отправь его администратору; после этого он сможет начислить фантики по ID игрока.</p>
+      <h2 class="panel-title">Демо-пополнение рублей</h2>
+      <p>Это только заявка для игры: настоящие деньги не списываются и платёж не проводится. Выбери условный способ и сумму — Telegram откроется с готовым сообщением. Администратор сможет начислить демо-рубли по ID игрока.</p>
       <form class="topup-form" id="topupRequestForm">
-        <label for="topupAmount">Сумма фантиков</label>
+        <label for="topupAmount">Сумма, ₽ (демо)</label>
         <input id="topupAmount" type="number" min="1" max="100000000" step="1" inputmode="numeric" placeholder="Введите сумму" required>
         <label for="topupMethod">Условный способ (демо)</label>
         <select id="topupMethod" required>
@@ -237,10 +283,10 @@
   <section class="tab-page" id="page-admin">
     <h1 class="title">Админ-панель</h1>
     <div class="panel admin-panel">
-      <p class="admin-notice">Игроки и начисления хранятся в общей базе. Фантики — виртуальные и не имеют денежной стоимости.</p>
+      <p class="admin-notice">Игроки и начисления хранятся в общей базе. ₽ на сайте — только условная игровая валюта, без денежной стоимости.</p>
       <div class="admin-table-wrap">
         <table class="admin-table">
-          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Фантики</th><th>Начислить фантики</th></tr></thead>
+          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс, ₽ демо</th><th>Начислить ₽</th></tr></thead>
           <tbody id="adminUsers"></tbody>
         </table>
       </div>
@@ -263,12 +309,12 @@
 
   <div class="modal-overlay" id="sellModal">
     <div class="modal">
-      <h3 class="modal-title">Обменять скин на фантики?</h3>
+      <h3 class="modal-title">Обменять скин на демо-рубли?</h3>
       <div class="modal-item" id="sellModalItem"></div>
       <div class="sell-info">
-        <div class="sell-row"><span>Цена скина:</span><span id="sellBasePrice">0 фант.</span></div>
-        <div class="sell-row"><span id="sellFeeLabel">Комиссия (10%):</span><span id="sellFee" class="text-dim">−0 фант.</span></div>
-        <div class="sell-row total"><span>Зачислится на баланс:</span><span id="sellReceive">0 фант.</span></div>
+        <div class="sell-row"><span>Цена скина:</span><span id="sellBasePrice">0 ₽</span></div>
+        <div class="sell-row"><span id="sellFeeLabel">Комиссия (10%):</span><span id="sellFee" class="text-dim">−0 ₽</span></div>
+        <div class="sell-row total"><span>Зачислится на баланс:</span><span id="sellReceive">0 ₽</span></div>
       </div>
       <div class="modal-actions">
         <button class="btn-modal btn-cancel" id="sellCancel">Отмена</button>
@@ -291,7 +337,7 @@
 </main>
 
 <footer class="footer">
-  Демо-игра. Все балансы и цены условные, внутриигровые фантики нельзя купить, вывести или обменять на деньги.
+  Демо-игра. Все ₽ на сайте — условные демо-рубли, а цены и скины вымышленные: их нельзя купить, вывести или обменять на деньги и реальные предметы.
 </footer>
 
 </div><!-- /.app -->

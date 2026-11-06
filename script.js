@@ -1,5 +1,5 @@
 // ============================================================
-// УСЛОВНАЯ МОДЕЛЬ ЦЕН ДЛЯ ДЕМО-ФАНТИКОВ
+// УСЛОВНАЯ МОДЕЛЬ ЦЕН ДЛЯ ДЕМО-РУБЛЕЙ
 // ============================================================
 
 const RARITY_BASE = {
@@ -201,6 +201,8 @@ const SELL_COMMISSION = 0.10;
 // КЛЮЧИ ХРАНИЛИЩА
 // ============================================================
 const VOLUME_KEY = 'cs2up_volume';
+const SPIN_STRENGTH_KEY = 'cs2up_spin_strength';
+const SPIN_MODE_KEY = 'cs2up_spin_mode';
 const TELEGRAM_URL = 'https://t.me/perkasanya';
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
@@ -240,6 +242,20 @@ const topupRequestForm = document.getElementById('topupRequestForm');
 const topupAmountInput = document.getElementById('topupAmount');
 const topupMethodSelect = document.getElementById('topupMethod');
 const topupFeedback = document.getElementById('topupFeedback');
+const multiBetToggle = document.getElementById('multiBetToggle');
+const betSelectionStatus = document.getElementById('betSelectionStatus');
+const spinStrengthSlider = document.getElementById('spinStrength');
+const spinStrengthValue = document.getElementById('spinStrengthValue');
+const spinModeButtons = document.querySelectorAll('.spin-mode');
+const battleSkinSelect = document.getElementById('battleSkinSelect');
+const createBattleBtn = document.getElementById('createBattleBtn');
+const battleFeedback = document.getElementById('battleFeedback');
+const battleList = document.getElementById('battleList');
+const refreshBattlesBtn = document.getElementById('refreshBattlesBtn');
+const battleResult = document.getElementById('battleResult');
+const battleWheelCanvas = document.getElementById('battleWheelCanvas');
+const battleWheelCtx = battleWheelCanvas.getContext('2d');
+const battleWheel = document.getElementById('battleWheel');
 
 // ============================================================
 // ЭЛЕМЕНТЫ — ОСНОВНЫЕ
@@ -316,6 +332,7 @@ let state = {
   balance: 0,
   inventory: [],
   betId: null,
+  betItemIds: [],
   targetName: null,
   bestDrop: null
 };
@@ -330,6 +347,12 @@ let pendingBuy = null;
 let pendingSell = null;
 let pendingConfirm = null;
 let winVolume = 0.7;
+let multiSelectMode = false;
+let spinStrength = 5;
+let spinMode = 'fast';
+let battleWheelAngle = 0;
+let lastBattleResults = new Set();
+let battlePollInFlight = false;
 let invQuickFilter = 'all';
 let targetQuickFilter = 'all';
 
@@ -344,7 +367,11 @@ function escapeHtml(value) {
 }
 
 function fmt(n) {
-  return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' фант.';
+  return Number(n || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+}
+
+function makeInstanceId() {
+  return window.crypto?.randomUUID?.() || `skin-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 // ============================================================
@@ -511,17 +538,17 @@ topupRequestForm.addEventListener('submit', event => {
 
   const amount = Number(topupAmountInput.value);
   if (!Number.isInteger(amount) || amount < 1 || amount > 100000000) {
-    topupFeedback.textContent = 'Укажи сумму от 1 до 100 000 000 фантиков.';
+    topupFeedback.textContent = 'Укажи сумму от 1 до 100 000 000 демо-рублей.';
     return;
   }
 
   const method = topupMethodSelect.value;
   const promoText = currentUser.promoCode === PROMO_CODE ? ` Промокод: ${PROMO_CODE} (+10%).` : '';
   const message = [
-    'Демо-заявка на игровые фантики (оплата не проводилась).',
+    'Демо-заявка на внутриигровые рубли (оплата не проводилась).',
     `Игрок: ${currentUser.username}`,
     `ID игрока: ${currentUser.playerId}`,
-    `Запрошено: ${amount} фантиков`,
+    `Запрошено: ${amount} демо-рублей`,
     `Условный способ: ${method}.${promoText}`
   ].join('\n');
   const url = `${TELEGRAM_URL}?text=${encodeURIComponent(message)}`;
@@ -533,7 +560,7 @@ logoutBtn.addEventListener('click', async () => {
   await stateSaveQueue;
   if (supabaseClient) await supabaseClient.auth.signOut();
   currentUser = null;
-  state = { balance: 0, inventory: [], betId: null, targetName: null, bestDrop: null };
+  state = { balance: 0, inventory: [], betId: null, betItemIds: [], targetName: null, bestDrop: null };
   betData = null;
   targetData = null;
   authPassword.value = '';
@@ -548,7 +575,7 @@ logoutBtn.addEventListener('click', async () => {
 // ОБЩЕЕ СОСТОЯНИЕ ПОЛЬЗОВАТЕЛЯ
 // ============================================================
 async function loadUserState() {
-  const empty = { balance: 0, inventory: [], betId: null, targetName: null, bestDrop: null };
+  const empty = { balance: 0, inventory: [], betId: null, betItemIds: [], targetName: null, bestDrop: null };
   const [walletResult, gameStateResult] = await Promise.all([
     supabaseClient.from('wallets').select('balance').eq('user_id', currentUser.id).single(),
     supabaseClient.from('game_states').select('state').eq('user_id', currentUser.id).single()
@@ -556,6 +583,23 @@ async function loadUserState() {
   if (walletResult.error) throw walletResult.error;
   if (gameStateResult.error) throw gameStateResult.error;
   state = { ...empty, ...gameStateResult.data.state, balance: Number(walletResult.data.balance) };
+  const seenInstanceIds = new Set();
+  let assignedInstanceId = false;
+  state.inventory = state.inventory.map(item => {
+    let instanceId = item.instanceId;
+    if (!instanceId || seenInstanceIds.has(instanceId)) {
+      instanceId = makeInstanceId();
+      assignedInstanceId = true;
+    }
+    seenInstanceIds.add(instanceId);
+    return { ...item, instanceId };
+  });
+  state.betItemIds = Array.isArray(state.betItemIds) ? state.betItemIds : [];
+  if (!state.betItemIds.length && state.betId) {
+    const legacyBet = state.inventory.find(item => item.catalogId === state.betId);
+    if (legacyBet) state.betItemIds = [legacyBet.instanceId];
+  }
+  if (assignedInstanceId || !Array.isArray(gameStateResult.data.state.betItemIds)) await saveState();
 }
 
 function saveState() {
@@ -607,6 +651,33 @@ function loadVolume() {
 volumeSlider.addEventListener('input', (e) => applyVolume(parseFloat(e.target.value)));
 loadVolume();
 
+function applySpinMode(mode) {
+  spinMode = mode === 'slow' ? 'slow' : 'fast';
+  spinModeButtons.forEach(button => button.classList.toggle('active', button.dataset.spinMode === spinMode));
+  try { localStorage.setItem(SPIN_MODE_KEY, spinMode); } catch (e) {}
+}
+
+function loadSpinSettings() {
+  let savedStrength = 5;
+  let savedMode = 'fast';
+  try {
+    savedStrength = Number(localStorage.getItem(SPIN_STRENGTH_KEY) || 5);
+    savedMode = localStorage.getItem(SPIN_MODE_KEY) || 'fast';
+  } catch (e) {}
+  spinStrength = Math.max(1, Math.min(10, Number.isFinite(savedStrength) ? savedStrength : 5));
+  spinStrengthSlider.value = String(spinStrength);
+  spinStrengthValue.textContent = String(spinStrength);
+  applySpinMode(savedMode);
+}
+
+spinStrengthSlider.addEventListener('input', event => {
+  spinStrength = Number(event.target.value);
+  spinStrengthValue.textContent = String(spinStrength);
+  try { localStorage.setItem(SPIN_STRENGTH_KEY, String(spinStrength)); } catch (e) {}
+});
+spinModeButtons.forEach(button => button.addEventListener('click', () => applySpinMode(button.dataset.spinMode)));
+loadSpinSettings();
+
 // ============================================================
 // ЗВУК
 // ============================================================
@@ -642,6 +713,11 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     $('page-' + page).classList.add('active');
     if (page === 'profile') renderProfile();
     if (page === 'admin') renderAdminUsers();
+    if (page === 'battles') {
+      renderBattleStakeOptions();
+      drawBattleWheel();
+      void loadBattles();
+    }
   });
 });
 
@@ -714,7 +790,7 @@ async function renderAdminUsers() {
       <td>${escapeHtml(promo)}</td>
       <td>${fmt(Number(user.balance))}</td>
       <td><form class="admin-grant-form" data-player-id="${escapeHtml(user.player_id)}">
-        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Фантики" aria-label="Количество фантиков">
+        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Демо-рубли" aria-label="Количество демо-рублей">
         <button class="btn-small" type="submit">Начислить</button>
       </form></td>
     </tr>`;
@@ -729,7 +805,7 @@ adminUsersEl.addEventListener('submit', async event => {
   const amountInput = form.querySelector('.admin-amount');
   const amount = Number(amountInput.value);
   if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) {
-    adminFeedback.textContent = 'Укажите сумму от 0,01 до 100 000 000 фантиков.';
+    adminFeedback.textContent = 'Укажите сумму от 0,01 до 100 000 000 демо-рублей.';
     adminFeedback.classList.add('show');
     return;
   }
@@ -742,7 +818,7 @@ adminUsersEl.addEventListener('submit', async event => {
   });
   button.disabled = false;
   if (error) {
-    adminFeedback.textContent = 'Не удалось начислить фантики. Проверьте права администратора и соединение.';
+    adminFeedback.textContent = 'Не удалось начислить демо-рубли. Проверьте права администратора и соединение.';
     adminFeedback.classList.add('show');
     console.error('Admin grant failed:', error);
     return;
@@ -930,6 +1006,42 @@ function isInMyInventory(itemId) {
   return state.inventory.some(i => i.catalogId === itemId);
 }
 
+function getSelectedBetItems() {
+  const ids = Array.isArray(state.betItemIds) ? state.betItemIds : [];
+  return ids.map(id => state.inventory.find(item => item.instanceId === id)).filter(Boolean);
+}
+
+function makeBetData(items) {
+  if (!items.length) return null;
+  const first = items[0];
+  return {
+    id: first.catalogId,
+    catalogId: first.catalogId,
+    instanceIds: items.map(item => item.instanceId),
+    items,
+    name: items.length === 1 ? first.name : `${items.length} скина`,
+    price: Math.round(items.reduce((sum, item) => sum + Number(item.price || 0), 0) * 100) / 100,
+    img: first.img,
+    rarity: first.rarity
+  };
+}
+
+function updateBetSelection({ persist = true } = {}) {
+  const selected = getSelectedBetItems();
+  state.betItemIds = selected.map(item => item.instanceId);
+  state.betId = selected[0]?.catalogId || null;
+  betData = makeBetData(selected);
+  betSelectionStatus.textContent = selected.length
+    ? `Ставка: ${selected.length} ${selected.length === 1 ? 'скин' : 'скина'} · ${fmt(betData.price)}`
+    : 'Выбери скин в инвентаре';
+  renderSlot(betSlot, betData);
+  updateChance();
+  renderMyInventory();
+  renderTargets();
+  renderInventory();
+  if (persist) void saveState();
+}
+
 // ============================================================
 // ШАНС UI
 // ============================================================
@@ -976,9 +1088,12 @@ function renderSlot(slotEl, item) {
     return;
   }
   slotEl.classList.add('has-item');
+  const title = item.items?.length > 1
+    ? `${item.items.length} скина: ${item.items.slice(0, 2).map(skin => escapeHtml(skin.name)).join(' + ')}${item.items.length > 2 ? ' …' : ''}`
+    : escapeHtml(item.name);
   slotEl.innerHTML = `
     <img src="${item.img}" alt="">
-    <div class="item-name">${item.name}</div>
+    <div class="item-name">${title}</div>
     <div class="item-price">${fmt(item.price)}</div>
   `;
 }
@@ -986,15 +1101,19 @@ function renderSlot(slotEl, item) {
 function restoreSlotsFromState() {
   if (!SKINS_CATALOG.length) return;
 
-  if (state.betId) {
-    const invItem = state.inventory.find(i => i.catalogId === state.betId);
-    if (invItem) {
-      betData = SKINS_CATALOG.find(s => s.id === invItem.catalogId) || invItem;
-      renderSlot(betSlot, betData);
-    }
-  } else {
-    renderSlot(betSlot, null);
+  state.betItemIds = (state.betItemIds || []).filter(id => state.inventory.some(item => item.instanceId === id));
+  if (!state.betItemIds.length && state.betId) {
+    const legacyBet = state.inventory.find(item => item.catalogId === state.betId);
+    if (legacyBet) state.betItemIds = [legacyBet.instanceId];
   }
+  state.betId = state.betItemIds.length
+    ? state.inventory.find(item => item.instanceId === state.betItemIds[0])?.catalogId || null
+    : null;
+  betData = makeBetData(getSelectedBetItems());
+  betSelectionStatus.textContent = betData
+    ? `Ставка: ${betData.items.length} ${betData.items.length === 1 ? 'скин' : 'скина'} · ${fmt(betData.price)}`
+    : 'Выбери скин в инвентаре';
+  renderSlot(betSlot, betData);
 
   if (state.targetName) {
     targetData = SKINS_CATALOG.find(s => s.name === state.targetName) || null;
@@ -1013,9 +1132,11 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   const card = document.createElement('div');
   card.className = 'inv-card' + (disabled ? ' disabled' : '');
   const owned = source === 'catalog' && isInMyInventory(item.id);
+  const selected = source === 'catalog' && state.inventory.some(inv => inv.catalogId === item.id && state.betItemIds.includes(inv.instanceId));
+  if (selected) card.classList.add('active');
 
   card.innerHTML = `
-    ${owned ? '<div class="card-badge owned">✓</div>' : (source === 'catalog' ? '<div class="card-badge buy">Ф</div>' : '')}
+    ${owned ? '<div class="card-badge owned">✓</div>' : (source === 'catalog' ? '<div class="card-badge buy">₽</div>' : '')}
     <div class="item-img"><img src="${item.img}" alt="" loading="lazy"></div>
     <div class="item-name" title="${item.name}">${item.name}</div>
     <div class="item-price">${fmt(item.price)}</div>
@@ -1058,7 +1179,7 @@ function renderInventory() {
     const card = buildCatalogCard(item, {
       disabled, source: 'catalog',
       onClick: () => {
-        if (owned) selectBet(item);
+        if (owned) selectBet(state.inventory.find(inv => inv.catalogId === item.id));
         else openBuyModal(item);
       }
     });
@@ -1125,6 +1246,7 @@ function renderMyInventory() {
   if (!currentUser) return;
   myInvCount.textContent = state.inventory.length;
   myInventory.innerHTML = '';
+  renderBattleStakeOptions();
 
   if (state.inventory.length === 0) {
     myInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#555;font-size:11px;padding:16px">Пусто. Купи скин в каталоге слева.</div>';
@@ -1133,8 +1255,10 @@ function renderMyInventory() {
 
   state.inventory.forEach((inv, i) => {
     const card = document.createElement('div');
-    card.className = 'inv-card';
+    const selected = state.betItemIds.includes(inv.instanceId);
+    card.className = 'inv-card' + (selected ? ' active selected-bet' : '');
     card.innerHTML = `
+      ${selected ? '<div class="card-badge owned">Ставка</div>' : (multiSelectMode ? '<div class="card-badge buy">+</div>' : '')}
       <div class="item-img"><img src="${inv.img}" alt=""></div>
       <div class="item-name" title="${inv.name}">${inv.name}</div>
       <div class="item-price">${fmt(inv.price)}</div>
@@ -1145,22 +1269,251 @@ function renderMyInventory() {
   });
 }
 
+function renderBattleStakeOptions() {
+  if (!battleSkinSelect || !createBattleBtn) return;
+  const oldValue = battleSkinSelect.value;
+  battleSkinSelect.innerHTML = '<option value="">Выбери скин для ставки</option>' + state.inventory.map(item =>
+    `<option value="${escapeHtml(item.instanceId)}">${escapeHtml(item.name)} — ${fmt(item.price)}</option>`
+  ).join('');
+  if (state.inventory.some(item => item.instanceId === oldValue)) battleSkinSelect.value = oldValue;
+  createBattleBtn.disabled = !state.inventory.length;
+}
+
+function drawBattleWheel() {
+  if (!battleWheelCtx) return;
+  const size = battleWheelCanvas.width;
+  const radius = size / 2;
+  const cx = radius, cy = radius;
+  battleWheelCtx.clearRect(0, 0, size, size);
+  battleWheelCtx.beginPath();
+  battleWheelCtx.moveTo(cx, cy);
+  battleWheelCtx.arc(cx, cy, radius - 4, Math.PI / 2, Math.PI * 1.5);
+  battleWheelCtx.closePath();
+  battleWheelCtx.fillStyle = '#4ade80';
+  battleWheelCtx.fill();
+  battleWheelCtx.beginPath();
+  battleWheelCtx.moveTo(cx, cy);
+  battleWheelCtx.arc(cx, cy, radius - 4, -Math.PI / 2, Math.PI / 2);
+  battleWheelCtx.closePath();
+  battleWheelCtx.fillStyle = '#f5f5f5';
+  battleWheelCtx.fill();
+  battleWheelCtx.strokeStyle = '#080808';
+  battleWheelCtx.lineWidth = 3;
+  battleWheelCtx.beginPath();
+  battleWheelCtx.moveTo(cx, 4);
+  battleWheelCtx.lineTo(cx, size - 4);
+  battleWheelCtx.stroke();
+  battleWheelCtx.beginPath();
+  battleWheelCtx.arc(cx, cy, radius - 4, 0, Math.PI * 2);
+  battleWheelCtx.stroke();
+}
+
+function showBattleOutcome(battle, animate = true) {
+  if (!battle?.id || lastBattleResults.has(battle.id)) return;
+  lastBattleResults.add(battle.id);
+  const targetAngle = battle.winner_side === 'creator' ? 90 : 270;
+  if (animate) {
+    const startAngle = battleWheelAngle % 360;
+    const delta = ((targetAngle - startAngle + 360) % 360) + 5 * 360;
+    battleWheelAngle += delta;
+    battleWheel.style.transition = 'transform 5.2s cubic-bezier(0.08, 0.72, 0.12, 1)';
+    battleWheel.style.transform = `rotate(${battleWheelAngle}deg)`;
+  } else {
+    battleWheel.style.transition = 'none';
+    battleWheelAngle = targetAngle;
+    battleWheel.style.transform = `rotate(${targetAngle}deg)`;
+  }
+  battleResult.textContent = `🏆 ${battle.winner_name || 'Игрок'} забирает оба скина из банка (${fmt(Number(battle.bank_value || 0))})`;
+  battleResult.classList.add('is-winner');
+}
+
+function renderBattleCard(battle) {
+  const creatorSkin = battle.creator_skin || {};
+  const guestSkin = battle.guest_skin || {};
+  const waiting = battle.status === 'waiting';
+  const ownBattle = battle.creator_user_id === currentUser.id;
+  const skins = [creatorSkin, guestSkin].filter(Boolean);
+  const bankValue = skins.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  const guestName = battle.guest_name || 'Ждёт соперника';
+  const creatorMarkup = `
+    <div class="battle-side creator-side">
+      <span class="battle-side-label">Создатель · зелёная</span>
+      <strong>${escapeHtml(battle.creator_name)}</strong>
+      <img src="${escapeHtml(creatorSkin.img || '')}" alt="">
+      <span>${escapeHtml(creatorSkin.name || 'Скин')}</span>
+      <small>${fmt(Number(creatorSkin.price || 0))}</small>
+    </div>`;
+  const guestMarkup = waiting
+    ? `<div class="battle-side guest-side waiting-side"><span class="battle-side-label">Гость · белая</span><strong>${escapeHtml(guestName)}</strong><span>Открыто для входа</span></div>`
+    : `<div class="battle-side guest-side">
+      <span class="battle-side-label">Гость · белая</span>
+      <strong>${escapeHtml(guestName)}</strong>
+      <img src="${escapeHtml(guestSkin.img || '')}" alt="">
+      <span>${escapeHtml(guestSkin.name || 'Скин')}</span>
+      <small>${fmt(Number(guestSkin.price || 0))}</small>
+    </div>`;
+  let action = '';
+  if (waiting && !ownBattle) {
+    action = `<button type="button" class="btn-small battle-join-btn" data-battle-id="${escapeHtml(battle.id)}" ${state.inventory.length ? '' : 'disabled'}>Вступить на выбранный скин</button>`;
+  } else if (waiting) {
+    action = `<button type="button" class="btn-small danger battle-cancel-btn" data-battle-id="${escapeHtml(battle.id)}">Отменить и вернуть скин</button>`;
+  } else {
+    action = `<div class="battle-winner-line">${battle.status === 'completed' ? `Победитель: ${escapeHtml(battle.winner_name || '—')}` : 'Батл отменён'}</div>`;
+  }
+  const stateLabel = waiting ? 'Открыт' : (battle.status === 'completed' ? 'Завершён' : 'Отменён');
+  return `<article class="battle-card ${waiting ? 'battle-open' : 'battle-finished'}">
+    <div class="battle-card-head"><span>Батл ${escapeHtml(String(battle.id).slice(0, 8))}</span><span>${stateLabel}</span></div>
+    <div class="battle-matchup">${creatorMarkup}<div class="battle-vs"><strong>VS</strong><span>Банк<br>${fmt(bankValue)}</span></div>${guestMarkup}</div>
+    <div class="battle-card-actions">${action}</div>
+  </article>`;
+}
+
+let battleStatuses = new Map();
+
+async function loadBattles() {
+  if (!currentUser || !supabaseClient || battlePollInFlight) return;
+  battlePollInFlight = true;
+  try {
+    const { data, error } = await supabaseClient.from('skin_battles')
+      .select('id, creator_user_id, creator_name, creator_skin, guest_user_id, guest_name, guest_skin, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
+      .order('created_at', { ascending: false }).limit(40);
+    if (error) throw error;
+    const battles = data || [];
+    if (!battles.length) battleList.innerHTML = '<div class="battle-empty">Открытых батлов пока нет. Создай первый!</div>';
+    else battleList.innerHTML = battles.map(renderBattleCard).join('');
+
+    let currentUserWon = false;
+    battles.forEach(battle => {
+      const previous = battleStatuses.get(battle.id);
+      if (battle.status === 'completed' && previous === 'waiting') {
+        showBattleOutcome({ ...battle, bank_value: Number(battle.bank_value || 0) });
+        currentUserWon ||= battle.winner_user_id === currentUser.id;
+      }
+      if (battle.status === 'completed') lastBattleResults.add(battle.id);
+      battleStatuses.set(battle.id, battle.status);
+    });
+    if (currentUserWon) {
+      await loadUserState();
+      renderMyInventory();
+      renderProfile();
+      restoreSlotsFromState();
+    }
+  } catch (error) {
+    console.error('Could not load battles:', error);
+    battleList.innerHTML = '<div class="battle-empty">Батлы пока не подключены к базе. Примените файл supabase/skin-battles.sql.</div>';
+  } finally {
+    battlePollInFlight = false;
+  }
+}
+
+createBattleBtn.addEventListener('click', async () => {
+  const inventoryItemId = battleSkinSelect.value;
+  if (!inventoryItemId) {
+    battleFeedback.textContent = 'Сначала выбери скин из инвентаря.';
+    return;
+  }
+  createBattleBtn.disabled = true;
+  battleFeedback.textContent = 'Создаю батл…';
+  const { data, error } = await supabaseClient.rpc('create_skin_battle', { p_inventory_item_id: inventoryItemId });
+  if (error) {
+    battleFeedback.textContent = error.message.includes('Could not find the function')
+      ? 'Батлы ещё не включены в базе. Примените SQL-файл из папки supabase.'
+      : 'Не удалось создать батл. Возможно, выбранный скин уже использован.';
+    createBattleBtn.disabled = !state.inventory.length;
+    return;
+  }
+  await loadUserState();
+  renderMyInventory();
+  renderProfile();
+  restoreSlotsFromState();
+  battleFeedback.textContent = 'Батл открыт для соперника.';
+  await loadBattles();
+});
+
+refreshBattlesBtn.addEventListener('click', () => void loadBattles());
+battleList.addEventListener('click', async event => {
+  const joinButton = event.target.closest('.battle-join-btn');
+  const cancelButton = event.target.closest('.battle-cancel-btn');
+  if (!joinButton && !cancelButton) return;
+  const button = joinButton || cancelButton;
+  if (button.disabled) return;
+  const battleId = button.dataset.battleId;
+  button.disabled = true;
+  if (joinButton) {
+    if (!battleSkinSelect.value) {
+      battleFeedback.textContent = 'Выбери скин для ставки в форме выше.';
+      button.disabled = false;
+      return;
+    }
+    const { data, error } = await supabaseClient.rpc('join_skin_battle', {
+      p_battle_id: battleId,
+      p_inventory_item_id: battleSkinSelect.value
+    });
+    if (error) {
+      battleFeedback.textContent = error.message.includes('already started')
+        ? 'Этот батл уже начался. Обнови список.'
+        : 'Не удалось вступить. Возможно, батл уже закрыт.';
+    } else {
+      await loadUserState();
+      renderMyInventory();
+      renderProfile();
+      restoreSlotsFromState();
+      showBattleOutcome(data);
+      battleFeedback.textContent = 'Результат батла рассчитан сервером с шансом 50/50.';
+    }
+  } else {
+    const { error } = await supabaseClient.rpc('cancel_skin_battle', { p_battle_id: battleId });
+    battleFeedback.textContent = error ? 'Не удалось отменить батл.' : 'Батл отменён, скин возвращён.';
+    if (error) console.error('Could not cancel battle:', error);
+    if (!error) {
+      await loadUserState();
+      renderMyInventory();
+      renderProfile();
+      restoreSlotsFromState();
+    }
+  }
+  button.disabled = false;
+  await loadBattles();
+});
+
+setInterval(() => {
+  if ($('page-battles').classList.contains('active')) void loadBattles();
+}, 5000);
+
 // ============================================================
 // ВЫБОР
 // ============================================================
 function selectBet(item) {
-  const catalogItem = SKINS_CATALOG.find(s => s.id === (item.id || item.catalogId)) || item;
-  betData = catalogItem;
-  state.betId = catalogItem.id;
-  saveState();
-  renderSlot(betSlot, betData);
-  updateChance();
-  renderMyInventory();
-  renderTargets();
-  renderInventory();
+  if (spinning || !item) return;
+  const inventoryItem = item.instanceId
+    ? item
+    : state.inventory.find(inv => inv.catalogId === (item.id || item.catalogId));
+  if (!inventoryItem) return;
+
+  const selected = new Set(state.betItemIds || []);
+  if (multiSelectMode) {
+    if (selected.has(inventoryItem.instanceId)) selected.delete(inventoryItem.instanceId);
+    else selected.add(inventoryItem.instanceId);
+    state.betItemIds = [...selected];
+  } else {
+    state.betItemIds = [inventoryItem.instanceId];
+  }
+  updateBetSelection();
 }
 
+multiBetToggle.addEventListener('click', () => {
+  multiSelectMode = !multiSelectMode;
+  multiBetToggle.classList.toggle('active', multiSelectMode);
+  multiBetToggle.setAttribute('aria-pressed', String(multiSelectMode));
+  multiBetToggle.textContent = multiSelectMode ? 'Готово с выбором' : 'Выбрать несколько';
+  betSelectionStatus.textContent = multiSelectMode
+    ? `Выбери скины в инвентаре${state.betItemIds.length ? ` · отмечено: ${state.betItemIds.length}` : ''}`
+    : (betData ? `Ставка: ${betData.items.length} ${betData.items.length === 1 ? 'скин' : 'скина'} · ${fmt(betData.price)}` : 'Выбери скин в инвентаре');
+  renderMyInventory();
+});
+
 function selectTarget(item) {
+  if (spinning) return;
   targetData = item;
   state.targetName = item.name;
   saveState();
@@ -1195,7 +1548,7 @@ modalConfirm.addEventListener('click', async () => {
   const { item } = pendingBuy;
 
   if (!await spendBalance(item.price)) {
-    warningEl.textContent = '⚠ Недостаточно фантиков или нет связи с базой';
+    warningEl.textContent = '⚠ Недостаточно демо-рублей или нет связи с базой';
     warningEl.classList.add('show');
     setTimeout(() => warningEl.classList.remove('show'), 2000);
     closeBuyModal();
@@ -1203,6 +1556,7 @@ modalConfirm.addEventListener('click', async () => {
   }
 
   state.inventory.push({
+    instanceId: makeInstanceId(),
     catalogId: item.id,
     name: item.name,
     price: item.price,
@@ -1256,7 +1610,7 @@ sellConfirm.addEventListener('click', async () => {
   const receive = Math.round(item.price * (1 - SELL_COMMISSION) * 100) / 100;
 
   if (!await addBalance(receive)) {
-    warningEl.textContent = '⚠ Не удалось зачислить фантики. Проверьте соединение.';
+    warningEl.textContent = '⚠ Не удалось зачислить демо-рубли. Проверьте соединение.';
     warningEl.classList.add('show');
     closeSellModal();
     return;
@@ -1264,10 +1618,14 @@ sellConfirm.addEventListener('click', async () => {
 
   state.inventory.splice(invIndex, 1);
 
-  if (state.betId === item.catalogId) {
-    state.betId = null;
-    betData = null;
-    renderSlot(betSlot, null);
+  if ((state.betItemIds || []).includes(item.instanceId)) {
+    state.betItemIds = state.betItemIds.filter(id => id !== item.instanceId);
+    betData = makeBetData(getSelectedBetItems());
+    state.betId = state.betItemIds.length ? state.inventory.find(inv => inv.instanceId === state.betItemIds[0])?.catalogId || null : null;
+    renderSlot(betSlot, betData);
+    betSelectionStatus.textContent = betData
+      ? `Ставка: ${betData.items.length} ${betData.items.length === 1 ? 'скин' : 'скина'} · ${fmt(betData.price)}`
+      : 'Выбери скин в инвентаре';
   }
 
   saveState();
@@ -1313,17 +1671,19 @@ sellAllBtn.addEventListener('click', () => {
   total = Math.round(total * 100) / 100;
 
   openConfirm(
-    'Обменять всё на фантики?',
+    'Обменять всё на демо-рубли?',
     `Вы обменяете ${state.inventory.length} скин(ов) на ${fmt(total)} (комиссия ${Math.round(SELL_COMMISSION*100)}% уже учтена).`,
     async () => {
       if (!await addBalance(total)) {
-        warningEl.textContent = '⚠ Не удалось зачислить фантики. Инвентарь сохранён.';
+        warningEl.textContent = '⚠ Не удалось зачислить демо-рубли. Инвентарь сохранён.';
         warningEl.classList.add('show');
         return;
       }
       state.inventory = [];
       state.betId = null;
+      state.betItemIds = [];
       betData = null;
+      betSelectionStatus.textContent = 'Выбери скин в инвентаре';
       renderSlot(betSlot, null);
       saveState();
       renderProfile();
@@ -1339,9 +1699,10 @@ resetBtn.addEventListener('click', () => {
     'Сбросить прогресс?',
     'Инвентарь и лучший дроп будут удалены. Баланс и аккаунт сохранятся.',
     () => {
-      state = { ...state, inventory: [], betId: null, targetName: null, bestDrop: null };
+      state = { ...state, inventory: [], betId: null, betItemIds: [], targetName: null, bestDrop: null };
       betData = null;
       targetData = null;
+      betSelectionStatus.textContent = 'Выбери скин в инвентаре';
       saveState();
       updateBalanceUI();
       renderSlot(betSlot, null);
@@ -1452,12 +1813,15 @@ document.querySelectorAll('.quick-filters .qf-btn').forEach(btn => {
 upgradeBtn.addEventListener('click', () => {
   if (spinning || !betData || !targetData || currentChance === 0) return;
 
-  if (!isInMyInventory(betData.id)) {
-    warningEl.textContent = '⚠ Этой ставки нет в инвентаре';
+  const wagerItems = getSelectedBetItems();
+  if (!wagerItems.length || wagerItems.length !== betData.items.length) {
+    warningEl.textContent = '⚠ Проверь выбранные скины в инвентаре';
     warningEl.classList.add('show');
     setTimeout(() => warningEl.classList.remove('show'), 2000);
     return;
   }
+  const wagerData = betData;
+  const prizeData = targetData;
 
   spinning = true;
   upgradeBtn.disabled = true;
@@ -1481,12 +1845,15 @@ upgradeBtn.addEventListener('click', () => {
   const jitter = (Math.random() - 0.5) * (arcDeg * 0.6);
   const finalAngle = sectorCenterDeg + jitter;
 
-  const fullSpins = 5 + Math.floor(Math.random() * 3);
+  const fullSpins = 2 + Number(spinStrength) + Math.floor(Math.random() * 3);
   const startAngle = rotorAngle % 360;
   const delta = ((finalAngle - startAngle + 360) % 360) + fullSpins * 360;
   const newAngle = rotorAngle + delta;
+  const duration = spinMode === 'slow' ? 9000 : 4200;
 
-  rotor.style.transition = 'transform 4.2s cubic-bezier(0.15, 0.65, 0.15, 1)';
+  rotor.style.transition = spinMode === 'slow'
+    ? `transform ${duration}ms cubic-bezier(0.08, 0.72, 0.12, 1)`
+    : `transform ${duration}ms cubic-bezier(0.15, 0.65, 0.15, 1)`;
   rotor.style.transform = `rotate(${newAngle}deg)`;
   rotorAngle = newAngle;
 
@@ -1494,37 +1861,41 @@ upgradeBtn.addEventListener('click', () => {
     spinning = false;
     upgradeBtn.disabled = false;
 
-    state.inventory = state.inventory.filter(i => i.catalogId !== betData.id);
+    const wagerIds = new Set(wagerItems.map(item => item.instanceId));
+    state.inventory = state.inventory.filter(item => !wagerIds.has(item.instanceId));
 
     if (win) {
       state.inventory.push({
-        catalogId: targetData.id,
-        name: targetData.name,
-        price: targetData.price,
-        img: targetData.img,
-        rarity: targetData.rarity
+        instanceId: makeInstanceId(),
+        catalogId: prizeData.id,
+        name: prizeData.name,
+        price: prizeData.price,
+        img: prizeData.img,
+        rarity: prizeData.rarity
       });
 
-      if (!state.bestDrop || targetData.price > state.bestDrop.price) {
+      if (!state.bestDrop || prizeData.price > state.bestDrop.price) {
         state.bestDrop = {
-          name: targetData.name,
-          price: targetData.price,
-          img: targetData.img
+          name: prizeData.name,
+          price: prizeData.price,
+          img: prizeData.img
         };
       }
 
-      resultEl.textContent = `🎉 ПОБЕДА! ${targetData.name}`;
+      resultEl.textContent = `🎉 ПОБЕДА! ${prizeData.name}`;
       resultEl.classList.add('show', 'win');
       playWinSound();
     } else {
-      resultEl.textContent = `💀 Проигрыш. ${betData.name} потерян`;
+      resultEl.textContent = `💀 Проигрыш. ${wagerItems.length} ${wagerItems.length === 1 ? 'скин потерян' : 'скина потеряны'}`;
       resultEl.classList.add('show', 'lose');
     }
 
     betData = null;
     targetData = null;
     state.betId = null;
+    state.betItemIds = [];
     state.targetName = null;
+    betSelectionStatus.textContent = 'Выбери скин в инвентаре';
     saveState();
 
     renderSlot(betSlot, null);
@@ -1534,7 +1905,7 @@ upgradeBtn.addEventListener('click', () => {
     renderInventory();
     renderTargets();
     if ($('page-profile').classList.contains('active')) renderProfile();
-  }, 4300);
+  }, duration + 100);
 });
 
 // ============================================================
