@@ -2,6 +2,12 @@
 -- Every battle is settled inside a security-definer transaction; clients cannot
 -- write battle rows or choose the winner.
 
+alter table public.wallet_transactions
+  drop constraint if exists wallet_transactions_reason_check;
+alter table public.wallet_transactions
+  add constraint wallet_transactions_reason_check
+  check (reason in ('admin_grant', 'admin_debit', 'game_sale', 'game_purchase'));
+
 create table if not exists public.skin_battles (
   id uuid primary key default gen_random_uuid(),
   creator_user_id uuid not null references public.profiles(user_id) on delete cascade,
@@ -155,6 +161,9 @@ begin
   end if;
   v_guest_price := (v_guest_skin ->> 'price')::numeric(14, 2);
   if v_guest_price <= 0 then raise exception 'Skin price must be positive'; end if;
+  if v_guest_price < v_battle.bank_value * 0.95 then
+    raise exception 'Guest skin value must be at least 95% of creator skin' using errcode = '22023';
+  end if;
 
   select coalesce(jsonb_agg(entry.item order by entry.ordinality), '[]'::jsonb)
     into v_guest_inventory
@@ -208,8 +217,13 @@ begin
 
   return jsonb_build_object(
     'id', p_battle_id,
+    'status', 'completed',
+    'creator_user_id', v_battle.creator_user_id,
+    'guest_user_id', v_user_id,
     'creator_name', v_battle.creator_name,
+    'creator_skin', v_battle.creator_skin,
     'guest_name', v_guest_name,
+    'guest_skin', v_guest_skin,
     'winner_name', v_winner_name,
     'winner_side', v_winner_side,
     'winner_user_id', v_winner_id,
@@ -266,3 +280,64 @@ $$;
 
 revoke all on function public.cancel_skin_battle(uuid) from public, anon;
 grant execute on function public.cancel_skin_battle(uuid) to authenticated;
+
+create or replace function public.admin_debit_demo_credits(
+  p_player_id bigint,
+  p_amount numeric
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_target uuid;
+  v_username text;
+  v_amount numeric(14, 2);
+  v_balance numeric(14, 2);
+begin
+  if auth.uid() is null or not public.is_current_user_admin() then
+    raise exception 'Administrator access required' using errcode = '42501';
+  end if;
+  if p_amount is null or p_amount <= 0 or p_amount > 100000000 then
+    raise exception 'Amount must be between 0.01 and 100000000';
+  end if;
+  v_amount := round(p_amount, 2);
+  if v_amount <= 0 then raise exception 'Amount must be at least 0.01'; end if;
+
+  select p.user_id, p.username
+    into v_target, v_username
+    from public.profiles p
+   where p.player_id = p_player_id
+   for update;
+  if v_target is null then raise exception 'Player not found'; end if;
+
+  select w.balance into v_balance
+    from public.wallets w
+   where w.user_id = v_target
+   for update;
+  if v_balance is null then raise exception 'Player wallet not found'; end if;
+  if v_balance < v_amount then
+    raise exception 'Insufficient balance' using errcode = '22023';
+  end if;
+
+  update public.wallets w
+     set balance = w.balance - v_amount,
+         updated_at = now()
+   where w.user_id = v_target
+   returning w.balance into v_balance;
+
+  insert into public.wallet_transactions (user_id, actor_user_id, amount, bonus, reason)
+  values (v_target, auth.uid(), -v_amount, 0, 'admin_debit');
+
+  return jsonb_build_object(
+    'player_id', p_player_id,
+    'username', v_username,
+    'amount', v_amount,
+    'balance', v_balance
+  );
+end;
+$$;
+
+revoke all on function public.admin_debit_demo_credits(bigint, numeric) from public, anon;
+grant execute on function public.admin_debit_demo_credits(bigint, numeric) to authenticated;
