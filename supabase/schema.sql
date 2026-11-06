@@ -524,7 +524,7 @@ begin
   v_guest_price := (v_guest_skin ->> 'price')::numeric(14, 2);
   if v_guest_price <= 0 then raise exception 'Skin price must be positive'; end if;
   if v_guest_price < v_battle.bank_value * 0.95 then
-    raise exception 'Guest skin value must be at least 95% of creator skin' using errcode = '22023';
+    raise exception 'Guest skin value must be at least 95%% of creator skin' using errcode = '22023';
   end if;
 
   select coalesce(jsonb_agg(entry.item order by entry.ordinality), '[]'::jsonb)
