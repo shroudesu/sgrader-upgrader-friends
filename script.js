@@ -200,16 +200,17 @@ const SELL_COMMISSION = 0.10;
 // ============================================================
 // КЛЮЧИ ХРАНИЛИЩА
 // ============================================================
-const USERS_KEY = 'cs2up_users';
-const SESSION_KEY = 'cs2up_session';
 const VOLUME_KEY = 'cs2up_volume';
 const TELEGRAM_URL = 'https://t.me/perkasanya';
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
-
-function stateKey(username) {
-  return 'cs2up_state_' + username.toLowerCase();
-}
+const supabaseUrl = String(window.SUPABASE_URL || '');
+const supabaseKey = String(window.SUPABASE_PUBLISHABLE_KEY || '');
+const supabaseConfigured = supabaseUrl.startsWith('https://') &&
+  !supabaseUrl.includes('YOUR_') && supabaseKey.length > 20 && !supabaseKey.includes('YOUR_');
+const supabaseClient = window.supabase?.createClient && supabaseConfigured
+  ? window.supabase.createClient(supabaseUrl, supabaseKey)
+  : null;
 
 // ============================================================
 // ЭЛЕМЕНТЫ — АВТОРИЗАЦИЯ
@@ -225,6 +226,7 @@ const authPasswordConfirm = document.getElementById('authPasswordConfirm');
 const authPromoWrap = document.getElementById('authPromoWrap');
 const authPromo = document.getElementById('authPromo');
 const authError = document.getElementById('authError');
+const backendSetupHint = document.getElementById('backendSetupHint');
 const authSubmit = document.getElementById('authSubmit');
 const userNameEl = document.getElementById('userName');
 const logoutBtn = document.getElementById('logoutBtn');
@@ -234,6 +236,10 @@ const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
 const telegramLink = document.getElementById('telegramLink');
 const promoStatus = document.getElementById('promoStatus');
+const topupRequestForm = document.getElementById('topupRequestForm');
+const topupAmountInput = document.getElementById('topupAmount');
+const topupMethodSelect = document.getElementById('topupMethod');
+const topupFeedback = document.getElementById('topupFeedback');
 
 // ============================================================
 // ЭЛЕМЕНТЫ — ОСНОВНЫЕ
@@ -305,6 +311,7 @@ const volumeIcon = $('volumeIcon');
 // СОСТОЯНИЕ
 // ============================================================
 let currentUser = null;
+let stateSaveQueue = Promise.resolve();
 let state = {
   balance: 0,
   inventory: [],
@@ -332,49 +339,6 @@ const MAX_RENDER = 500;
 // ============================================================
 // УТИЛИТЫ
 // ============================================================
-async function sha256(text) {
-  const enc = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest('SHA-256', enc);
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-function getUsers() {
-  let users;
-  try { users = JSON.parse(localStorage.getItem(USERS_KEY) || '{}'); }
-  catch (e) { users = {}; }
-
-  let changed = false;
-  const ids = new Set(Object.values(users).map(user => user.playerId ? String(user.playerId) : null).filter(Boolean));
-  for (const [key, user] of Object.entries(users)) {
-    if (!user.playerId) {
-      user.playerId = createPlayerId(ids);
-      ids.add(user.playerId);
-      changed = true;
-    } else if (typeof user.playerId !== 'string') {
-      user.playerId = String(user.playerId);
-      changed = true;
-    }
-    if (!user.role) { user.role = 'user'; changed = true; }
-  }
-  if (Object.keys(users).length && !Object.values(users).some(user => user.role === 'admin')) {
-    const owner = Object.entries(users).sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0))[0];
-    owner[1].role = 'admin';
-    changed = true;
-  }
-  if (changed) saveUsers(users);
-  return users;
-}
-function saveUsers(users) {
-  try { localStorage.setItem(USERS_KEY, JSON.stringify(users)); } catch (e) {}
-}
-
-function createPlayerId(existing = new Set()) {
-  let id;
-  do { id = String(Math.floor(100000 + Math.random() * 900000)); }
-  while (existing.has(id));
-  return id;
-}
-
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
@@ -414,138 +378,203 @@ function showAuthError(msg) {
   authError.classList.add('show');
 }
 
+function usernameAuthEmail(username) {
+  const bytes = new TextEncoder().encode(username.trim().toLowerCase());
+  let binary = '';
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  const alias = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return `u-${alias}@players.sgrader.invalid`;
+}
+
+function showAuthScreen() {
+  appEl.style.display = 'none';
+  authScreen.classList.remove('hide');
+}
+
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   authError.textContent = '';
   authError.classList.remove('show');
 
+  if (!supabaseClient) {
+    showAuthError('Общая база не настроена. Владелец сайта должен заполнить supabase-config.js и установить schema.sql.');
+    return;
+  }
+
   const username = authUsername.value.trim();
   const password = authPassword.value;
   const enteredPromo = authPromo.value.trim().toUpperCase();
-
   if (!/^[a-zA-Z0-9_а-яА-ЯёЁ]{3,16}$/.test(username)) {
     showAuthError('Ник: 3–16 символов, буквы/цифры/_');
     return;
   }
-  if (password.length < 4) {
-    showAuthError('Пароль: минимум 4 символа');
+  if (password.length < 6) {
+    showAuthError('Пароль: минимум 6 символов');
     return;
   }
-
-  const users = getUsers();
-  const key = username.toLowerCase();
 
   if (authMode === 'register') {
     if (authPasswordConfirm.value !== password) {
       showAuthError('Пароли не совпадают');
       return;
     }
-    if (users[key]) {
-      showAuthError('Такой ник уже занят');
-      return;
-    }
     if (enteredPromo && enteredPromo !== PROMO_CODE) {
       showAuthError('Промокод не найден');
       return;
     }
+  }
 
-    authSubmit.disabled = true;
-    const hash = await sha256(password);
-    const existingIds = new Set(Object.values(users).map(user => user.playerId).filter(Boolean));
-    users[key] = {
-      username,
-      passwordHash: hash,
-      playerId: createPlayerId(existingIds),
-      role: Object.keys(users).length === 0 ? 'admin' : 'user',
-      promoCode: enteredPromo || null,
-      createdAt: Date.now()
-    };
-    saveUsers(users);
-    loginAs(username, hash);
-    authSubmit.disabled = false;
-  } else {
-    if (!users[key]) {
-      showAuthError('Пользователь не найден');
-      return;
+  authSubmit.disabled = true;
+  try {
+    const email = usernameAuthEmail(username);
+    if (authMode === 'register') {
+      const { data, error } = await supabaseClient.auth.signUp({
+        email,
+        password,
+        options: { data: { username } }
+      });
+      if (error) throw error;
+      if (!data.session || !data.user) {
+        showAuthError('Регистрация создана, но вход ожидает подтверждения. Владелец должен выключить Confirm email в Supabase.');
+        return;
+      }
+
+      if (enteredPromo) {
+        const { error: promoError } = await supabaseClient.rpc('apply_registration_promo', { p_code: enteredPromo });
+        if (promoError) {
+          await loginAs(data.user);
+          promoStatus.textContent = 'Аккаунт создан, но промокод не применился. Обратитесь к администратору.';
+          return;
+        }
+      }
+      await loginAs(data.user);
+    } else {
+      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      await loginAs(data.user);
     }
-
-    authSubmit.disabled = true;
-    const hash = await sha256(password);
-    if (users[key].passwordHash !== hash) {
-      showAuthError('Неверный пароль');
-      authSubmit.disabled = false;
-      return;
+  } catch (error) {
+    console.error('Account request failed:', error);
+    const message = String(error?.message || '');
+    if (message.toLowerCase().includes('invalid login credentials')) {
+      showAuthError('Неверный ник или пароль');
+    } else if (message.toLowerCase().includes('already registered') || message.toLowerCase().includes('duplicate')) {
+      showAuthError('Такой ник уже занят');
+    } else {
+      showAuthError('Не удалось связаться с общей базой. Проверьте настройки Supabase и попробуйте ещё раз.');
     }
-
-    loginAs(users[key].username, hash);
+  } finally {
     authSubmit.disabled = false;
   }
 });
 
-function loginAs(username, passwordHash) {
-  const users = getUsers();
-  const account = users[username.toLowerCase()];
-  if (!account) return;
-  currentUser = { username: account.username, passwordHash, playerId: account.playerId, role: account.role, promoCode: account.promoCode || null };
-  try { localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser)); } catch (e) {}
+async function loginAs(authUser) {
+  const { data: profile, error: profileError } = await supabaseClient
+    .from('profiles')
+    .select('user_id, player_id, username, role, promo_code')
+    .eq('user_id', authUser.id)
+    .single();
+  if (profileError) throw profileError;
+
+  currentUser = {
+    id: authUser.id,
+    username: profile.username,
+    playerId: profile.player_id,
+    role: profile.role,
+    promoCode: profile.promo_code
+  };
+  await loadUserState();
 
   authScreen.classList.add('hide');
   appEl.style.display = 'block';
-  userNameEl.textContent = account.username;
-  playerIdEl.textContent = `ID игрока: ${account.playerId}`;
-  adminNav.style.display = account.role === 'admin' ? '' : 'none';
+  userNameEl.textContent = currentUser.username;
+  playerIdEl.textContent = `ID игрока: ${currentUser.playerId}`;
+  adminNav.style.display = currentUser.role === 'admin' ? '' : 'none';
   telegramLink.href = TELEGRAM_URL;
-  promoStatus.textContent = account.promoCode === PROMO_CODE
-    ? `Промокод ${PROMO_CODE} активен: +10% к виртуальным фантикам, начисленным администратором.`
-    : 'При регистрации можно было указать промокод SGRADER; повторно применить его нельзя.';
+  topupFeedback.textContent = '';
+  promoStatus.textContent = currentUser.promoCode === PROMO_CODE
+    ? `Промокод ${PROMO_CODE} активен: +10% к каждому виртуальному начислению администратора.`
+    : 'Промокод SGRADER можно применить только при регистрации.';
 
-  loadUserState();
   updateBalanceUI();
   renderInventory();
   renderTargets();
   renderMyInventory();
   restoreSlotsFromState();
   renderProfile();
-  if (account.role === 'admin') renderAdminUsers();
+  if (currentUser.role === 'admin') await renderAdminUsers();
 }
 
-logoutBtn.addEventListener('click', () => {
-  currentUser = null;
-  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+topupRequestForm.addEventListener('submit', event => {
+  event.preventDefault();
+  if (!currentUser) return;
 
+  const amount = Number(topupAmountInput.value);
+  if (!Number.isInteger(amount) || amount < 1 || amount > 100000000) {
+    topupFeedback.textContent = 'Укажи сумму от 1 до 100 000 000 фантиков.';
+    return;
+  }
+
+  const method = topupMethodSelect.value;
+  const promoText = currentUser.promoCode === PROMO_CODE ? ` Промокод: ${PROMO_CODE} (+10%).` : '';
+  const message = [
+    'Демо-заявка на игровые фантики (оплата не проводилась).',
+    `Игрок: ${currentUser.username}`,
+    `ID игрока: ${currentUser.playerId}`,
+    `Запрошено: ${amount} фантиков`,
+    `Условный способ: ${method}.${promoText}`
+  ].join('\n');
+  const url = `${TELEGRAM_URL}?text=${encodeURIComponent(message)}`;
+  window.open(url, '_blank', 'noopener,noreferrer');
+  topupFeedback.textContent = 'Открылся Telegram с подготовленным текстом. Проверь его и нажми «Отправить».';
+});
+
+logoutBtn.addEventListener('click', async () => {
+  await stateSaveQueue;
+  if (supabaseClient) await supabaseClient.auth.signOut();
+  currentUser = null;
   state = { balance: 0, inventory: [], betId: null, targetName: null, bestDrop: null };
   betData = null;
   targetData = null;
-
-  appEl.style.display = 'none';
-  authScreen.classList.remove('hide');
   authPassword.value = '';
   authPasswordConfirm.value = '';
+  authPromo.value = '';
   authError.textContent = '';
   setAuthMode('login');
+  showAuthScreen();
 });
 
 // ============================================================
-// СОСТОЯНИЕ ПОЛЬЗОВАТЕЛЯ
+// ОБЩЕЕ СОСТОЯНИЕ ПОЛЬЗОВАТЕЛЯ
 // ============================================================
-function loadUserState() {
-  state = { balance: 0, inventory: [], betId: null, targetName: null, bestDrop: null };
-  if (!currentUser) return;
-  try {
-    const raw = localStorage.getItem(stateKey(currentUser.username));
-    if (raw) {
-      state = { ...state, ...JSON.parse(raw) };
-      // Сброс старого стартового бонуса из прежней версии демо.
-      if (state.balance === 1000) state.balance = 0;
-      saveState();
-    }
-  } catch (e) { console.warn('load error', e); }
+async function loadUserState() {
+  const empty = { balance: 0, inventory: [], betId: null, targetName: null, bestDrop: null };
+  const [walletResult, gameStateResult] = await Promise.all([
+    supabaseClient.from('wallets').select('balance').eq('user_id', currentUser.id).single(),
+    supabaseClient.from('game_states').select('state').eq('user_id', currentUser.id).single()
+  ]);
+  if (walletResult.error) throw walletResult.error;
+  if (gameStateResult.error) throw gameStateResult.error;
+  state = { ...empty, ...gameStateResult.data.state, balance: Number(walletResult.data.balance) };
 }
 
 function saveState() {
-  if (!currentUser) return;
-  try { localStorage.setItem(stateKey(currentUser.username), JSON.stringify(state)); }
-  catch (e) {}
+  if (!currentUser || !supabaseClient) return Promise.resolve();
+  const savedState = { ...state };
+  delete savedState.balance;
+  const userId = currentUser.id;
+  stateSaveQueue = stateSaveQueue.then(async () => {
+    const { error } = await supabaseClient
+      .from('game_states')
+      .upsert({ user_id: userId, state: savedState }, { onConflict: 'user_id' });
+    if (error) throw error;
+  }).catch(error => {
+    console.error('Could not save game state:', error);
+    warningEl.textContent = '⚠ Не удалось сохранить состояние игры. Проверьте соединение.';
+    warningEl.classList.add('show');
+    setTimeout(() => warningEl.classList.remove('show'), 3000);
+  });
+  return stateSaveQueue;
 }
 
 // ============================================================
@@ -627,53 +656,72 @@ function updateBalanceUI(flash = false) {
   }
 }
 
-function addBalance(amount) {
-  state.balance = Math.round((state.balance + amount) * 100) / 100;
-  saveState();
+async function addBalance(amount) {
+  if (!currentUser || !supabaseClient) return false;
+  const { data, error } = await supabaseClient.rpc('credit_game_balance', { p_amount: amount });
+  if (error) {
+    console.error('Could not credit game balance:', error);
+    return false;
+  }
+  state.balance = Number(data);
   updateBalanceUI(true);
+  return true;
 }
 
-function spendBalance(amount) {
-  if (state.balance < amount) return false;
-  state.balance = Math.round((state.balance - amount) * 100) / 100;
-  saveState();
+async function spendBalance(amount) {
+  if (!currentUser || !supabaseClient) return false;
+  const { data, error } = await supabaseClient.rpc('spend_game_balance', { p_amount: amount });
+  if (error) {
+    console.error('Could not spend game balance:', error);
+    return false;
+  }
+  if (data === null) return false;
+  state.balance = Number(data);
   updateBalanceUI();
   return true;
 }
 
-function renderAdminUsers() {
+async function refreshWallet() {
+  if (!currentUser || !supabaseClient) return;
+  const userId = currentUser.id;
+  const { data, error } = await supabaseClient.from('wallets').select('balance').eq('user_id', userId).single();
+  if (error) {
+    console.warn('Could not refresh wallet:', error);
+    return;
+  }
+  if (currentUser?.id !== userId) return;
+  const nextBalance = Number(data.balance);
+  if (nextBalance !== state.balance) {
+    state.balance = nextBalance;
+    updateBalanceUI(true);
+    if ($('page-profile').classList.contains('active')) renderProfile();
+  }
+}
+
+async function renderAdminUsers() {
   if (!currentUser || currentUser.role !== 'admin') return;
-  const users = getUsers();
-  adminUsersEl.innerHTML = Object.entries(users).map(([key, user]) => {
-    const userState = loadStateForUsername(user.username);
-    const promo = user.promoCode === PROMO_CODE ? `${PROMO_CODE} (+${Math.round(PROMO_BONUS_RATE * 100)}%)` : '—';
+  const { data, error } = await supabaseClient.rpc('admin_list_players');
+  if (error) {
+    adminUsersEl.innerHTML = '<tr><td colspan="5">Не удалось загрузить список игроков.</td></tr>';
+    console.error('Could not load admin player list:', error);
+    return;
+  }
+  adminUsersEl.innerHTML = (data || []).map(user => {
+    const promo = user.promo_code === PROMO_CODE ? `${PROMO_CODE} (+${Math.round(PROMO_BONUS_RATE * 100)}%)` : '—';
     return `<tr>
-      <td>${escapeHtml(user.playerId || '—')}</td>
+      <td>${escapeHtml(user.player_id)}</td>
       <td>${escapeHtml(user.username)}${user.role === 'admin' ? ' <span class="admin-tag">админ</span>' : ''}</td>
       <td>${escapeHtml(promo)}</td>
-      <td>${fmt(userState.balance)}</td>
-      <td><form class="admin-grant-form" data-user-key="${escapeHtml(key)}">
-        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Количество фантиков">
+      <td>${fmt(Number(user.balance))}</td>
+      <td><form class="admin-grant-form" data-player-id="${escapeHtml(user.player_id)}">
+        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Фантики" aria-label="Количество фантиков">
         <button class="btn-small" type="submit">Начислить</button>
       </form></td>
     </tr>`;
   }).join('') || '<tr><td colspan="5">Пользователей пока нет.</td></tr>';
 }
 
-function loadStateForUsername(username) {
-  const empty = { balance: 0, inventory: [], betId: null, targetName: null, bestDrop: null };
-  try {
-    const raw = localStorage.getItem(stateKey(username));
-    const saved = raw ? { ...empty, ...JSON.parse(raw) } : empty;
-    if (saved.balance === 1000) {
-      saved.balance = 0;
-      localStorage.setItem(stateKey(username), JSON.stringify(saved));
-    }
-    return saved;
-  } catch (e) { return empty; }
-}
-
-adminUsersEl.addEventListener('submit', event => {
+adminUsersEl.addEventListener('submit', async event => {
   const form = event.target.closest('.admin-grant-form');
   if (!form) return;
   event.preventDefault();
@@ -685,22 +733,26 @@ adminUsersEl.addEventListener('submit', event => {
     adminFeedback.classList.add('show');
     return;
   }
-  const key = form.dataset.userKey;
-  const users = getUsers();
-  const account = users[key];
-  if (!account) return;
-  const bonus = account.promoCode === PROMO_CODE ? Math.round(amount * PROMO_BONUS_RATE * 100) / 100 : 0;
-  const targetState = loadStateForUsername(account.username);
-  targetState.balance = Math.round((targetState.balance + amount + bonus) * 100) / 100;
-  try { localStorage.setItem(stateKey(account.username), JSON.stringify(targetState)); } catch (e) {}
-  adminFeedback.textContent = `Начислено ${fmt(amount)}${bonus ? ` + бонус ${fmt(bonus)} по ${PROMO_CODE}` : ''} игроку ${account.username} (ID ${account.playerId}).`;
+  const playerId = Number(form.dataset.playerId);
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_grant_demo_credits', {
+    p_player_id: playerId,
+    p_amount: amount
+  });
+  button.disabled = false;
+  if (error) {
+    adminFeedback.textContent = 'Не удалось начислить фантики. Проверьте права администратора и соединение.';
+    adminFeedback.classList.add('show');
+    console.error('Admin grant failed:', error);
+    return;
+  }
+  adminFeedback.textContent = `Начислено ${fmt(Number(data.amount))}${Number(data.bonus) ? ` + бонус ${fmt(Number(data.bonus))} по ${PROMO_CODE}` : ''} игроку ${data.username} (ID ${data.player_id}).`;
   adminFeedback.classList.add('show');
   amountInput.value = '';
-  renderAdminUsers();
-  if (currentUser.username.toLowerCase() === key) {
-    loadUserState();
-    updateBalanceUI(true);
-    renderProfile();
+  await renderAdminUsers();
+  if (String(currentUser.playerId) === String(data.player_id)) {
+    await refreshWallet();
   }
 });
 
@@ -1138,12 +1190,12 @@ buyModal.addEventListener('click', (e) => {
   if (e.target === buyModal) closeBuyModal();
 });
 
-modalConfirm.addEventListener('click', () => {
+modalConfirm.addEventListener('click', async () => {
   if (!pendingBuy) return;
   const { item } = pendingBuy;
 
-  if (!spendBalance(item.price)) {
-    warningEl.textContent = '⚠ Недостаточно средств';
+  if (!await spendBalance(item.price)) {
+    warningEl.textContent = '⚠ Недостаточно фантиков или нет связи с базой';
     warningEl.classList.add('show');
     setTimeout(() => warningEl.classList.remove('show'), 2000);
     closeBuyModal();
@@ -1195,13 +1247,20 @@ sellModal.addEventListener('click', (e) => {
   if (e.target === sellModal) closeSellModal();
 });
 
-sellConfirm.addEventListener('click', () => {
+sellConfirm.addEventListener('click', async () => {
   if (!pendingSell) return;
   const { invIndex } = pendingSell;
   const item = state.inventory[invIndex];
   if (!item) { closeSellModal(); return; }
 
   const receive = Math.round(item.price * (1 - SELL_COMMISSION) * 100) / 100;
+
+  if (!await addBalance(receive)) {
+    warningEl.textContent = '⚠ Не удалось зачислить фантики. Проверьте соединение.';
+    warningEl.classList.add('show');
+    closeSellModal();
+    return;
+  }
 
   state.inventory.splice(invIndex, 1);
 
@@ -1211,7 +1270,6 @@ sellConfirm.addEventListener('click', () => {
     renderSlot(betSlot, null);
   }
 
-  addBalance(receive);
   saveState();
 
   renderProfile();
@@ -1257,8 +1315,12 @@ sellAllBtn.addEventListener('click', () => {
   openConfirm(
     'Обменять всё на фантики?',
     `Вы обменяете ${state.inventory.length} скин(ов) на ${fmt(total)} (комиссия ${Math.round(SELL_COMMISSION*100)}% уже учтена).`,
-    () => {
-      addBalance(total);
+    async () => {
+      if (!await addBalance(total)) {
+        warningEl.textContent = '⚠ Не удалось зачислить фантики. Инвентарь сохранён.';
+        warningEl.classList.add('show');
+        return;
+      }
       state.inventory = [];
       state.betId = null;
       betData = null;
@@ -1275,9 +1337,9 @@ sellAllBtn.addEventListener('click', () => {
 resetBtn.addEventListener('click', () => {
   openConfirm(
     'Сбросить прогресс?',
-    'Баланс, инвентарь и лучший дроп будут удалены. Аккаунт и пароль останутся.',
+    'Инвентарь и лучший дроп будут удалены. Баланс и аккаунт сохранятся.',
     () => {
-      state = { balance: 0, inventory: [], betId: null, targetName: null, bestDrop: null };
+      state = { ...state, inventory: [], betId: null, targetName: null, bestDrop: null };
       betData = null;
       targetData = null;
       saveState();
@@ -1489,22 +1551,31 @@ setInterval(() => {
 // ============================================================
 // СТАРТ
 // ============================================================
-(function initSession() {
+async function initSession() {
+  if (!supabaseClient) {
+    backendSetupHint.textContent = 'Общая база ещё не подключена. Владелец сайта должен настроить Supabase по инструкции в папке supabase.';
+    authSubmit.disabled = true;
+    showAuthScreen();
+    return;
+  }
+  backendSetupHint.textContent = '';
+  authSubmit.disabled = false;
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (raw) {
-      const sess = JSON.parse(raw);
-      const users = getUsers();
-      const key = sess.username.toLowerCase();
-      if (users[key] && users[key].passwordHash === sess.passwordHash) {
-        loginAs(users[key].username, sess.passwordHash);
-        return;
-      }
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) throw error;
+    if (data.session?.user) {
+      await loginAs(data.session.user);
+    } else {
+      showAuthScreen();
     }
-  } catch (e) {}
+  } catch (error) {
+    console.error('Could not restore Supabase session:', error);
+    showAuthScreen();
+    showAuthError('Не удалось подключиться к общей базе. Проверьте настройки Supabase.');
+  }
+}
+void initSession();
 
-  authScreen.classList.remove('hide');
-  appEl.style.display = 'none';
-})();
+setInterval(() => { void refreshWallet(); }, 10000);
 
 loadSkins();
