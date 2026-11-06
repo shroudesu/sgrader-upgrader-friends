@@ -76,8 +76,8 @@
     <div class="layout">
       <aside class="col">
         <div class="panel">
-          <h2 class="panel-title">Каталог скинов</h2>
-          <input type="text" id="invSearch" class="search-input" placeholder="Поиск: ak redline ft, ★ karambit, awp asiimov...">
+          <h2 class="panel-title">Каталог предметов</h2>
+          <input type="text" id="invSearch" class="search-input" placeholder="Поиск оружия, стикеров, агентов, граффити...">
           <div class="price-filter">
             <input type="number" id="invPriceFrom" class="price-input" placeholder="от ₽" min="0" step="any">
             <span class="price-sep">—</span>
@@ -94,8 +94,13 @@
           </div>
           <div class="quick-filters">
             <button class="qf-btn active" data-qf="all">Все</button>
+            <button class="qf-btn" data-qf="weapons">Оружие</button>
             <button class="qf-btn" data-qf="knives">Ножи</button>
             <button class="qf-btn" data-qf="gloves">Перчатки</button>
+            <button class="qf-btn" data-qf="stickers">Стикеры</button>
+            <button class="qf-btn" data-qf="agents">Агенты</button>
+            <button class="qf-btn" data-qf="graffiti">Граффити</button>
+            <button class="qf-btn" data-qf="music">Киты музыки</button>
             <button class="qf-btn" data-qf="top">Топ-дорогие</button>
           </div>
           <div class="loading" id="invLoading">Загрузка каталога...</div>
@@ -155,8 +160,8 @@
 
       <aside class="col">
         <div class="panel">
-          <h2 class="panel-title">Желаемый скин</h2>
-          <input type="text" id="targetSearch" class="search-input" placeholder="Поиск: ak redline ft, ★ karambit, awp asiimov...">
+          <h2 class="panel-title">Цель апгрейда</h2>
+          <input type="text" id="targetSearch" class="search-input" placeholder="Поиск оружия, стикеров, агентов, граффити...">
           <div class="price-filter">
             <input type="number" id="targetPriceFrom" class="price-input" placeholder="от ₽" min="0" step="any">
             <span class="price-sep">—</span>
@@ -173,8 +178,13 @@
           </div>
           <div class="quick-filters">
             <button class="qf-btn active" data-tqf="all">Все</button>
+            <button class="qf-btn" data-tqf="weapons">Оружие</button>
             <button class="qf-btn" data-tqf="knives">Ножи</button>
             <button class="qf-btn" data-tqf="gloves">Перчатки</button>
+            <button class="qf-btn" data-tqf="stickers">Стикеры</button>
+            <button class="qf-btn" data-tqf="agents">Агенты</button>
+            <button class="qf-btn" data-tqf="graffiti">Граффити</button>
+            <button class="qf-btn" data-tqf="music">Киты музыки</button>
             <button class="qf-btn" data-tqf="top">Топ-дорогие</button>
           </div>
           <div class="loading" id="targetLoading">Загрузка каталога...</div>
@@ -298,7 +308,7 @@
   <!-- Модалки -->
   <div class="modal-overlay" id="buyModal">
     <div class="modal">
-      <h3 class="modal-title">Купить скин?</h3>
+      <h3 class="modal-title">Добавить предмет?</h3>
       <div class="modal-item" id="modalItem"></div>
       <div class="modal-price" id="modalPrice"></div>
       <div class="modal-actions">

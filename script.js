@@ -120,8 +120,18 @@ const GLOVE_BASE = {
 // ============================================================
 // РАСЧЁТ ЦЕНЫ
 // ============================================================
-function calcPrice(item) {
+function calcPrice(item, catalogType = 'skin') {
   const rarityName = item.rarity?.name || 'Mil-Spec Grade';
+  const demoItemBasePrices = {
+    agents: { Distinguished: 2500, Exceptional: 5000, Superior: 10000, Master: 20000 },
+    graffiti: { 'Base Grade': 5, 'High Grade': 40, Remarkable: 250, Exotic: 1500 },
+    music_kits: { 'High Grade': 300 },
+    stickers: { Default: 10, 'High Grade': 40, Remarkable: 250, Exotic: 1500, Extraordinary: 8000, Contraband: 80000 },
+  };
+  if (catalogType !== 'skin') {
+    return demoItemBasePrices[catalogType]?.[rarityName] || 40;
+  }
+
   const wearName = item.wear?.name || 'Field-Tested';
   const wearMult = WEAR_MULT[wearName] || 1.0;
 
@@ -891,26 +901,31 @@ drawWheel(0);
 // ============================================================
 async function loadSkins() {
   try {
-    const res = await fetch('skins.json');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const raw = await res.json();
+    const catalogFiles = [
+      { file: 'skins.json', type: 'skin', category: null },
+      { file: 'stickers.json', type: 'stickers', category: 'Stickers' },
+      { file: 'agents.json', type: 'agents', category: 'Agents' },
+      { file: 'graffiti.json', type: 'graffiti', category: 'Graffiti' },
+      { file: 'music_kits.json', type: 'music_kits', category: 'Music Kits' },
+    ];
+    const responses = await Promise.all(catalogFiles.map(entry => fetch(entry.file)));
+    const failedResponse = responses.find(response => !response.ok);
+    if (failedResponse) throw new Error(`Catalog file failed: ${failedResponse.url} (${failedResponse.status})`);
+    const datasets = await Promise.all(responses.map(response => response.json()));
 
-    SKINS_CATALOG = raw.map((item, idx) => {
-      const price = calcPrice(item);
-
-      return {
-        id: 'c_' + idx,
-        name: item.name,
-        price,
-        img: item.image,
-        rarity: item.rarity,
-        category: item.category?.name,
-        weapon: item.weapon?.name,
-        wear: item.wear?.name,
-        stattrak: item.stattrak,
-        marketHashName: item.market_hash_name,
-      };
-    });
+    SKINS_CATALOG = catalogFiles.flatMap((entry, dataIndex) => datasets[dataIndex].map((item, idx) => ({
+      id: entry.type === 'skin' ? 'c_' + idx : `${entry.type}_${item.id || idx}`,
+      name: item.name,
+      price: calcPrice(item, entry.type),
+      img: item.image || item.image_inventory || item.image_url,
+      rarity: item.rarity,
+      category: item.category?.name || entry.category,
+      catalogType: entry.type,
+      weapon: item.weapon?.name,
+      wear: item.wear?.name,
+      stattrak: item.stattrak,
+      marketHashName: item.market_hash_name,
+    })));
 
     SKINS_CATALOG.sort((a, b) => a.price - b.price);
 
@@ -924,8 +939,8 @@ async function loadSkins() {
       restoreSlotsFromState();
     }
   } catch (err) {
-    invLoading.textContent = 'Ошибка загрузки skins.json';
-    targetLoading.textContent = 'Ошибка загрузки skins.json';
+    invLoading.textContent = 'Ошибка загрузки каталога';
+    targetLoading.textContent = 'Ошибка загрузки каталога';
     console.error(err);
   }
 }
@@ -1007,12 +1022,16 @@ function filterItems({ search = '', priceFrom = null, priceTo = null, sort = 'pr
     return 0;
   });
 
-  if (quickFilter === 'knives') {
-    return result.filter(s => s.category === 'Knives');
-  }
-  if (quickFilter === 'gloves') {
-    return result.filter(s => s.category === 'Gloves');
-  }
+  const categoryFilters = {
+    weapons: item => item.catalogType === 'skin' && item.category !== 'Knives' && item.category !== 'Gloves',
+    knives: item => item.catalogType === 'skin' && item.category === 'Knives',
+    gloves: item => item.catalogType === 'skin' && item.category === 'Gloves',
+    stickers: item => item.catalogType === 'stickers',
+    agents: item => item.catalogType === 'agents',
+    graffiti: item => item.catalogType === 'graffiti',
+    music: item => item.catalogType === 'music_kits',
+  };
+  if (categoryFilters[quickFilter]) return result.filter(categoryFilters[quickFilter]);
   if (quickFilter === 'top') {
     return [...result].sort((a, b) => b.price - a.price).slice(0, 50);
   }
@@ -1282,7 +1301,7 @@ function renderMyInventory() {
   renderBattleInventory();
 
   if (state.inventory.length === 0) {
-    myInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#555;font-size:11px;padding:16px">Пусто. Купи скин в каталоге слева.</div>';
+    myInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#555;font-size:11px;padding:16px">Пусто. Добавь предмет из каталога слева.</div>';
     return;
   }
 
