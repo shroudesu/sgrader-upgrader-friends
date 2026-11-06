@@ -280,6 +280,7 @@ const invPriceTo = $('invPriceTo');
 const invSort = $('invSort');
 const invCount = $('invCount');
 const invLoading = $('invLoading');
+const catalogSourceNote = $('catalogSourceNote');
 const targetGrid = $('targetGrid');
 const targetSearch = $('targetSearch');
 const targetPriceFrom = $('targetPriceFrom');
@@ -349,6 +350,8 @@ let state = {
 };
 
 let SKINS_CATALOG = [];
+let catalogLoaded = false;
+let catalogReleaseYear = String(new Date().getFullYear());
 let betData = null;
 let targetData = null;
 let currentChance = 0;
@@ -528,6 +531,7 @@ async function loginAs(authUser) {
     promoCode: profile.promo_code
   };
   await loadUserState();
+  if (migrateCatalogIdsInInventory()) await saveState();
 
   authScreen.classList.add('hide');
   appEl.style.display = 'block';
@@ -617,6 +621,47 @@ async function loadUserState() {
     if (legacyBet) state.betItemIds = [legacyBet.instanceId];
   }
   if (assignedInstanceId || !Array.isArray(gameStateResult.data.state.betItemIds)) await saveState();
+}
+
+function catalogNameKey(value) {
+  return normalize(String(value || '').replace(/[’']/g, ''));
+}
+
+function migrateCatalogIdsInInventory() {
+  if (!catalogLoaded || !state.inventory?.length) return false;
+
+  const currentIds = new Set(SKINS_CATALOG.map(item => String(item.id)));
+  const exactIdsByName = new Map();
+  const idsByPrefix = new Map();
+  for (const item of SKINS_CATALOG) {
+    const key = catalogNameKey(item.name);
+    if (key && !exactIdsByName.has(key)) exactIdsByName.set(key, item.id);
+    const prefix = catalogNameKey(String(item.name || '').split('|')[0]);
+    if (prefix) {
+      if (!idsByPrefix.has(prefix)) idsByPrefix.set(prefix, new Set());
+      idsByPrefix.get(prefix).add(item.id);
+    }
+  }
+
+  let changed = false;
+  for (const item of state.inventory) {
+    if (currentIds.has(String(item.catalogId))) continue;
+    const key = catalogNameKey(item.name);
+    let replacementId = exactIdsByName.get(key);
+    if (!replacementId && key && !String(item.name || '').includes('|')) {
+      const candidates = idsByPrefix.get(key);
+      if (candidates?.size === 1) replacementId = [...candidates][0];
+    }
+    if (replacementId) {
+      item.catalogId = replacementId;
+      changed = true;
+    }
+  }
+
+  if (changed && state.betItemIds?.length) {
+    state.betId = state.inventory.find(item => item.instanceId === state.betItemIds[0])?.catalogId || null;
+  }
+  return changed;
 }
 
 function saveState() {
@@ -908,13 +953,16 @@ async function loadSkins() {
       { file: 'graffiti.json', type: 'graffiti', category: 'Graffiti' },
       { file: 'music_kits.json', type: 'music_kits', category: 'Music Kits' },
     ];
-    const responses = await Promise.all(catalogFiles.map(entry => fetch(entry.file)));
+    const [responses, metadataResponse] = await Promise.all([
+      Promise.all(catalogFiles.map(entry => fetch(entry.file))),
+      fetch('catalog-source.json').catch(() => null),
+    ]);
     const failedResponse = responses.find(response => !response.ok);
     if (failedResponse) throw new Error(`Catalog file failed: ${failedResponse.url} (${failedResponse.status})`);
     const datasets = await Promise.all(responses.map(response => response.json()));
 
     SKINS_CATALOG = catalogFiles.flatMap((entry, dataIndex) => datasets[dataIndex].map((item, idx) => ({
-      id: entry.type === 'skin' ? 'c_' + idx : `${entry.type}_${item.id || idx}`,
+      id: `${entry.type}_${item.id || idx}`,
       name: item.name,
       price: calcPrice(item, entry.type),
       img: item.image || item.image_inventory || item.image_url,
@@ -924,10 +972,33 @@ async function loadSkins() {
       weapon: item.weapon?.name,
       wear: item.wear?.name,
       stattrak: item.stattrak,
-      marketHashName: item.market_hash_name,
+      marketHashName: item.market_hash_name || item.marketHashName,
+      sourceItemId: item.id || String(idx),
+      releaseDate: item.release_date || null,
+      releaseYear: item.release_year ? String(item.release_year) : null,
+      collectionNames: Array.isArray(item.collection_names) ? item.collection_names : [],
     })));
 
     SKINS_CATALOG.sort((a, b) => a.price - b.price);
+    catalogLoaded = true;
+    if (migrateCatalogIdsInInventory()) await saveState();
+
+    if (catalogSourceNote && metadataResponse?.ok) {
+      const metadata = await metadataResponse.json().catch(() => null);
+      if (metadata) {
+        const fetchedDate = metadata.fetchedAtUtc
+          ? new Date(metadata.fetchedAtUtc).toLocaleDateString('ru-RU')
+          : '';
+        const totalItems = Object.values(metadata.counts || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+        catalogReleaseYear = String(metadata.currentYear || new Date().getFullYear());
+        document.querySelectorAll('[data-qf="new"], [data-tqf="new"]').forEach(button => {
+          button.textContent = `Новинки ${catalogReleaseYear}`;
+        });
+        const currentYearItems = Number(metadata.releaseYearCounts?.[catalogReleaseYear] || 0);
+        catalogSourceNote.textContent = `CS2 · ${totalItems.toLocaleString('ru-RU')} предметов · ${catalogReleaseYear}: ${currentYearItems.toLocaleString('ru-RU')} · снимок ${fetchedDate}`;
+        catalogSourceNote.title = `Источник: ${metadata.source || 'CS2 item catalog'} · данные из файлов игры · лицензия ${metadata.license || 'см. источник'}`;
+      }
+    }
 
     invLoading.classList.add('hide');
     targetLoading.classList.add('hide');
@@ -1031,6 +1102,7 @@ function filterItems({ search = '', priceFrom = null, priceTo = null, sort = 'pr
     graffiti: item => item.catalogType === 'graffiti',
     music: item => item.catalogType === 'music_kits',
   };
+  if (quickFilter === 'new') return result.filter(item => item.releaseYear === catalogReleaseYear);
   if (categoryFilters[quickFilter]) return result.filter(categoryFilters[quickFilter]);
   if (quickFilter === 'top') {
     return [...result].sort((a, b) => b.price - a.price).slice(0, 50);
@@ -1183,15 +1255,20 @@ function restoreSlotsFromState() {
 function buildCatalogCard(item, { disabled, source, onClick }) {
   const card = document.createElement('div');
   card.className = 'inv-card' + (disabled ? ' disabled' : '');
+  const rarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
+  if (rarityColor) card.style.setProperty('--item-rarity-color', rarityColor);
   const owned = source === 'catalog' && isInMyInventory(item.id);
+  const isCurrentYearItem = item.releaseYear === catalogReleaseYear;
   const selected = source === 'catalog' && state.inventory.some(inv => inv.catalogId === item.id && state.betItemIds.includes(inv.instanceId));
   if (selected) card.classList.add('active');
 
   card.innerHTML = `
     ${owned ? '<div class="card-badge owned">✓</div>' : (source === 'catalog' ? '<div class="card-badge buy">₽</div>' : '')}
-    <div class="item-img"><img src="${item.img}" alt="" loading="lazy"></div>
-    <div class="item-name" title="${item.name}">${item.name}</div>
+    ${isCurrentYearItem ? `<div class="card-badge new">${escapeHtml(catalogReleaseYear)}</div>` : ''}
+    <div class="item-img"><img src="${escapeHtml(item.img || '')}" alt="" loading="lazy"></div>
+    <div class="item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
     <div class="item-price">${fmt(item.price)}</div>
+    <div class="item-rarity">${escapeHtml(item.rarity?.name || item.category || 'Предмет')}</div>
   `;
 
   if (!disabled) card.addEventListener('click', onClick);

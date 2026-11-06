@@ -1,0 +1,32 @@
+{
+  "source": "CS2Cap/CS2-API",
+  "sourceUrl": "https://github.com/CS2Cap/CS2-API",
+  "dataPath": "output/en",
+  "fetchedAtUtc": "2026-11-06T22:39:37Z",
+  "license": "MIT",
+  "counts": {
+    "skins": 2126,
+    "stickers": 11134,
+    "agents": 63,
+    "graffiti": 2111,
+    "musicKits": 191
+  },
+  "collectionCount": 110,
+  "currentYear": "2026",
+  "releaseYearCounts": {
+    "2016": 700,
+    "2022": 1234,
+    "2025": 1757,
+    "2015": 786,
+    "2023": 636,
+    "2020": 224,
+    "2013": 249,
+    "2026": 1516,
+    "2021": 353,
+    "2017": 684,
+    "2018": 1010,
+    "2014": 304,
+    "2024": 1333,
+    "2019": 1048
+  }
+}

@@ -77,6 +77,7 @@
       <aside class="col">
         <div class="panel">
           <h2 class="panel-title">Каталог предметов</h2>
+          <div class="catalog-source-note"><span id="catalogSourceNote">Загрузка базы предметов CS2…</span> · <a href="https://github.com/CS2Cap/CS2-API" target="_blank" rel="noopener noreferrer">источник каталога</a></div>
           <input type="text" id="invSearch" class="search-input" placeholder="Поиск оружия, стикеров, агентов, граффити...">
           <div class="price-filter">
             <input type="number" id="invPriceFrom" class="price-input" placeholder="от ₽" min="0" step="any">
@@ -101,6 +102,7 @@
             <button class="qf-btn" data-qf="agents">Агенты</button>
             <button class="qf-btn" data-qf="graffiti">Граффити</button>
             <button class="qf-btn" data-qf="music">Киты музыки</button>
+            <button class="qf-btn" data-qf="new">Новинки 2026</button>
             <button class="qf-btn" data-qf="top">Топ-дорогие</button>
           </div>
           <div class="loading" id="invLoading">Загрузка каталога...</div>
@@ -185,6 +187,7 @@
             <button class="qf-btn" data-tqf="agents">Агенты</button>
             <button class="qf-btn" data-tqf="graffiti">Граффити</button>
             <button class="qf-btn" data-tqf="music">Киты музыки</button>
+            <button class="qf-btn" data-tqf="new">Новинки 2026</button>
             <button class="qf-btn" data-tqf="top">Топ-дорогие</button>
           </div>
           <div class="loading" id="targetLoading">Загрузка каталога...</div>
