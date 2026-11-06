@@ -298,3 +298,272 @@ create policy game_states_update_self on public.game_states
   for update to authenticated
   using (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()));
+
+-- Add shared 50/50 skin battles to an existing SGRADER UP database.
+-- Every battle is settled inside a security-definer transaction; clients cannot
+-- write battle rows or choose the winner.
+
+create table if not exists public.skin_battles (
+  id uuid primary key default gen_random_uuid(),
+  creator_user_id uuid not null references public.profiles(user_id) on delete cascade,
+  creator_name text not null,
+  creator_skin jsonb not null,
+  guest_user_id uuid references public.profiles(user_id) on delete set null,
+  guest_name text,
+  guest_skin jsonb,
+  status text not null default 'waiting' check (status in ('waiting', 'completed', 'cancelled')),
+  winner_user_id uuid references public.profiles(user_id) on delete set null,
+  winner_name text,
+  winner_side text check (winner_side is null or winner_side in ('creator', 'guest')),
+  bank_value numeric(14, 2) not null default 0 check (bank_value >= 0),
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+alter table public.skin_battles enable row level security;
+revoke all on table public.skin_battles from public, anon, authenticated;
+grant select on table public.skin_battles to authenticated;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+     where schemaname = 'public'
+       and tablename = 'skin_battles'
+       and policyname = 'skin_battles_read_authenticated'
+  ) then
+    create policy skin_battles_read_authenticated on public.skin_battles
+      for select to authenticated using (true);
+  end if;
+end
+$$;
+
+create or replace function public.create_skin_battle(p_inventory_item_id text)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_state jsonb;
+  v_skin jsonb;
+  v_inventory jsonb;
+  v_battle_id uuid;
+  v_price numeric(14, 2);
+begin
+  if v_user_id is null then raise exception 'Sign in required'; end if;
+  if nullif(trim(coalesce(p_inventory_item_id, '')), '') is null then
+    raise exception 'Choose a skin from inventory';
+  end if;
+
+  select gs.state into v_state
+    from public.game_states gs
+   where gs.user_id = v_user_id
+   for update;
+  if not found then raise exception 'Game state not found'; end if;
+
+  select entry.item into v_skin
+    from jsonb_array_elements(coalesce(v_state -> 'inventory', '[]'::jsonb)) as entry(item)
+   where entry.item ->> 'instanceId' = p_inventory_item_id
+   limit 1;
+  if v_skin is null then raise exception 'Skin is no longer in inventory'; end if;
+  if coalesce(v_skin ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$' then
+    raise exception 'Skin price is invalid';
+  end if;
+  v_price := (v_skin ->> 'price')::numeric(14, 2);
+  if v_price <= 0 then raise exception 'Skin price must be positive'; end if;
+
+  select coalesce(jsonb_agg(entry.item order by entry.ordinality), '[]'::jsonb)
+    into v_inventory
+    from jsonb_array_elements(coalesce(v_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, ordinality)
+   where entry.item ->> 'instanceId' <> p_inventory_item_id;
+
+  update public.game_states
+     set state = jsonb_set(v_state, '{inventory}', v_inventory, true), updated_at = now()
+   where user_id = v_user_id;
+
+  insert into public.skin_battles (creator_user_id, creator_name, creator_skin, bank_value)
+  select p.user_id, p.username, v_skin, v_price
+    from public.profiles p
+   where p.user_id = v_user_id
+  returning id into v_battle_id;
+  if v_battle_id is null then raise exception 'Player profile not found'; end if;
+
+  return v_battle_id;
+end;
+$$;
+
+revoke all on function public.create_skin_battle(text) from public, anon;
+grant execute on function public.create_skin_battle(text) to authenticated;
+
+create or replace function public.join_skin_battle(
+  p_battle_id uuid,
+  p_inventory_item_id text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_battle public.skin_battles%rowtype;
+  v_guest_state jsonb;
+  v_creator_state jsonb;
+  v_guest_skin jsonb;
+  v_guest_inventory jsonb;
+  v_winner_side text;
+  v_winner_id uuid;
+  v_winner_name text;
+  v_guest_name text;
+  v_guest_price numeric(14, 2);
+  v_bank_value numeric(14, 2);
+begin
+  if v_user_id is null then raise exception 'Sign in required'; end if;
+  if nullif(trim(coalesce(p_inventory_item_id, '')), '') is null then
+    raise exception 'Choose a skin from inventory';
+  end if;
+
+  select b.* into v_battle
+    from public.skin_battles b
+   where b.id = p_battle_id
+   for update;
+  if not found or v_battle.status <> 'waiting' then
+    raise exception 'Battle has already started';
+  end if;
+  if v_battle.creator_user_id = v_user_id then
+    raise exception 'Creator cannot join their own battle';
+  end if;
+
+  -- Lock both players in a stable order to avoid crossed-battle deadlocks.
+  perform gs.user_id
+    from public.game_states gs
+   where gs.user_id in (v_user_id, v_battle.creator_user_id)
+   order by gs.user_id
+   for update;
+  select gs.state into v_guest_state from public.game_states gs where gs.user_id = v_user_id;
+  select gs.state into v_creator_state from public.game_states gs where gs.user_id = v_battle.creator_user_id;
+  if v_guest_state is null or v_creator_state is null then raise exception 'Game state not found'; end if;
+
+  select entry.item into v_guest_skin
+    from jsonb_array_elements(coalesce(v_guest_state -> 'inventory', '[]'::jsonb)) as entry(item)
+   where entry.item ->> 'instanceId' = p_inventory_item_id
+   limit 1;
+  if v_guest_skin is null then raise exception 'Skin is no longer in inventory'; end if;
+  if coalesce(v_guest_skin ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$' then
+    raise exception 'Skin price is invalid';
+  end if;
+  v_guest_price := (v_guest_skin ->> 'price')::numeric(14, 2);
+  if v_guest_price <= 0 then raise exception 'Skin price must be positive'; end if;
+
+  select coalesce(jsonb_agg(entry.item order by entry.ordinality), '[]'::jsonb)
+    into v_guest_inventory
+    from jsonb_array_elements(coalesce(v_guest_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, ordinality)
+   where entry.item ->> 'instanceId' <> p_inventory_item_id;
+
+  update public.game_states
+     set state = jsonb_set(v_guest_state, '{inventory}', v_guest_inventory, true), updated_at = now()
+   where user_id = v_user_id;
+
+  select p.username into v_guest_name from public.profiles p where p.user_id = v_user_id;
+  if v_guest_name is null then raise exception 'Player profile not found'; end if;
+
+  v_winner_side := case when random() < 0.5 then 'creator' else 'guest' end;
+  if v_winner_side = 'creator' then
+    v_winner_id := v_battle.creator_user_id;
+    v_winner_name := v_battle.creator_name;
+    update public.game_states
+       set state = jsonb_set(
+         v_creator_state,
+         '{inventory}',
+         coalesce(v_creator_state -> 'inventory', '[]'::jsonb) || jsonb_build_array(v_battle.creator_skin, v_guest_skin),
+         true
+       ), updated_at = now()
+     where user_id = v_battle.creator_user_id;
+  else
+    v_winner_id := v_user_id;
+    v_winner_name := v_guest_name;
+    update public.game_states
+       set state = jsonb_set(
+         v_guest_state,
+         '{inventory}',
+         v_guest_inventory || jsonb_build_array(v_battle.creator_skin, v_guest_skin),
+         true
+       ), updated_at = now()
+     where user_id = v_user_id;
+  end if;
+
+  v_bank_value := v_battle.bank_value + v_guest_price;
+  update public.skin_battles
+     set guest_user_id = v_user_id,
+         guest_name = v_guest_name,
+         guest_skin = v_guest_skin,
+         status = 'completed',
+         winner_user_id = v_winner_id,
+         winner_name = v_winner_name,
+         winner_side = v_winner_side,
+         bank_value = v_bank_value,
+         completed_at = now()
+   where id = p_battle_id;
+
+  return jsonb_build_object(
+    'id', p_battle_id,
+    'creator_name', v_battle.creator_name,
+    'guest_name', v_guest_name,
+    'winner_name', v_winner_name,
+    'winner_side', v_winner_side,
+    'winner_user_id', v_winner_id,
+    'bank_value', v_bank_value
+  );
+end;
+$$;
+
+revoke all on function public.join_skin_battle(uuid, text) from public, anon;
+grant execute on function public.join_skin_battle(uuid, text) to authenticated;
+
+create or replace function public.cancel_skin_battle(p_battle_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_battle public.skin_battles%rowtype;
+  v_state jsonb;
+begin
+  if v_user_id is null then raise exception 'Sign in required'; end if;
+  select b.* into v_battle
+    from public.skin_battles b
+   where b.id = p_battle_id
+   for update;
+  if not found or v_battle.status <> 'waiting' then
+    raise exception 'Battle cannot be cancelled';
+  end if;
+  if v_battle.creator_user_id <> v_user_id then
+    raise exception 'Only the creator can cancel this battle';
+  end if;
+
+  select gs.state into v_state
+    from public.game_states gs
+   where gs.user_id = v_user_id
+   for update;
+  if v_state is null then raise exception 'Game state not found'; end if;
+
+  update public.game_states
+     set state = jsonb_set(
+       v_state,
+       '{inventory}',
+       coalesce(v_state -> 'inventory', '[]'::jsonb) || jsonb_build_array(v_battle.creator_skin),
+       true
+     ), updated_at = now()
+   where user_id = v_user_id;
+
+  update public.skin_battles set status = 'cancelled' where id = p_battle_id;
+  return true;
+end;
+$$;
+
+revoke all on function public.cancel_skin_battle(uuid) from public, anon;
+grant execute on function public.cancel_skin_battle(uuid) to authenticated;
