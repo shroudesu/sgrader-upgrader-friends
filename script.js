@@ -236,6 +236,7 @@ const MUSIC_TRACKS = ['sounds/1.mp3', 'sounds/2.mp3', 'sounds/3.mp3', 'sounds/4.
 const PROFILE_INVENTORY_PAGE_SIZE = 150;
 const CASE_IMAGE_BUCKET = 'case-designs';
 const CASE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const CASE_SKIP_ANIMATION_KEY = 'cs2up_case_skip_animation';
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
 const supabaseUrl = String(window.SUPABASE_URL || '');
@@ -299,12 +300,17 @@ const adminCaseChanceTotal = document.getElementById('adminCaseChanceTotal');
 const adminCaseFeedback = document.getElementById('adminCaseFeedback');
 const adminCaseSaveBtn = document.getElementById('adminCaseSaveBtn');
 const adminCaseDeleteBtn = document.getElementById('adminCaseDeleteBtn');
+const caseSkipAnimationToggle = document.getElementById('caseSkipAnimation');
+const pendingCaseRewardsPanel = document.getElementById('pendingCaseRewards');
+const pendingCaseRewardsCount = document.getElementById('pendingCaseRewardsCount');
+const pendingCaseRewardsList = document.getElementById('pendingCaseRewardsList');
 const caseResultModal = document.getElementById('caseResultModal');
 const caseResultCaseImage = document.getElementById('caseResultCaseImage');
 const caseResultCaseName = document.getElementById('caseResultCaseName');
-const caseResultSkinImage = document.getElementById('caseResultSkinImage');
-const caseResultSkinName = document.getElementById('caseResultSkinName');
-const caseResultSkinPrice = document.getElementById('caseResultSkinPrice');
+const caseResultStatus = document.getElementById('caseResultStatus');
+const caseRewardList = document.getElementById('caseRewardList');
+const caseClaimAllBtn = document.getElementById('caseClaimAllBtn');
+const caseSellAllBtn = document.getElementById('caseSellAllBtn');
 const caseResultClose = document.getElementById('caseResultClose');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
@@ -473,6 +479,12 @@ let caseImageUrl = '';
 let caseImagePreviewObjectUrl = null;
 let caseImageUploadInProgress = false;
 let caseOpeningInProgress = false;
+let caseSkipAnimation = false;
+let caseAnimationInProgress = false;
+let caseAnimationSequence = 0;
+let caseSettlementInProgress = false;
+let pendingCaseRewards = [];
+let activeCaseOpening = null;
 let winVolume = 0.7;
 let musicVolume = 0.3;
 let musicEnabled = false;
@@ -708,6 +720,7 @@ async function loginAs(authUser) {
   restoreSlotsFromState();
   renderProfile();
   void loadUpgradeFeed();
+  void loadPendingCaseRewards();
   if (currentUser.role === 'admin') await renderAdminUsers();
 }
 
@@ -741,6 +754,8 @@ logoutBtn.addEventListener('click', async () => {
   if (supabaseClient) await supabaseClient.auth.signOut();
   closeSettings();
   currentUser = null;
+  pendingCaseRewards = [];
+  renderPendingCaseRewards();
   marketSelection.clear();
   state = { balance: 0, inventory: [], betId: null, betItemIds: [], targetName: null, bestDrop: null };
   betData = null;
@@ -786,7 +801,7 @@ settingsModal.addEventListener('click', event => { if (event.target === settings
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
   if (settingsModal.classList.contains('show')) closeSettings();
-  if (caseResultModal.classList.contains('show')) caseResultClose.click();
+  if (caseResultModal.classList.contains('show') && !caseAnimationInProgress && !caseSettlementInProgress) caseResultClose.click();
 });
 
 currencySelect.addEventListener('change', () => {
@@ -1172,6 +1187,7 @@ function activateTab(page) {
   if (page === 'profile') renderProfile();
   if (page === 'admin') void renderAdminUsers();
   if (page === 'cases' || page === 'admin') void loadCases();
+  if (page === 'cases') void loadPendingCaseRewards();
   if (page === 'battles') { drawBattleWheel(); void loadBattles(); renderBattleList(); renderBattleArchive(); }
 }
 
@@ -1294,7 +1310,10 @@ function renderCaseCards() {
       <div class="case-card-body"><h2 title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</h2>
         <div class="case-card-meta"><span>${contents.length} скинов</span><strong>${fmt(Number(gameCase.price))}</strong></div>
         <details class="case-odds"><summary>Содержимое и шансы</summary><div class="case-odds-list">${odds}</div></details>
-        <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть кейс</button>
+        <label class="case-quantity-control">Количество
+          <input type="number" class="case-open-quantity" min="1" max="10" step="1" value="1" aria-label="Количество кейсов ${escapeHtml(gameCase.name)}">
+        </label>
+        <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть × 1</button>
       </div>
     </article>`;
   }).join('');
@@ -1502,56 +1521,265 @@ async function uploadCaseImage(file) {
   }
 }
 
-function showCaseResult(data) {
-  const gameCase = gameCases.find(item => String(item.id) === String(data.case_id)) || {};
-  const item = data.skin || {};
-  caseResultCaseName.textContent = data.case_name || gameCase.name || 'Кейс открыт';
-  const caseImage = data.case_image_url || gameCase.image_url || '';
+function caseSellValue(item) {
+  return Math.round(Number(item?.price || 0) * (1 - SELL_COMMISSION) * 100) / 100;
+}
+
+function renderPendingCaseRewards() {
+  const groups = new Map();
+  pendingCaseRewards.forEach(reward => {
+    const openingId = String(reward.opening_id);
+    if (!groups.has(openingId)) groups.set(openingId, { opening_id: openingId, case_name: reward.case_name, case_image_url: reward.case_image_url, created_at: reward.created_at, rewards: [] });
+    groups.get(openingId).rewards.push(reward);
+  });
+  const pendingCount = pendingCaseRewards.length;
+  pendingCaseRewardsPanel.hidden = pendingCount === 0;
+  pendingCaseRewardsCount.textContent = `${pendingCount} ${pendingCount === 1 ? 'предмет' : 'предметов'}`;
+  pendingCaseRewardsList.innerHTML = [...groups.values()].map(opening => `<article class="pending-case-card">
+    ${opening.case_image_url ? `<img src="${escapeHtml(opening.case_image_url)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}
+    <div><strong>${escapeHtml(opening.case_name || 'Кейс')}</strong><span>${opening.rewards.length} незабранных скинов</span></div>
+    <button type="button" class="btn-small" data-pending-opening="${escapeHtml(opening.opening_id)}">Посмотреть</button>
+  </article>`).join('');
+}
+
+async function loadPendingCaseRewards() {
+  if (!currentUser || !supabaseClient) return;
+  const requestedUserId = currentUser.id;
+  const { data, error } = await supabaseClient.rpc('get_pending_case_rewards');
+  if (currentUser?.id !== requestedUserId) return;
+  if (error) {
+    console.warn('Could not load pending case rewards:', error);
+    return;
+  }
+  pendingCaseRewards = Array.isArray(data) ? data : [];
+  renderPendingCaseRewards();
+}
+
+function makeCaseReelMarkup(item, fillerPool, rewardIndex) {
+  const winnerIndex = 24;
+  const reel = Array.from({ length: 28 }, (_, index) => {
+    const isWinner = index === winnerIndex;
+    const shownItem = isWinner || !fillerPool.length
+      ? item
+      : fillerPool[Math.floor(Math.random() * fillerPool.length)];
+    return `<div class="case-reel-item${isWinner ? ' case-reel-winner' : ''}" ${isWinner ? 'data-reel-winner="true"' : ''}>
+      <img src="${escapeHtml(shownItem.img || '')}" alt=""><span>${escapeHtml(shownItem.name || 'Предмет')}</span>
+    </div>`;
+  }).join('');
+  return `<div class="case-reel-viewport"><div class="case-reel-track" data-winner-index="${winnerIndex}" data-reward-index="${rewardIndex}">${reel}</div><span class="case-reel-marker"></span></div>`;
+}
+
+function renderCaseOpeningView(animate = false) {
+  if (!activeCaseOpening) return;
+  const rewards = activeCaseOpening.rewards || [];
+  const pending = rewards.filter(reward => reward.status === 'pending');
+  const sellTotal = pending.reduce((sum, reward) => sum + caseSellValue(reward.item), 0);
+  caseResultCaseName.textContent = `${activeCaseOpening.case_name || 'Кейс'} · ${rewards.length} ${rewards.length === 1 ? 'кейс' : 'кейсов'}`;
+  const caseImage = activeCaseOpening.case_image_url || '';
   if (caseImage) caseResultCaseImage.src = caseImage;
   else caseResultCaseImage.removeAttribute('src');
   caseResultCaseImage.hidden = !caseImage;
-  if (item.img) caseResultSkinImage.src = item.img;
-  else caseResultSkinImage.removeAttribute('src');
-  caseResultSkinImage.hidden = !item.img;
-  caseResultSkinName.textContent = item.name || 'Предмет';
-  caseResultSkinPrice.textContent = fmt(Number(item.price || 0));
-  caseResultModal.classList.add('show');
-  caseResultModal.setAttribute('aria-hidden', 'false');
+  caseResultStatus.textContent = caseAnimationInProgress
+    ? 'Крутим кейсы…'
+    : pending.length
+      ? `Выбери действие для каждого скина. Продать все можно за ${fmt(sellTotal)}.`
+      : 'Все награды уже обработаны.';
+
+  const fillerPool = SKINS_CATALOG.filter(item => item.catalogType === 'skin' && item.img).slice(0, 120);
+  caseRewardList.innerHTML = rewards.map((reward, index) => {
+    const item = reward.item || {};
+    const reel = animate ? makeCaseReelMarkup(item, fillerPool, index)
+      : `<div class="case-reel-static"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name || 'Предмет')}</span></div>`;
+    const status = reward.status === 'claimed' ? '<span class="case-reward-status claimed">В инвентаре</span>'
+      : reward.status === 'sold' ? '<span class="case-reward-status sold">Продан</span>' : '';
+    const actions = reward.status === 'pending'
+      ? `<div class="case-reward-actions"><button type="button" class="btn-small case-reward-action" data-reward-action="claim" data-reward-id="${escapeHtml(reward.id)}" ${caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Забрать</button><button type="button" class="btn-small danger case-reward-action" data-reward-action="sell" data-reward-id="${escapeHtml(reward.id)}" ${caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Продать · ${fmt(caseSellValue(item))}</button></div>`
+      : status;
+    return `<article class="case-reward-row" data-reward-id="${escapeHtml(reward.id)}">
+      <div class="case-reward-number">#${index + 1}</div>${reel}
+      <div class="case-reward-details"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong><span>Цена предмета · ${fmt(Number(item.price || 0))}</span></div>
+      ${actions}
+    </article>`;
+  }).join('') || '<div class="case-empty">В этом открытии нет ожидающих наград.</div>';
+  caseClaimAllBtn.textContent = `Забрать все (${pending.length})`;
+  caseSellAllBtn.textContent = `Продать все · ${fmt(sellTotal)}`;
+  caseClaimAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
+  caseSellAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
+  caseResultClose.disabled = caseAnimationInProgress || caseSettlementInProgress;
 }
 
-async function openGameCase(caseId) {
+async function playCaseReels() {
+  const animationId = ++caseAnimationSequence;
+  const tracks = [...caseRewardList.querySelectorAll('.case-reel-track')];
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  await Promise.all(tracks.map((track, index) => new Promise(resolve => {
+    const viewport = track.parentElement;
+    const winner = track.querySelector('[data-reel-winner="true"]');
+    if (!viewport || !winner) { resolve(); return; }
+    const winnerIndex = Number(track.dataset.winnerIndex || 0);
+    const cardWidth = winner.getBoundingClientRect().width;
+    const gap = parseFloat(getComputedStyle(track).gap) || 6;
+    const targetX = viewport.clientWidth / 2 - (5 + winnerIndex * (cardWidth + gap) + cardWidth / 2);
+    const delay = index * 65;
+    const duration = 2150 + Math.min(index, 8) * 55;
+    setTimeout(() => {
+      if (animationId !== caseAnimationSequence) { resolve(); return; }
+      track.style.transition = `transform ${duration}ms cubic-bezier(.12,.76,.12,1)`;
+      requestAnimationFrame(() => { track.style.transform = `translateX(${targetX}px)`; });
+      setTimeout(() => {
+        if (animationId === caseAnimationSequence) winner.classList.add('landed');
+        resolve();
+      }, duration + 50);
+    }, delay);
+  })));
+}
+
+async function showCaseOpeningReview(opening, animate = false) {
+  activeCaseOpening = opening;
+  caseAnimationInProgress = Boolean(animate && opening.rewards?.some(reward => reward.status === 'pending'));
+  renderCaseOpeningView(caseAnimationInProgress);
+  caseResultModal.classList.add('show');
+  caseResultModal.setAttribute('aria-hidden', 'false');
+  if (caseAnimationInProgress) {
+    await playCaseReels();
+    caseAnimationInProgress = false;
+    renderCaseOpeningView(false);
+    caseResultStatus.textContent = 'Прокрутка завершена. Выбери, что сделать со скинами.';
+  }
+}
+
+function openPendingCaseOpening(openingId) {
+  const rewards = pendingCaseRewards.filter(reward => String(reward.opening_id) === String(openingId));
+  if (!rewards.length) return;
+  showCaseOpeningReview({
+    opening_id: openingId,
+    case_name: rewards[0].case_name,
+    case_image_url: rewards[0].case_image_url,
+    rewards
+  }, false);
+}
+
+function addCaseClaimsToInventory(items, bestDrop) {
+  if (!Array.isArray(items) || !items.length) return;
+  const oldCount = state.inventory.length;
+  state.inventory.push(...items);
+  if (bestDrop) state.bestDrop = bestDrop;
+  myInvCount.textContent = state.inventory.length;
+  if (oldCount === 0) renderMyInventory();
+  else if (Number(myInventory.dataset.visibleCount || 0) >= oldCount) appendMyInventoryPage();
+  else updateMyInventoryLoadMoreButton();
+  updateBalanceUI();
+  if ($('page-profile').classList.contains('active')) renderProfile();
+}
+
+function updateCaseRewardLocally(rewardId, status) {
+  pendingCaseRewards = pendingCaseRewards.filter(reward => String(reward.id) !== String(rewardId));
+  if (activeCaseOpening) {
+    activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => String(reward.id) === String(rewardId) ? { ...reward, status } : reward);
+  }
+  renderPendingCaseRewards();
+  renderCaseOpeningView(false);
+}
+
+async function settleOneCaseReward(rewardId, action) {
+  if (!activeCaseOpening || caseSettlementInProgress || caseAnimationInProgress) return;
+  caseSettlementInProgress = true;
+  renderCaseOpeningView(false);
+  caseResultStatus.textContent = action === 'claim' ? 'Добавляю скин в инвентарь…' : 'Продаю скин…';
+  try {
+    await stateSaveQueue;
+    const { data, error } = await supabaseClient.rpc('settle_case_reward', { p_reward_id: rewardId, p_action: action });
+    if (error) throw error;
+    state.balance = Number(data.balance);
+    if (action === 'claim') addCaseClaimsToInventory([data.item], data.best_drop);
+    else updateBalanceUI(true);
+    updateCaseRewardLocally(rewardId, action === 'claim' ? 'claimed' : 'sold');
+    caseFeedback.textContent = action === 'claim'
+      ? `Скин «${data.item?.name || 'Предмет'}» добавлен в инвентарь.`
+      : `Скин продан за ${fmt(Number(data.amount || 0))}.`;
+    await loadPendingCaseRewards();
+  } catch (error) {
+    caseResultStatus.textContent = 'Не удалось обработать скин. Награда осталась доступна.';
+    console.error('Could not settle case reward:', error);
+  } finally {
+    caseSettlementInProgress = false;
+    renderCaseOpeningView(false);
+  }
+}
+
+async function settleAllCaseRewards(action) {
+  if (!activeCaseOpening || caseSettlementInProgress || caseAnimationInProgress) return;
+  const openingId = activeCaseOpening.opening_id;
+  caseSettlementInProgress = true;
+  renderCaseOpeningView(false);
+  caseResultStatus.textContent = action === 'claim' ? 'Добавляю все скины в инвентарь…' : 'Продаю все скины…';
+  try {
+    await stateSaveQueue;
+    const { data, error } = await supabaseClient.rpc('settle_case_opening_rewards', {
+      p_opening_id: openingId,
+      p_action: action
+    });
+    if (error) throw error;
+    state.balance = Number(data.balance);
+    if (action === 'claim') addCaseClaimsToInventory(data.items || [], data.best_drop);
+    else updateBalanceUI(true);
+    const settledStatus = action === 'claim' ? 'claimed' : 'sold';
+    activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => reward.status === 'pending' ? { ...reward, status: settledStatus } : reward);
+    pendingCaseRewards = pendingCaseRewards.filter(reward => String(reward.opening_id) !== String(openingId));
+    renderPendingCaseRewards();
+    caseFeedback.textContent = action === 'claim'
+      ? `В инвентарь добавлено ${Number(data.settled_count || 0)} скинов.`
+      : `Продано ${Number(data.settled_count || 0)} скинов за ${fmt(Number(data.amount || 0))}.`;
+    await loadPendingCaseRewards();
+  } catch (error) {
+    caseResultStatus.textContent = 'Не удалось обработать награды. Они остались доступными.';
+    console.error('Could not settle all case rewards:', error);
+  } finally {
+    caseSettlementInProgress = false;
+    renderCaseOpeningView(false);
+  }
+}
+
+async function openGameCase(caseId, quantity) {
   if (!currentUser || !supabaseClient || caseOpeningInProgress) return;
   const gameCase = gameCases.find(item => String(item.id) === String(caseId));
   if (!gameCase) return;
   caseOpeningInProgress = true;
   casesGrid.querySelectorAll('.case-open-btn').forEach(button => { button.disabled = true; });
-  caseFeedback.textContent = 'Открываю кейс…';
+  caseFeedback.textContent = `Открываю ${quantity} ${quantity === 1 ? 'кейс' : 'кейса'}…`;
   try {
     await stateSaveQueue;
-    const { data, error } = await supabaseClient.rpc('open_game_case', { p_case_id: gameCase.id });
+    const { data, error } = await supabaseClient.rpc('open_game_cases', {
+      p_case_id: gameCase.id,
+      p_quantity: quantity
+    });
     if (error) throw error;
-    const oldInventoryCount = state.inventory.length;
     state.balance = Number(data.balance);
-    if (data.skin) state.inventory.push(data.skin);
-    state.bestDrop = data.best_drop || state.bestDrop;
     updateBalanceUI(true);
-    myInvCount.textContent = state.inventory.length;
-    if (data.skin) {
-      if (oldInventoryCount === 0) renderMyInventory();
-      else if (Number(myInventory.dataset.visibleCount || 0) >= oldInventoryCount) appendMyInventoryPage();
-      else updateMyInventoryLoadMoreButton();
-    }
-    if ($('page-profile').classList.contains('active')) renderProfile();
-    caseFeedback.textContent = `${data.case_name || gameCase.name}: выпал ${data.skin?.name || 'предмет'}.`;
-    showCaseResult(data);
+    const rewards = (data.rewards || []).map(reward => ({
+      ...reward,
+      opening_id: data.opening_id,
+      case_name: data.case_name || gameCase.name,
+      case_image_url: data.case_image_url || gameCase.image_url || '',
+      created_at: data.created_at || new Date().toISOString()
+    }));
+    pendingCaseRewards = [...new Map([...pendingCaseRewards, ...rewards].map(reward => [String(reward.id), reward])).values()];
+    renderPendingCaseRewards();
+    caseFeedback.textContent = `${quantity} ${quantity === 1 ? 'кейс открыт' : 'кейса открыто'}. Выбери, забрать или продать выпавшие скины.`;
+    await showCaseOpeningReview({
+      opening_id: data.opening_id,
+      case_name: data.case_name || gameCase.name,
+      case_image_url: data.case_image_url || gameCase.image_url || '',
+      rewards
+    }, !caseSkipAnimation);
   } catch (error) {
     const message = String(error.message || '').toLowerCase();
     caseFeedback.textContent = message.includes('insufficient balance')
-      ? 'Не хватает баланса на открытие этого кейса.'
-      : message.includes('open_game_case') || message.includes('function')
-        ? 'Сначала выполни supabase/cases.sql в SQL Editor.'
-        : 'Кейс не открылся. Повтори попытку.';
-    console.error('Could not open game case:', error);
+      ? 'Не хватает баланса на открытие выбранного количества кейсов.'
+      : message.includes('open_game_cases') || message.includes('function')
+        ? 'Сначала выполни обновлённый supabase/cases.sql в SQL Editor.'
+        : 'Кейсы не открылись. Повтори попытку.';
+    console.error('Could not open game cases:', error);
   } finally {
     caseOpeningInProgress = false;
     casesGrid.querySelectorAll('.case-open-btn').forEach(button => { button.disabled = false; });
@@ -1648,19 +1876,55 @@ adminCaseDeleteBtn.addEventListener('click', () => {
     await loadCases();
   });
 });
+casesGrid.addEventListener('input', event => {
+  const input = event.target.closest('.case-open-quantity');
+  if (!input || input.value === '') return;
+  const value = Number(input.value);
+  if (!Number.isFinite(value)) return;
+  input.value = String(Math.max(1, Math.min(10, Math.trunc(value))));
+  const openButton = input.closest('.case-card')?.querySelector('.case-open-btn');
+  if (openButton) openButton.textContent = `Открыть × ${input.value}`;
+});
 casesGrid.addEventListener('click', event => {
   const button = event.target.closest('[data-case-open]');
   if (!button || caseOpeningInProgress) return;
   const gameCase = gameCases.find(item => String(item.id) === button.dataset.caseOpen);
   if (!gameCase) return;
-  openConfirm('Открыть кейс?', `${gameCase.name} · ${fmt(Number(gameCase.price))}. Сумма спишется с денежного баланса.`, () => void openGameCase(gameCase.id));
+  const quantityInput = button.closest('.case-card')?.querySelector('.case-open-quantity');
+  const quantity = Number(quantityInput?.value || 1);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
+    caseFeedback.textContent = 'Можно открыть от 1 до 10 кейсов за раз.';
+    return;
+  }
+  const total = Number(gameCase.price) * quantity;
+  openConfirm('Открыть кейсы?', `${gameCase.name} × ${quantity} · всего ${fmt(total)}. Сумма спишется с денежного баланса.`, () => void openGameCase(gameCase.id, quantity));
 });
+pendingCaseRewardsList.addEventListener('click', event => {
+  const button = event.target.closest('[data-pending-opening]');
+  if (button) openPendingCaseOpening(button.dataset.pendingOpening);
+});
+caseRewardList.addEventListener('click', event => {
+  const button = event.target.closest('[data-reward-action]');
+  if (!button || caseSettlementInProgress || caseAnimationInProgress) return;
+  void settleOneCaseReward(button.dataset.rewardId, button.dataset.rewardAction);
+});
+caseClaimAllBtn.addEventListener('click', () => void settleAllCaseRewards('claim'));
+caseSellAllBtn.addEventListener('click', () => void settleAllCaseRewards('sell'));
+caseSkipAnimationToggle.addEventListener('change', () => {
+  caseSkipAnimation = caseSkipAnimationToggle.checked;
+  try { localStorage.setItem(CASE_SKIP_ANIMATION_KEY, String(caseSkipAnimation)); } catch (e) {}
+});
+try {
+  caseSkipAnimation = localStorage.getItem(CASE_SKIP_ANIMATION_KEY) === 'true';
+} catch (e) { caseSkipAnimation = false; }
+caseSkipAnimationToggle.checked = caseSkipAnimation;
 caseResultClose.addEventListener('click', () => {
+  if (caseAnimationInProgress || caseSettlementInProgress) return;
   caseResultModal.classList.remove('show');
   caseResultModal.setAttribute('aria-hidden', 'true');
 });
 caseResultModal.addEventListener('click', event => {
-  if (event.target !== caseResultModal) return;
+  if (event.target !== caseResultModal || caseAnimationInProgress || caseSettlementInProgress) return;
   caseResultClose.click();
 });
 

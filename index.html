@@ -252,8 +252,17 @@
   <!-- КЕЙСЫ -->
   <section class="tab-page" id="page-cases">
     <h1 class="title">Кейсы</h1>
-    <p class="cases-intro">Открывай демо-кейсы за баланс и получай скины в инвентарь.</p>
+    <p class="cases-intro">Выбирай от 1 до 10 кейсов, смотри прокрутку и решай, забрать выпавшие скины или продать их.</p>
     <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
+    <label class="settings-switch-row case-skip-toggle" for="caseSkipAnimation">
+      <span><strong>Пропуск анимации</strong><small>Включи, чтобы сразу показывать результат кейса</small></span>
+      <input type="checkbox" id="caseSkipAnimation">
+      <span class="settings-switch" aria-hidden="true"></span>
+    </label>
+    <div class="pending-case-rewards" id="pendingCaseRewards" hidden>
+      <div class="pending-case-heading"><div><h2>Незабранные скины</h2><span id="pendingCaseRewardsCount">0 предметов</span></div></div>
+      <div class="pending-case-list" id="pendingCaseRewardsList"></div>
+    </div>
     <div class="cases-grid" id="casesGrid"><div class="case-empty">Загружаю кейсы…</div></div>
   </section>
 
@@ -364,11 +373,16 @@
 
   <div class="modal-overlay" id="caseResultModal" aria-hidden="true">
     <div class="modal case-result-modal" role="dialog" aria-modal="true" aria-labelledby="caseResultTitle">
-      <h3 class="modal-title" id="caseResultTitle">Кейс открыт</h3>
+      <h3 class="modal-title" id="caseResultTitle">Результаты открытия</h3>
       <img class="case-result-case-image" id="caseResultCaseImage" alt="">
       <p id="caseResultCaseName"></p>
-      <div class="case-result-skin"><img id="caseResultSkinImage" alt=""><strong id="caseResultSkinName"></strong><span id="caseResultSkinPrice"></span></div>
-      <button type="button" class="btn-modal btn-confirm" id="caseResultClose">Забрать скин</button>
+      <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
+      <div class="case-result-rewards" id="caseRewardList"></div>
+      <div class="case-result-bulk-actions">
+        <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
+        <button type="button" class="btn-modal btn-case-sell" id="caseSellAllBtn">Продать все</button>
+      </div>
+      <button type="button" class="btn-modal btn-cancel case-result-close" id="caseResultClose">Закрыть</button>
     </div>
   </div>
 
