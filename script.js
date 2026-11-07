@@ -326,6 +326,10 @@ function applyMarketPricesToCatalog(snapshot) {
   let matched = 0;
   let changed = false;
   for (const item of SKINS_CATALOG) {
+    if (item.isCustomSkin) {
+      catalogItemsById.set(String(item.id), item);
+      continue;
+    }
     const key = normalizeMarketHashName(item.marketHashName || item.name);
     const price = marketPriceByName.get(key);
     if (price != null) {
@@ -344,7 +348,7 @@ function applyMarketPricesToCatalog(snapshot) {
     catalogItemsById.set(String(item.id), item);
   }
   marketPriceByName = catalogPrices;
-  marketPriceCoverage = { matched, total: SKINS_CATALOG.length };
+  marketPriceCoverage = { matched, total: SKINS_CATALOG.filter(item => !item.isCustomSkin).length };
   SKINS_CATALOG.sort((a, b) => a.price - b.price);
   try {
     localStorage.setItem(MARKET_PRICE_CACHE_KEY, JSON.stringify({
@@ -449,9 +453,12 @@ const CURRENCY_KEY = 'cs2up_currency';
 const TELEGRAM_URL = 'https://t.me/perkasanya';
 const RUB_PER_USD = 90;
 const MUSIC_TRACKS = ['sounds/1.mp3', 'sounds/2.mp3', 'sounds/3.mp3', 'sounds/4.mp3', 'sounds/5.mp3'];
+const MUSIC_EPOCH_MS = Date.UTC(2026, 0, 1);
 const PROFILE_INVENTORY_PAGE_SIZE = 150;
 const CASE_IMAGE_BUCKET = 'case-designs';
 const CASE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const CUSTOM_SKIN_IMAGE_BUCKET = 'custom-skin-images';
+const CUSTOM_SKIN_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const CASE_SKIP_ANIMATION_KEY = 'cs2up_case_skip_animation_v2';
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
@@ -530,6 +537,16 @@ const adminCaseCategoryForm = document.getElementById('adminCaseCategoryForm');
 const adminCaseCategoryName = document.getElementById('adminCaseCategoryName');
 const adminCaseCategories = document.getElementById('adminCaseCategories');
 const adminCaseCategory = document.getElementById('adminCaseCategory');
+const adminCustomSkinForm = document.getElementById('adminCustomSkinForm');
+const adminCustomSkinName = document.getElementById('adminCustomSkinName');
+const adminCustomSkinPrice = document.getElementById('adminCustomSkinPrice');
+const adminCustomSkinQuality = document.getElementById('adminCustomSkinQuality');
+const adminCustomSkinQualityColor = document.getElementById('adminCustomSkinQualityColor');
+const adminCustomSkinImage = document.getElementById('adminCustomSkinImage');
+const adminCustomSkinPreview = document.getElementById('adminCustomSkinPreview');
+const adminCustomSkinSave = document.getElementById('adminCustomSkinSave');
+const adminCustomSkinFeedback = document.getElementById('adminCustomSkinFeedback');
+const adminCustomSkinList = document.getElementById('adminCustomSkinList');
 const caseSkipAnimationToggle = document.getElementById('caseSkipAnimation');
 const pendingCaseRewardsPanel = document.getElementById('pendingCaseRewards');
 const pendingCaseRewardsCount = document.getElementById('pendingCaseRewardsCount');
@@ -602,6 +619,7 @@ const battleRoomCancel = document.getElementById('battleRoomCancel');
 const battleFeedback = document.getElementById('battleFeedback');
 const battleList = document.getElementById('battleList');
 const myBattleArchive = document.getElementById('myBattleArchive');
+const clearBattleArchiveBtn = document.getElementById('clearBattleArchiveBtn');
 const refreshBattlesBtn = document.getElementById('refreshBattlesBtn');
 const battleResult = document.getElementById('battleResult');
 const battleWheelCanvas = document.getElementById('battleWheelCanvas');
@@ -746,6 +764,7 @@ let caseEditorId = null;
 let caseImageUrl = '';
 let caseImagePreviewObjectUrl = null;
 let caseImageUploadInProgress = false;
+let customSkinPreviewObjectUrl = null;
 let caseOpeningInProgress = false;
 let caseSkipAnimation = false;
 let caseAnimationInProgress = false;
@@ -772,8 +791,11 @@ let musicVolume = 0.3;
 let musicEnabled = false;
 let musicTrackIndex = 0;
 let musicPlayer = null;
-let preloadedMusicPlayer = null;
-let preloadedMusicTrackIndex = -1;
+let musicServerOffsetMs = 0;
+let musicTrackDurations = null;
+let musicSyncTimer = null;
+let musicSyncInFlight = false;
+let lastMusicClockSyncAt = 0;
 let spinStrength = 5;
 let spinMode = 'fast';
 let battleWheelAngle = 0;
@@ -783,6 +805,8 @@ let deferredBattleResults = new Set();
 let battleOutcomeQueue = [];
 let battleAnimationInProgress = false;
 let latestBattles = [];
+let hiddenBattleArchiveIds = new Set();
+let customCatalogSignature = null;
 let selectedBattleSkinIds = new Set();
 let battlePickerMode = 'create';
 let battlePickerBattleId = null;
@@ -1603,41 +1627,107 @@ function applyMusicVolume(percent) {
   musicVolumeValue.textContent = Math.round(safePercent) + '%';
   updateRangeProgress(musicVolumeSlider, safePercent);
   if (musicPlayer) musicPlayer.volume = musicVolume;
-  if (preloadedMusicPlayer) preloadedMusicPlayer.volume = musicVolume;
   try { localStorage.setItem(MUSIC_VOLUME_KEY, String(safePercent)); } catch (e) {}
 }
 
-function preloadNextMusicTrack() {
-  if (!musicEnabled || !MUSIC_TRACKS.length) return;
-  const nextIndex = (musicTrackIndex + 1) % MUSIC_TRACKS.length;
-  if (preloadedMusicPlayer && preloadedMusicTrackIndex === nextIndex) return;
-  if (preloadedMusicPlayer) preloadedMusicPlayer.pause();
-  preloadedMusicTrackIndex = nextIndex;
-  preloadedMusicPlayer = new Audio(MUSIC_TRACKS[nextIndex]);
-  preloadedMusicPlayer.preload = 'auto';
-  preloadedMusicPlayer.volume = musicVolume;
-  preloadedMusicPlayer.load();
+function loadSharedMusicDurations() {
+  if (musicTrackDurations) return Promise.resolve(musicTrackDurations);
+  musicTrackDurations = Promise.all(MUSIC_TRACKS.map(source => new Promise(resolve => {
+    const probe = new Audio();
+    let finished = false;
+    const finish = duration => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutId);
+      probe.removeAttribute('src');
+      probe.load();
+      resolve(Number.isFinite(duration) && duration > 0 ? duration : 180);
+    };
+    const timeoutId = setTimeout(() => finish(180), 10000);
+    probe.preload = 'metadata';
+    probe.addEventListener('loadedmetadata', () => finish(probe.duration), { once: true });
+    probe.addEventListener('error', () => finish(180), { once: true });
+    probe.src = source;
+    probe.load();
+  })));
+  return musicTrackDurations;
 }
 
-function startMusicTrack(index, player = null) {
-  if (!musicEnabled || !MUSIC_TRACKS.length) return;
-  musicTrackIndex = index % MUSIC_TRACKS.length;
-  musicPlayer = player || new Audio(MUSIC_TRACKS[musicTrackIndex]);
-  musicPlayer.preload = 'auto';
-  musicPlayer.volume = musicVolume;
-  musicPlayer.addEventListener('ended', advanceMusicTrack, { once: true });
-  const playback = musicPlayer.play();
-  if (playback && playback.catch) playback.catch(error => console.warn('Background music could not start:', error));
-  preloadNextMusicTrack();
+async function refreshMusicServerClock() {
+  if (!supabaseClient) return;
+  const { data, error } = await supabaseClient.rpc('get_site_music_clock');
+  if (error) throw error;
+  const serverMs = new Date(data).getTime();
+  if (!Number.isFinite(serverMs)) throw new Error('Invalid server music clock response');
+  musicServerOffsetMs = serverMs - Date.now();
+  lastMusicClockSyncAt = Date.now();
 }
 
-function advanceMusicTrack() {
-  if (!musicEnabled) return;
-  const nextIndex = (musicTrackIndex + 1) % MUSIC_TRACKS.length;
-  const nextPlayer = preloadedMusicTrackIndex === nextIndex ? preloadedMusicPlayer : null;
-  preloadedMusicPlayer = null;
-  preloadedMusicTrackIndex = -1;
-  startMusicTrack(nextIndex, nextPlayer);
+function sharedMusicPosition(serverMs, durations) {
+  const cycleDuration = durations.reduce((sum, duration) => sum + duration, 0);
+  if (!(cycleDuration > 0)) return { index: 0, seconds: 0 };
+  let position = ((serverMs - MUSIC_EPOCH_MS) / 1000) % cycleDuration;
+  if (position < 0) position += cycleDuration;
+  for (let index = 0; index < durations.length; index += 1) {
+    if (position < durations[index]) return { index, seconds: position };
+    position -= durations[index];
+  }
+  return { index: 0, seconds: 0 };
+}
+
+async function synchronizeSharedMusic({ refreshClock = false } = {}) {
+  if (!musicEnabled || musicSyncInFlight) return;
+  musicSyncInFlight = true;
+  try {
+    if (refreshClock || !lastMusicClockSyncAt || Date.now() - lastMusicClockSyncAt > 30000) {
+      try { await refreshMusicServerClock(); }
+      catch (error) { console.warn('Server music clock is unavailable; using the device clock:', error); }
+    }
+    const durations = await loadSharedMusicDurations();
+    if (!musicEnabled) return;
+    const position = sharedMusicPosition(Date.now() + musicServerOffsetMs, durations);
+    const source = MUSIC_TRACKS[position.index];
+    const trackChanged = musicTrackIndex !== position.index || !musicPlayer || !musicPlayer.src.endsWith(source);
+    musicTrackIndex = position.index;
+    if (trackChanged) {
+      musicPlayer.src = source;
+      musicPlayer.load();
+      const seekAndPlay = () => {
+        if (!musicEnabled || musicTrackIndex !== position.index) return;
+        const duration = Number.isFinite(musicPlayer.duration) ? musicPlayer.duration : durations[position.index];
+        musicPlayer.currentTime = Math.min(position.seconds, Math.max(0, duration - 0.1));
+        const playback = musicPlayer.play();
+        if (playback?.catch) playback.catch(error => console.warn('Shared background music could not start:', error));
+      };
+      if (musicPlayer.readyState >= 1) seekAndPlay();
+      else musicPlayer.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+    } else if (musicPlayer.readyState >= 1) {
+      const drift = Math.abs(musicPlayer.currentTime - position.seconds);
+      if (drift > 1.5) musicPlayer.currentTime = Math.min(position.seconds, Math.max(0, musicPlayer.duration - 0.1));
+      if (musicPlayer.paused) {
+        const playback = musicPlayer.play();
+        if (playback?.catch) playback.catch(() => {});
+      }
+    }
+  } catch (error) {
+    console.warn('Could not synchronize the shared background playlist:', error);
+  } finally {
+    musicSyncInFlight = false;
+  }
+}
+
+function startSharedMusic() {
+  if (!musicEnabled || !MUSIC_TRACKS.length) return;
+  if (!musicPlayer) {
+    musicPlayer = new Audio(MUSIC_TRACKS[0]);
+    musicPlayer.preload = 'auto';
+    musicPlayer.volume = musicVolume;
+    musicPlayer.onended = () => void synchronizeSharedMusic();
+    const playback = musicPlayer.play();
+    if (playback?.catch) playback.catch(error => console.warn('Background music is waiting for a user gesture:', error));
+  }
+  void synchronizeSharedMusic({ refreshClock: true });
+  if (!musicSyncTimer) musicSyncTimer = setInterval(() => void synchronizeSharedMusic(), 5000);
 }
 
 function setBackgroundMusicEnabled(enabled) {
@@ -1645,14 +1735,13 @@ function setBackgroundMusicEnabled(enabled) {
   musicEnabledToggle.checked = musicEnabled;
   try { localStorage.setItem(MUSIC_ENABLED_KEY, String(musicEnabled)); } catch (e) {}
   if (musicEnabled) {
-    if (!musicPlayer) startMusicTrack(musicTrackIndex);
+    startSharedMusic();
     return;
   }
+  if (musicSyncTimer) clearInterval(musicSyncTimer);
+  musicSyncTimer = null;
   if (musicPlayer) musicPlayer.pause();
-  if (preloadedMusicPlayer) preloadedMusicPlayer.pause();
   musicPlayer = null;
-  preloadedMusicPlayer = null;
-  preloadedMusicTrackIndex = -1;
   musicTrackIndex = 0;
 }
 
@@ -1669,7 +1758,7 @@ function loadMusicSettings() {
   musicEnabledToggle.checked = enabled;
   if (enabled) {
     const startAfterGesture = () => {
-      if (musicEnabled && !musicPlayer) startMusicTrack(musicTrackIndex);
+      if (musicEnabled && !musicPlayer) startSharedMusic();
     };
     document.addEventListener('pointerdown', startAfterGesture, { once: true });
     document.addEventListener('keydown', startAfterGesture, { once: true });
@@ -1739,6 +1828,7 @@ function activateTab(page) {
   panel.classList.add('active');
   if (page === 'profile') renderProfile();
   if (page === 'admin') void renderAdminUsers();
+  if (page === 'admin') void loadCustomCatalogSkins();
   if (page === 'cases' || page === 'admin') void loadCases();
   if (page === 'cases') void loadPendingCaseRewards();
   if (page === 'battles') { drawBattleWheel(); void loadBattles(); renderBattleList(); renderBattleArchive(); }
@@ -2719,7 +2809,7 @@ async function playCaseReels() {
     const rewardId = String(track.dataset.rewardId || '');
     activeCaseOpening.reelOffsets ||= {};
     activeCaseOpening.reelOffsets[rewardId] = targetX;
-    const duration = 10000;
+    const duration = 15000;
     track.addEventListener('transitionend', onTransitionEnd);
     fallbackTimer = setTimeout(() => {
       if (animationId === caseAnimationSequence) winner.classList.add('case-reel-winner', 'landed');
@@ -2750,6 +2840,8 @@ async function playCaseReels() {
 async function showCaseOpeningReview(opening, animate = false) {
   activeCaseOpening = opening;
   caseOpenResults.hidden = false;
+  caseOpenResults.classList.remove('case-result-enter');
+  if (animate) requestAnimationFrame(() => caseOpenResults.classList.add('case-result-enter'));
   caseAnimationInProgress = Boolean(animate && opening.rewards?.some(reward => reward.status === 'pending'));
   renderCaseOpeningView(caseAnimationInProgress);
   renderPendingCaseRewards();
@@ -3140,6 +3232,85 @@ adminCaseDeleteBtn.addEventListener('click', () => {
     resetCaseEditor();
     await loadCases();
   });
+});
+
+adminCustomSkinImage.addEventListener('change', () => {
+  if (customSkinPreviewObjectUrl) URL.revokeObjectURL(customSkinPreviewObjectUrl);
+  customSkinPreviewObjectUrl = null;
+  const file = adminCustomSkinImage.files?.[0];
+  if (!file) {
+    adminCustomSkinPreview.hidden = true;
+    adminCustomSkinPreview.removeAttribute('src');
+    return;
+  }
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > CUSTOM_SKIN_IMAGE_MAX_BYTES) {
+    adminCustomSkinFeedback.textContent = 'Выбери PNG, JPEG или WebP размером до 5 МБ.';
+    adminCustomSkinImage.value = '';
+    adminCustomSkinPreview.hidden = true;
+    return;
+  }
+  adminCustomSkinFeedback.textContent = '';
+  customSkinPreviewObjectUrl = URL.createObjectURL(file);
+  adminCustomSkinPreview.src = customSkinPreviewObjectUrl;
+  adminCustomSkinPreview.hidden = false;
+});
+
+adminCustomSkinForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!currentUser || currentUser.role !== 'admin' || !supabaseClient) return;
+  const name = adminCustomSkinName.value.trim();
+  const quality = adminCustomSkinQuality.value.trim();
+  const price = amountToRub(Number(adminCustomSkinPrice.value));
+  const qualityColor = adminCustomSkinQualityColor.value;
+  const file = adminCustomSkinImage.files?.[0];
+  if (name.length < 2 || name.length > 100 || quality.length < 1 || !(price > 0) || price > 1000000000 || !/^#[0-9a-f]{6}$/i.test(qualityColor)) {
+    adminCustomSkinFeedback.textContent = 'Проверь название, цену, качество и его цвет.';
+    return;
+  }
+  if (!file || !['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > CUSTOM_SKIN_IMAGE_MAX_BYTES) {
+    adminCustomSkinFeedback.textContent = 'Добавь PNG, JPEG или WebP размером до 5 МБ.';
+    return;
+  }
+
+  adminCustomSkinSave.disabled = true;
+  adminCustomSkinFeedback.textContent = 'Загружаю изображение и сохраняю скин…';
+  let uploadedPath = '';
+  try {
+    const extension = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/webp' ? 'webp' : 'png';
+    uploadedPath = `${currentUser.id}/${makeInstanceId()}.${extension}`;
+    const { data: upload, error: uploadError } = await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).upload(uploadedPath, file, {
+      contentType: file.type, cacheControl: '3600', upsert: false
+    });
+    if (uploadError) throw uploadError;
+    const imageUrl = supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).getPublicUrl(upload.path).data.publicUrl;
+    const { error } = await supabaseClient.from('custom_catalog_skins').insert({
+      created_by: currentUser.id,
+      name,
+      price,
+      quality,
+      quality_color: qualityColor,
+      image_url: imageUrl,
+      image_path: upload.path,
+    });
+    if (error) throw error;
+    adminCustomSkinForm.reset();
+    adminCustomSkinQualityColor.value = '#d32ce6';
+    if (customSkinPreviewObjectUrl) URL.revokeObjectURL(customSkinPreviewObjectUrl);
+    customSkinPreviewObjectUrl = null;
+    adminCustomSkinPreview.hidden = true;
+    adminCustomSkinPreview.removeAttribute('src');
+    adminCustomSkinFeedback.textContent = 'Скин добавлен в общий каталог.';
+    await loadCustomCatalogSkins();
+    if (!adminCaseForm.hidden) renderCaseSkinResults();
+  } catch (error) {
+    if (uploadedPath) await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).remove([uploadedPath]).catch(() => {});
+    adminCustomSkinFeedback.textContent = /custom_catalog_skins|schema cache|does not exist|bucket/i.test(String(error.message || ''))
+      ? 'Проверь миграцию supabase/site-shared-features.sql и права Storage.'
+      : 'Не удалось сохранить скин. Проверь поля и подключение.';
+    console.error('Could not save custom catalog skin:', error);
+  } finally {
+    adminCustomSkinSave.disabled = false;
+  }
 });
 casesGrid.addEventListener('click', event => {
   const button = event.target.closest('[data-case-open]');
@@ -3593,6 +3764,65 @@ async function fetchCatalogJson(file, { cache = 'default', signal } = {}) {
   return response.json();
 }
 
+function renderCustomSkinAdminList(items = SKINS_CATALOG.filter(item => item.isCustomSkin)) {
+  if (!adminCustomSkinList) return;
+  if (!items.length) {
+    adminCustomSkinList.innerHTML = '<div class="case-empty">Пользовательских скинов пока нет.</div>';
+    return;
+  }
+  adminCustomSkinList.innerHTML = items.map(item => `<article class="custom-skin-admin-item">
+    <img src="${escapeHtml(item.img || '')}" alt="" loading="lazy">
+    <div><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span>${fmt(Number(item.price || 0))} · ${escapeHtml(item.rarity?.name || 'Без качества')}</span></div>
+  </article>`).join('');
+}
+
+async function loadCustomCatalogSkins({ render = true } = {}) {
+  if (!supabaseClient) return [];
+  const { data, error } = await supabaseClient.from('custom_catalog_skins')
+    .select('id,name,price,quality,quality_color,image_url,created_at')
+    .order('created_at', { ascending: false });
+  if (error) {
+    if (currentUser?.role === 'admin' && adminCustomSkinList) {
+      adminCustomSkinList.innerHTML = '<div class="case-empty">Чтобы включить пользовательские скины, запусти supabase/site-shared-features.sql.</div>';
+    }
+    console.warn('Custom catalog skins are unavailable; apply supabase/site-shared-features.sql:', error);
+    return [];
+  }
+
+  const signature = JSON.stringify(data || []);
+  if (customCatalogSignature === signature) {
+    renderCustomSkinAdminList();
+    return SKINS_CATALOG.filter(item => item.isCustomSkin);
+  }
+  customCatalogSignature = signature;
+  const customItems = (data || []).map(row => ({
+    id: `custom_${row.id}`,
+    name: String(row.name || 'Пользовательский скин'),
+    price: Number(row.price || 0),
+    estimatedPrice: Number(row.price || 0),
+    priceSource: 'admin',
+    img: String(row.image_url || ''),
+    rarity: { name: String(row.quality || 'Без качества'), color: String(row.quality_color || '#a0a0a0') },
+    category: 'Пользовательские скины',
+    catalogType: 'skin',
+    sourceItemId: `custom_${row.id}`,
+    isCustomSkin: true,
+  }));
+  SKINS_CATALOG = SKINS_CATALOG.filter(item => !item.isCustomSkin).concat(customItems);
+  customItems.forEach(item => catalogItemsById.set(String(item.id), item));
+  if (catalogLoaded) {
+    SKINS_CATALOG.sort((a, b) => a.price - b.price || a.name.localeCompare(b.name, 'ru'));
+    if (render && currentUser && userStateLoadedId === currentUser.id) {
+      renderInventory();
+      renderTargets();
+      renderMyInventory();
+      updateBalanceUI();
+    }
+  }
+  renderCustomSkinAdminList(customItems);
+  return customItems;
+}
+
 async function loadSkins() {
   try {
     const catalogFiles = [
@@ -3635,6 +3865,8 @@ async function loadSkins() {
       collectionNames: Array.isArray(item.collection_names) ? item.collection_names : [],
       };
     }));
+
+    await loadCustomCatalogSkins({ render: false });
 
     SKINS_CATALOG.sort((a, b) => a.price - b.price);
     catalogLoaded = true;
@@ -4518,35 +4750,90 @@ function drawBattleWheel() {
   const size = battleWheelCanvas.width;
   const radius = size / 2;
   const cx = radius, cy = radius;
+  const ringRadius = radius - 48;
+  const tickRadius = radius - 10;
   battleWheelCtx.clearRect(0, 0, size, size);
+  battleWheelCtx.lineCap = 'butt';
+  for (let degree = 0; degree < 360; degree += 5) {
+    const angle = degree * Math.PI / 180;
+    const major = degree % 30 === 0;
+    const innerRadius = tickRadius - (major ? 15 : 8);
+    battleWheelCtx.beginPath();
+    battleWheelCtx.moveTo(cx + Math.cos(angle) * innerRadius, cy + Math.sin(angle) * innerRadius);
+    battleWheelCtx.lineTo(cx + Math.cos(angle) * tickRadius, cy + Math.sin(angle) * tickRadius);
+    battleWheelCtx.strokeStyle = major ? 'rgba(230,230,230,.28)' : 'rgba(230,230,230,.13)';
+    battleWheelCtx.lineWidth = major ? 2 : 1.5;
+    battleWheelCtx.stroke();
+  }
   battleWheelCtx.beginPath();
-  battleWheelCtx.moveTo(cx, cy);
-  battleWheelCtx.arc(cx, cy, radius - 4, Math.PI / 2, Math.PI * 1.5);
-  battleWheelCtx.closePath();
-  battleWheelCtx.fillStyle = '#4ade80';
-  battleWheelCtx.fill();
+  battleWheelCtx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+  battleWheelCtx.strokeStyle = '#242424';
+  battleWheelCtx.lineWidth = 42;
+  battleWheelCtx.stroke();
+
   battleWheelCtx.beginPath();
-  battleWheelCtx.moveTo(cx, cy);
-  battleWheelCtx.arc(cx, cy, radius - 4, -Math.PI / 2, Math.PI / 2);
-  battleWheelCtx.closePath();
-  battleWheelCtx.fillStyle = '#f5f5f5';
-  battleWheelCtx.fill();
-  battleWheelCtx.strokeStyle = '#080808';
-  battleWheelCtx.lineWidth = 3;
-  battleWheelCtx.beginPath();
-  battleWheelCtx.moveTo(cx, 4);
-  battleWheelCtx.lineTo(cx, size - 4);
+  battleWheelCtx.arc(cx, cy, ringRadius, Math.PI / 2, Math.PI * 1.5);
+  const creatorGradient = battleWheelCtx.createLinearGradient(0, cy + ringRadius, 0, cy - ringRadius);
+  creatorGradient.addColorStop(0, '#238d4a');
+  creatorGradient.addColorStop(.5, '#4ade80');
+  creatorGradient.addColorStop(1, '#91f5b0');
+  battleWheelCtx.strokeStyle = creatorGradient;
+  battleWheelCtx.lineWidth = 34;
   battleWheelCtx.stroke();
   battleWheelCtx.beginPath();
-  battleWheelCtx.arc(cx, cy, radius - 4, 0, Math.PI * 2);
+  battleWheelCtx.arc(cx, cy, ringRadius, -Math.PI / 2, Math.PI / 2);
+  const guestGradient = battleWheelCtx.createLinearGradient(0, cy - ringRadius, 0, cy + ringRadius);
+  guestGradient.addColorStop(0, '#c8c8c8');
+  guestGradient.addColorStop(.5, '#f5f5f5');
+  guestGradient.addColorStop(1, '#b7b7b7');
+  battleWheelCtx.strokeStyle = guestGradient;
+  battleWheelCtx.lineWidth = 34;
   battleWheelCtx.stroke();
+
+  battleWheelCtx.beginPath();
+  battleWheelCtx.arc(cx, cy, ringRadius - 24, 0, Math.PI * 2);
+  battleWheelCtx.fillStyle = '#111';
+  battleWheelCtx.fill();
+  battleWheelCtx.strokeStyle = 'rgba(255,255,255,.08)';
+  battleWheelCtx.lineWidth = 2;
+  battleWheelCtx.stroke();
+
   battleWheelCtx.save();
-  battleWheelCtx.fillStyle = '#101010';
-  battleWheelCtx.font = '700 15px Arial';
+  battleWheelCtx.fillStyle = '#4ade80';
+  battleWheelCtx.font = '800 16px Segoe UI, sans-serif';
   battleWheelCtx.textAlign = 'center';
   battleWheelCtx.textBaseline = 'middle';
-  battleWheelCtx.fillText('СОЗДАТЕЛЬ', cx - radius * 0.46, cy);
-  battleWheelCtx.fillText('ГОСТЬ', cx + radius * 0.46, cy);
+  battleWheelCtx.fillText('50%', cx - radius * .53, cy);
+  battleWheelCtx.fillStyle = '#f5f5f5';
+  battleWheelCtx.fillText('50%', cx + radius * .53, cy);
+  battleWheelCtx.fillStyle = 'rgba(255,255,255,.5)';
+  battleWheelCtx.font = '700 18px Segoe UI, sans-serif';
+  battleWheelCtx.fillText('50 / 50', cx, cy - 3);
+  battleWheelCtx.fillStyle = 'rgba(255,255,255,.38)';
+  battleWheelCtx.font = '700 9px Segoe UI, sans-serif';
+  battleWheelCtx.fillText('ОДИН ШАНС НА ДВОИХ', cx, cy + 20);
+  battleWheelCtx.restore();
+
+  battleWheelCtx.strokeStyle = 'rgba(255,255,255,.22)';
+  battleWheelCtx.lineWidth = 2;
+  battleWheelCtx.beginPath();
+  battleWheelCtx.moveTo(cx, cy - ringRadius - 18);
+  battleWheelCtx.lineTo(cx, cy + ringRadius + 18);
+  battleWheelCtx.stroke();
+  battleWheelCtx.beginPath();
+  battleWheelCtx.arc(cx, cy, ringRadius + 21, 0, Math.PI * 2);
+  battleWheelCtx.strokeStyle = 'rgba(255,255,255,.09)';
+  battleWheelCtx.lineWidth = 2;
+  battleWheelCtx.stroke();
+
+  /* Labels stay on their fixed, equally sized halves. */
+  battleWheelCtx.save();
+  battleWheelCtx.fillStyle = '#101010';
+  battleWheelCtx.font = '800 13px Segoe UI, sans-serif';
+  battleWheelCtx.textAlign = 'center';
+  battleWheelCtx.textBaseline = 'middle';
+  battleWheelCtx.fillText('СОЗДАТЕЛЬ', cx - radius * .49, cy - radius * .27);
+  battleWheelCtx.fillText('ГОСТЬ', cx + radius * .49, cy - radius * .27);
   battleWheelCtx.restore();
 }
 
@@ -4760,7 +5047,8 @@ function renderBattleList() {
 function renderBattleArchive() {
   if (!currentUser) return;
   const mine = latestBattles.filter(battle =>
-    (battle.creator_user_id === currentUser.id || battle.guest_user_id === currentUser.id) && battle.status !== 'waiting'
+    (battle.creator_user_id === currentUser.id || battle.guest_user_id === currentUser.id) &&
+    battle.status !== 'waiting' && !hiddenBattleArchiveIds.has(String(battle.id))
   );
   myBattleArchive.innerHTML = mine.length
     ? mine.map(battle => renderBattleCard(battle, true)).join('')
@@ -4771,6 +5059,9 @@ async function loadBattles() {
   if (!currentUser || !supabaseClient || battlePollInFlight) return;
   battlePollInFlight = true;
   try {
+    const { data: hiddenRows, error: hiddenError } = await supabaseClient.from('skin_battle_archive_hidden')
+      .select('battle_id').eq('user_id', currentUser.id);
+    if (!hiddenError) hiddenBattleArchiveIds = new Set((hiddenRows || []).map(row => String(row.battle_id)));
     const { data, error } = await supabaseClient.from('skin_battles')
       .select('id, creator_user_id, creator_name, creator_skin, guest_user_id, guest_name, guest_skin, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
       .order('created_at', { ascending: false }).limit(100);
@@ -4796,6 +5087,34 @@ async function loadBattles() {
     battlePollInFlight = false;
   }
 }
+
+clearBattleArchiveBtn.addEventListener('click', () => {
+  if (!currentUser || !supabaseClient) return;
+  const mine = latestBattles.filter(battle =>
+    (battle.creator_user_id === currentUser.id || battle.guest_user_id === currentUser.id) &&
+    battle.status !== 'waiting' && !hiddenBattleArchiveIds.has(String(battle.id))
+  );
+  if (!mine.length) {
+    battleFeedback.textContent = 'В архиве уже нет завершённых батлов.';
+    return;
+  }
+  openConfirm('Очистить архив батлов?', 'Завершённые батлы будут скрыты только в твоём архиве. У соперников записи останутся.', async () => {
+    clearBattleArchiveBtn.disabled = true;
+    const { data, error } = await supabaseClient.rpc('clear_my_skin_battle_archive');
+    if (error) {
+      battleFeedback.textContent = /function|schema cache|does not exist/i.test(String(error.message || ''))
+        ? 'Примени supabase/site-shared-features.sql в SQL Editor, чтобы включить очистку архива.'
+        : 'Не удалось очистить архив. Попробуй ещё раз.';
+      console.error('Could not clear the personal battle archive:', error);
+      clearBattleArchiveBtn.disabled = false;
+      return;
+    }
+    mine.forEach(battle => hiddenBattleArchiveIds.add(String(battle.id)));
+    renderBattleArchive();
+    battleFeedback.textContent = `Архив очищен (${Number(data) || mine.length} записей скрыто).`;
+    clearBattleArchiveBtn.disabled = false;
+  });
+});
 
 async function recoverBattleAfterCancelFailure(room) {
   const { data: freshBattle, error } = await supabaseClient.from('skin_battles')
@@ -6117,5 +6436,8 @@ setInterval(() => { void refreshCurrentUserSuspension(); }, 5000);
 setInterval(() => {
   if (currentUser) void pollCurrentUserGameState();
 }, 15000);
+setInterval(() => {
+  if (catalogLoaded && supabaseClient) void loadCustomCatalogSkins();
+}, 30000);
 
 catalogLoadPromise = loadSkins();
