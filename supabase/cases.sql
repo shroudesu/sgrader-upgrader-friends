@@ -587,7 +587,7 @@ begin
     update public.game_states set state = v_state, updated_at = now() where user_id = v_user_id;
   else
     v_item_price := coalesce((v_reward.item ->> 'price')::numeric, 0);
-    v_amount := round(v_item_price * 0.90, 2);
+    v_amount := round(v_item_price, 2);
     update public.wallets w set balance = w.balance + v_amount, updated_at = now()
      where w.user_id = v_user_id returning w.balance into v_balance;
     insert into public.wallet_transactions (user_id, actor_user_id, amount, bonus, reason)
@@ -679,7 +679,7 @@ begin
     loop
       v_items := v_items || jsonb_build_array(v_reward.item);
       v_item_price := coalesce((v_reward.item ->> 'price')::numeric, 0);
-      v_amount := v_amount + round(v_item_price * 0.90, 2);
+      v_amount := v_amount + round(v_item_price, 2);
       v_settled_count := v_settled_count + 1;
     end loop;
     v_amount := round(v_amount, 2);

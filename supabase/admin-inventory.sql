@@ -1,5 +1,5 @@
 -- Run once in Supabase SQL Editor to let administrators inspect and manage player inventory.
--- Sell credits 90% of an item's listed value, matching the site's regular sale commission.
+-- Sell credits the full listed value of each item without a commission.
 
 create or replace function public.admin_get_player_inventory(p_player_id bigint)
 returns jsonb
@@ -103,7 +103,7 @@ begin
     if coalesce(v_item ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$' then
       raise exception 'Item price is invalid';
     end if;
-    v_sale_amount := round((v_item ->> 'price')::numeric * 0.90, 2);
+    v_sale_amount := round((v_item ->> 'price')::numeric, 2);
     if v_sale_amount <= 0 then raise exception 'Sale value must be positive'; end if;
   end if;
 
@@ -210,7 +210,7 @@ begin
     raise exception 'Inventory contains an invalid item price';
   end if;
 
-  select round(sum((entry.item ->> 'price')::numeric) * 0.90, 2)::numeric(14, 2)
+  select round(sum((entry.item ->> 'price')::numeric), 2)::numeric(14, 2)
     into v_amount
     from jsonb_array_elements(v_inventory) as entry(item);
   if v_amount <= 0 then raise exception 'Inventory sale value must be positive'; end if;

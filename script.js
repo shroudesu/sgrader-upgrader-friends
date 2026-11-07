@@ -219,8 +219,6 @@ function stableCatalogFactor(value) {
   return 0.94 + ((hash >>> 0) % 1201) / 10000;
 }
 
-const SELL_COMMISSION = 0.10;
-
 // ============================================================
 // КЛЮЧИ ХРАНИЛИЩА
 // ============================================================
@@ -317,6 +315,7 @@ const caseResultCaseName = document.getElementById('caseResultCaseName');
 const caseDetailPrice = document.getElementById('caseDetailPrice');
 const caseResultStatus = document.getElementById('caseResultStatus');
 const caseRewardList = document.getElementById('caseRewardList');
+const caseResultBulkActions = document.getElementById('caseResultBulkActions');
 const caseClaimAllBtn = document.getElementById('caseClaimAllBtn');
 const caseSellAllBtn = document.getElementById('caseSellAllBtn');
 const onlineUsersCount = document.getElementById('onlineUsersCount');
@@ -426,9 +425,6 @@ const modalConfirm = $('modalConfirm');
 
 const sellModal = $('sellModal');
 const sellModalItem = $('sellModalItem');
-const sellBasePrice = $('sellBasePrice');
-const sellFeeLabel = $('sellFeeLabel');
-const sellFee = $('sellFee');
 const sellReceive = $('sellReceive');
 const sellCancel = $('sellCancel');
 const sellConfirm = $('sellConfirm');
@@ -1589,7 +1585,7 @@ async function uploadCaseImage(file) {
 }
 
 function caseSellValue(item) {
-  return Math.round(Number(item?.price || 0) * (1 - SELL_COMMISSION) * 100) / 100;
+  return Math.round(Number(item?.price || 0) * 100) / 100;
 }
 
 function renderPendingCaseRewards() {
@@ -1635,14 +1631,14 @@ function pickCaseContentsItem(contents, fallbackItem) {
 }
 
 function makeCaseReelMarkup(item, caseContents, rewardIndex) {
-  const winnerIndex = 16;
-  const reel = Array.from({ length: 20 }, (_, index) => {
+  const winnerIndex = 52;
+  const reel = Array.from({ length: 68 }, (_, index) => {
     const isWinner = index === winnerIndex;
     const shownItem = isWinner
       ? item
       : pickCaseContentsItem(caseContents, item);
-    return `<div class="case-reel-item${isWinner ? ' case-reel-winner' : ''}" ${isWinner ? 'data-reel-winner="true"' : ''}>
-      <img src="${escapeHtml(shownItem.img || '')}" alt=""><span>${escapeHtml(shownItem.name || 'Предмет')}</span>
+    return `<div class="case-reel-item" ${isWinner ? 'data-reel-winner="true"' : ''}>
+      <img src="${escapeHtml(shownItem.img || '')}" alt="" loading="lazy" decoding="async"><span>${escapeHtml(shownItem.name || 'Предмет')}</span>
     </div>`;
   }).join('');
   return `<div class="case-reel-viewport"><div class="case-reel-track" data-winner-index="${winnerIndex}" data-reward-index="${rewardIndex}">${reel}</div><span class="case-reel-marker"></span></div>`;
@@ -1670,20 +1666,24 @@ function renderCaseOpeningView(animate = false) {
   caseRewardList.innerHTML = pending.map((reward, index) => {
     const item = reward.item || {};
     const reel = animate ? makeCaseReelMarkup(item, caseContents, index)
-      : `<div class="case-reel-static"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name || 'Предмет')}</span></div>`;
+      : `<div class="case-reel-static case-reel-static-revealed"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name || 'Предмет')}</span></div>`;
+    const rewardDetails = caseAnimationInProgress
+      ? '<div class="case-reward-details case-reward-hidden"><strong>Результат скрыт до остановки</strong><span>Стоимость появится после выпадения</span></div>'
+      : `<div class="case-reward-details"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong><span>Цена предмета · ${fmt(Number(item.price || 0))}</span></div>`;
     const status = reward.status === 'claimed' ? '<span class="case-reward-status claimed">В инвентаре</span>'
       : reward.status === 'sold' ? '<span class="case-reward-status sold">Продан</span>' : '';
     const actions = reward.status === 'pending'
-      ? `<div class="case-reward-actions"><button type="button" class="btn-small case-reward-action" data-reward-action="claim" data-reward-id="${escapeHtml(reward.id)}" ${caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Забрать</button><button type="button" class="btn-small danger case-reward-action" data-reward-action="sell" data-reward-id="${escapeHtml(reward.id)}" ${caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Продать · ${fmt(caseSellValue(item))}</button></div>`
+      ? `<div class="case-reward-actions" ${caseAnimationInProgress ? 'hidden' : ''}><button type="button" class="btn-small case-reward-action" data-reward-action="claim" data-reward-id="${escapeHtml(reward.id)}" ${caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Забрать</button><button type="button" class="btn-small danger case-reward-action" data-reward-action="sell" data-reward-id="${escapeHtml(reward.id)}" ${caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Продать · ${fmt(caseSellValue(item))}</button></div>`
       : status;
     return `<article class="case-reward-row" data-reward-id="${escapeHtml(reward.id)}">
       <div class="case-reward-number">#${index + 1}</div>${reel}
-      <div class="case-reward-details"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong><span>Цена предмета · ${fmt(Number(item.price || 0))}</span></div>
+      ${rewardDetails}
       ${actions}
     </article>`;
   }).join('') || '<div class="case-empty">В этом открытии нет ожидающих наград.</div>';
   caseClaimAllBtn.textContent = `Забрать все (${pending.length})`;
   caseSellAllBtn.textContent = `Продать все · ${fmt(sellTotal)}`;
+  caseResultBulkActions.hidden = caseAnimationInProgress || pending.length === 0;
   caseClaimAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
   caseSellAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
   caseBackButton.disabled = caseSettlementInProgress;
@@ -1712,7 +1712,7 @@ async function playCaseReels() {
     };
     const onTransitionEnd = event => {
       if (event.target === track && event.propertyName === 'transform') {
-        if (animationId === caseAnimationSequence) winner.classList.add('landed');
+        if (animationId === caseAnimationSequence) winner.classList.add('case-reel-winner', 'landed');
         finish();
       }
     };
@@ -1723,10 +1723,10 @@ async function playCaseReels() {
     const winnerRect = winner.getBoundingClientRect();
     const winnerCenter = winnerRect.left - trackRect.left + winnerRect.width / 2;
     const targetX = viewport.clientWidth / 2 - winnerCenter;
-    const duration = 6000;
+    const duration = 15000;
     track.addEventListener('transitionend', onTransitionEnd);
     fallbackTimer = setTimeout(() => {
-      if (animationId === caseAnimationSequence) winner.classList.add('landed');
+      if (animationId === caseAnimationSequence) winner.classList.add('case-reel-winner', 'landed');
       finish();
     }, duration + 150);
     track.style.transition = `transform ${duration}ms cubic-bezier(.10,.75,.08,1)`;
@@ -2093,10 +2093,10 @@ async function loadAdminPlayerInventory(playerId, username = '') {
   const inventory = Array.isArray(data.inventory) ? data.inventory : [];
   const totalValue = inventory.reduce((sum, item) => sum + Number(item.price || 0), 0);
   adminInventoryTitle.textContent = 'Инвентарь · ' + data.username + ' (#' + data.player_id + ')';
-  adminInventorySummary.textContent = inventory.length + ' предметов · стоимость ' + fmt(totalValue) + ' · продажа с комиссией ' + Math.round(SELL_COMMISSION * 100) + '%';
+  adminInventorySummary.textContent = inventory.length + ' предметов · стоимость ' + fmt(totalValue) + ' · продажа без комиссии';
   adminInventoryGrid.innerHTML = inventory.length
     ? inventory.map(item => {
-      const saleValue = Math.round(Number(item.price || 0) * (1 - SELL_COMMISSION) * 100) / 100;
+      const saleValue = Math.round(Number(item.price || 0) * 100) / 100;
       return '<article class="admin-inventory-card">' +
         '<img src="' + escapeHtml(item.img || '') + '" alt="">' +
         '<div class="admin-inventory-item-info"><strong title="' + escapeHtml(item.name || 'Предмет') + '">' + escapeHtml(item.name || 'Предмет') + '</strong><span>' + fmt(Number(item.price || 0)) + '</span></div>' +
@@ -3633,14 +3633,9 @@ function openSellModal(invIndex) {
   if (!item) return;
   pendingSell = { invIndex };
 
-  const basePrice = item.price;
-  const fee = Math.round(basePrice * SELL_COMMISSION * 100) / 100;
-  const receive = Math.round((basePrice - fee) * 100) / 100;
+  const receive = Math.round(Number(item.price || 0) * 100) / 100;
 
   sellModalItem.innerHTML = `<img src="${item.img}" alt=""><div class="item-name">${item.name}</div>`;
-  sellFeeLabel.textContent = `Комиссия (${Math.round(SELL_COMMISSION * 100)}%):`;
-  sellBasePrice.textContent = fmt(basePrice);
-  sellFee.textContent = '−' + fmt(fee);
   sellReceive.textContent = fmt(receive);
 
   sellModal.classList.add('show');
@@ -3662,7 +3657,7 @@ sellConfirm.addEventListener('click', async () => {
   const item = state.inventory[invIndex];
   if (!item) { closeSellModal(); return; }
 
-  const receive = Math.round(item.price * (1 - SELL_COMMISSION) * 100) / 100;
+  const receive = Math.round(Number(item.price || 0) * 100) / 100;
 
   if (!await addBalance(receive)) {
     warningEl.textContent = '⚠ Не удалось зачислить сумму. Проверьте соединение.';
@@ -3722,12 +3717,12 @@ confirmOk.addEventListener('click', () => {
 sellAllBtn.addEventListener('click', () => {
   if (state.inventory.length === 0) return;
   let total = 0;
-  state.inventory.forEach(i => { total += i.price * (1 - SELL_COMMISSION); });
+  state.inventory.forEach(i => { total += Number(i.price || 0); });
   total = Math.round(total * 100) / 100;
 
   openConfirm(
     'Обменять всё на баланс?',
-    `Вы обменяете ${state.inventory.length} скин(ов) на ${fmt(total)} (комиссия ${Math.round(SELL_COMMISSION*100)}% уже учтена).`,
+    `Вы обменяете ${state.inventory.length} скин(ов) на полную стоимость ${fmt(total)}.`,
     async () => {
       sellAllBtn.disabled = true;
       profileInventoryStatus.textContent = 'Продаю весь инвентарь…';
@@ -3813,7 +3808,7 @@ function appendProfileInventoryCard(idx) {
   const price = document.createElement('div');
   price.className = 'item-price';
   price.textContent = fmt(item.price);
-  const receive = Math.round(Number(item.price || 0) * (1 - SELL_COMMISSION) * 100) / 100;
+  const receive = Math.round(Number(item.price || 0) * 100) / 100;
   const sellButton = document.createElement('button');
   sellButton.className = 'btn-sell';
   sellButton.type = 'button';

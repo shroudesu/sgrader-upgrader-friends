@@ -273,7 +273,7 @@
       <section class="case-open-results" id="caseOpenResults" hidden>
         <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
         <div class="case-result-rewards" id="caseRewardList"></div>
-        <div class="case-result-bulk-actions">
+        <div class="case-result-bulk-actions" id="caseResultBulkActions">
           <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
           <button type="button" class="btn-modal btn-case-sell" id="caseSellAllBtn">Продать все</button>
         </div>
@@ -476,9 +476,7 @@
       <h3 class="modal-title">Обменять скин на баланс?</h3>
       <div class="modal-item" id="sellModalItem"></div>
       <div class="sell-info">
-        <div class="sell-row"><span>Цена скина:</span><span id="sellBasePrice">0 ₽</span></div>
-        <div class="sell-row"><span id="sellFeeLabel">Комиссия (10%):</span><span id="sellFee" class="text-dim">−0 ₽</span></div>
-        <div class="sell-row total"><span>Зачислится на баланс:</span><span id="sellReceive">0 ₽</span></div>
+        <div class="sell-row total"><span>Зачислится на баланс без комиссии:</span><span id="sellReceive">0 ₽</span></div>
       </div>
       <div class="modal-actions">
         <button class="btn-modal btn-cancel" id="sellCancel">Отмена</button>
