@@ -3275,12 +3275,15 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
 
   const bonusAngle = Math.PI * 2 * bonusChance / 100;
   if (bonusAngle > 0) {
+    const bonusProgress = Math.min(1, bonusChance / 5);
     const start = Math.PI / 2 - bonusAngle / 2;
     const end = Math.PI / 2 + bonusAngle / 2;
     const gold = ctx.createLinearGradient(0, cy + ringRadius, size, cy - ringRadius);
     gold.addColorStop(0, '#b87906');
     gold.addColorStop(.48, '#ffe16a');
     gold.addColorStop(1, '#e9a70b');
+    ctx.save();
+    ctx.globalAlpha = bonusProgress;
     ctx.beginPath();
     ctx.arc(cx, cy, ringRadius, start, end);
     ctx.strokeStyle = gold;
@@ -3291,14 +3294,14 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
     const markerRadius = ringRadius - 15;
     const markerX = cx + Math.cos(markerAngle) * markerRadius;
     const markerY = cy + Math.sin(markerAngle) * markerRadius;
-    ctx.save();
     ctx.shadowColor = 'rgba(255,190,24,.9)';
-    ctx.shadowBlur = 17;
+    ctx.shadowBlur = 17 * bonusProgress;
     ctx.fillStyle = '#f0bf24';
-    ctx.fillRect(markerX - 12, markerY - 12, 24, 24);
+    const markerSize = 24 * bonusProgress;
+    ctx.fillRect(markerX - markerSize / 2, markerY - markerSize / 2, markerSize, markerSize);
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#392600';
-    ctx.font = '900 18px Segoe UI, sans-serif';
+    ctx.font = `900 ${18 * bonusProgress}px Segoe UI, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('?', markerX, markerY + 1);
@@ -3661,12 +3664,12 @@ function updateChance() {
     return;
   }
   chanceValue.textContent = formatChance(currentChance);
-  currentBonusChance = betData.price > 50000 && currentChance <= 95 ? 5 : 0;
-  upgradeBonusStatus.hidden = currentBonusChance === 0;
-  if (currentBonusChance) upgradeBonusStatus.textContent = 'Золотой бонус · 5%';
+  const serverRoundedChance = Math.round(currentChance * 10000) / 10000;
+  currentBonusChance = betData.price > 50000 && serverRoundedChance >= 15 && serverRoundedChance <= 95 ? 5 : 0;
+  upgradeBonusStatus.hidden = true;
   upgradeBtn.disabled = false;
   updateTargetShortcuts();
-  drawWheel(currentChance, true, currentBonusChance);
+  drawWheel(currentChance, true, 0);
 }
 
 function updateTargetShortcuts() {
@@ -5286,7 +5289,7 @@ function paintUpgradeRun(run) {
     wheelSub.textContent = 'средний шанс';
     upgradeBonusStatus.hidden = currentBonusChance <= 0;
     if (currentBonusChance) upgradeBonusStatus.textContent = 'Золотой бонус · 5%';
-    drawWheel(currentChance, false, currentBonusChance);
+    drawWheel(currentChance, true, currentBonusChance);
   } else if (isBonusSpin) {
     currentChance = Number(run.bonus_chance || 0);
     currentBonusChance = 0;

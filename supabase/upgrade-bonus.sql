@@ -182,7 +182,10 @@ begin
 
   v_base_chance := round(least(100, (v_base_price / v_target_price) * 100), 4);
   if v_base_chance < 0.01 then raise exception 'Upgrade chance is below 0.01 percent'; end if;
-  v_bonus_chance := case when v_base_price > 50000 and v_base_chance <= 95 then 5 else 0 end;
+  v_bonus_chance := case
+    when v_base_price > 50000 and v_base_chance between 15 and 95 then 5
+    else 0
+  end;
   v_roll := random() * 100;
   if v_roll < v_base_chance then
     v_outcome := 'win';
