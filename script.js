@@ -397,6 +397,7 @@ const invPriceFrom = $('invPriceFrom');
 const invPriceTo = $('invPriceTo');
 const myInvPriceFrom = $('myInvPriceFrom');
 const myInvPriceTo = $('myInvPriceTo');
+const myInvSort = $('myInvSort');
 const myInvFilterCount = $('myInvFilterCount');
 const clearMyInvPriceFilter = $('clearMyInvPriceFilter');
 const invSort = $('invSort');
@@ -419,6 +420,7 @@ const resultEl = $('result');
 const warningEl = $('warning');
 const canvas = $('wheelCanvas');
 const ctx = canvas.getContext('2d');
+const wheelWrap = canvas.closest('.wheel-wrap');
 const rotor = $('pointerRotor');
 const myInventory = $('myInventory');
 const myInvCount = $('myInvCount');
@@ -527,6 +529,7 @@ let upgradeFeedChannel = null;
 let currentUserUpdatesChannel = null;
 let currentUserStateRefreshTimer = null;
 let currentUserRealtimeReady = false;
+let recentLocalGameStateSignatures = [];
 let onlinePresenceChannel = null;
 let onlinePresenceReady = false;
 let onlinePresenceSessionId = '';
@@ -597,9 +600,7 @@ function renderCurrencyLabels() {
 }
 
 function formatChance(percent) {
-  if (percent < 0.1) return `${percent.toFixed(2).padStart(5, '0')}%`;
-  const formatted = percent.toFixed(1);
-  return `${percent < 10 ? formatted.padStart(4, '0') : formatted}%`;
+  return `${Number(percent).toFixed(2)}%`;
 }
 
 function catalogEffect(item) {
@@ -739,6 +740,24 @@ function queueCurrentUserStateRefresh() {
   currentUserStateRefreshTimer = setTimeout(refresh, 250);
 }
 
+async function pollCurrentUserGameState() {
+  if (!currentUser || !supabaseClient) return;
+  const requestedUserId = currentUser.id;
+  try {
+    await stateSaveQueue;
+    if (currentUser?.id !== requestedUserId) return;
+    const { data, error } = await supabaseClient
+      .from('game_states')
+      .select('state')
+      .eq('user_id', requestedUserId)
+      .single();
+    if (error || currentUser?.id !== requestedUserId) return;
+    if (gameStateSignature(data.state) !== gameStateSignature(state)) queueCurrentUserStateRefresh();
+  } catch (error) {
+    console.warn('Could not poll player state:', error);
+  }
+}
+
 function handleCurrentUserProfileUpdate(profile, requestedUserId) {
   if (!profile || currentUser?.id !== requestedUserId) return;
   if (profile.username && profile.username !== currentUser.username) {
@@ -781,7 +800,9 @@ function startCurrentUserRealtimeUpdates(userId) {
       }, () => { void refreshWallet(); })
       .on('postgres_changes', {
         event: '*', schema: 'public', table: 'game_states', filter: `user_id=eq.${requestedUserId}`
-      }, () => queueCurrentUserStateRefresh())
+      }, payload => {
+        if (!isLocalGameStateEcho(payload.new?.state)) queueCurrentUserStateRefresh();
+      })
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
           currentUserRealtimeReady = true;
@@ -1211,6 +1232,7 @@ function saveState() {
   if (!currentUser || !supabaseClient) return Promise.resolve();
   const savedState = { ...state };
   delete savedState.balance;
+  rememberLocalGameStateSignature(savedState);
   const userId = currentUser.id;
   stateSaveQueue = stateSaveQueue.then(async () => {
     const { error } = await supabaseClient
@@ -1224,6 +1246,50 @@ function saveState() {
     setTimeout(() => warningEl.classList.remove('show'), 3000);
   });
   return stateSaveQueue;
+}
+
+function canonicalizeGameState(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeGameState);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((result, key) => {
+      result[key] = canonicalizeGameState(value[key]);
+      return result;
+    }, {});
+  }
+  return value;
+}
+
+function gameStateSignature(value) {
+  if (!value || typeof value !== 'object') return '';
+  const snapshot = { ...value };
+  delete snapshot.balance;
+  const serialized = JSON.stringify(canonicalizeGameState(snapshot));
+  let hashA = 2166136261;
+  let hashB = 2246822519;
+  for (let index = 0; index < serialized.length; index++) {
+    const code = serialized.charCodeAt(index);
+    hashA = Math.imul(hashA ^ code, 16777619);
+    hashB = Math.imul(hashB ^ code, 3266489917);
+  }
+  return `${serialized.length}:${hashA >>> 0}:${hashB >>> 0}`;
+}
+
+function rememberLocalGameStateSignature(value) {
+  const signature = gameStateSignature(value);
+  if (!signature) return;
+  recentLocalGameStateSignatures.push(signature);
+  if (recentLocalGameStateSignatures.length > 24) recentLocalGameStateSignatures.shift();
+}
+
+function isLocalGameStateEcho(value) {
+  const signature = gameStateSignature(value);
+  if (!signature) return false;
+  const recentIndex = recentLocalGameStateSignatures.indexOf(signature);
+  if (recentIndex >= 0) {
+    recentLocalGameStateSignatures.splice(recentIndex, 1);
+    return true;
+  }
+  return signature === gameStateSignature(state);
 }
 
 // ============================================================
@@ -3241,7 +3307,7 @@ function updateChance() {
   currentChance = calculateChance(betData.price, targetData.price);
   if (currentChance < 0.01) {
     currentChance = 0;
-    chanceValue.textContent = '00.00%';
+    chanceValue.textContent = formatChance(0);
     multiplierEl.textContent = `x${(targetData.price / betData.price).toFixed(2)}`;
     upgradeBtn.disabled = true;
     warningEl.textContent = 'Шанс ниже минимального значения 0.01%.';
@@ -3667,13 +3733,22 @@ function getMyInventoryFilteredIndices() {
   let from = myInvPriceFrom.value === '' ? null : amountToRub(Number(myInvPriceFrom.value));
   let to = myInvPriceTo.value === '' ? null : amountToRub(Number(myInvPriceTo.value));
   if (from !== null && to !== null && from > to) [from, to] = [to, from];
-  return state.inventory.reduce((indices, item, index) => {
+  const indices = state.inventory.reduce((matches, item, index) => {
     const price = Number(item.price || 0);
-    if (from !== null && price < from) return indices;
-    if (to !== null && price > to) return indices;
-    indices.push(index);
-    return indices;
+    if (from !== null && price < from) return matches;
+    if (to !== null && price > to) return matches;
+    matches.push(index);
+    return matches;
   }, []);
+  const sort = myInvSort?.value || 'price-asc';
+  return indices.sort((leftIndex, rightIndex) => {
+    const left = state.inventory[leftIndex];
+    const right = state.inventory[rightIndex];
+    if (sort === 'price-asc') return Number(left.price || 0) - Number(right.price || 0);
+    if (sort === 'price-desc') return Number(right.price || 0) - Number(left.price || 0);
+    const nameOrder = String(left.name || '').localeCompare(String(right.name || ''), 'en', { sensitivity: 'base', numeric: true });
+    return sort === 'name-desc' ? -nameOrder : nameOrder;
+  });
 }
 
 function updateMyInventoryLoadMoreButton() {
@@ -4762,6 +4837,7 @@ invPriceTo.addEventListener('input', scheduleInvRender);
 invSort.addEventListener('change', renderInventory);
 myInvPriceFrom.addEventListener('input', renderMyInventory);
 myInvPriceTo.addEventListener('input', renderMyInventory);
+myInvSort.addEventListener('change', renderMyInventory);
 clearMyInvPriceFilter.addEventListener('click', () => {
   myInvPriceFrom.value = '';
   myInvPriceTo.value = '';
@@ -4807,6 +4883,7 @@ upgradeBtn.addEventListener('click', () => {
   updateTargetShortcuts();
   resultEl.classList.remove('show', 'win', 'lose');
   resultEl.textContent = '';
+  wheelWrap.classList.remove('upgrade-wheel-win', 'upgrade-wheel-lose');
 
   const win = Math.random() * 100 < currentChance;
   const winArcDeg = currentChance * 3.6;
@@ -4861,13 +4938,9 @@ upgradeBtn.addEventListener('click', () => {
         };
       }
 
-      resultEl.textContent = `🎉 ПОБЕДА! ${prizeData.name}`;
-      resultEl.classList.add('show', 'win');
       playWinSound();
-    } else {
-      resultEl.textContent = `💀 Проигрыш. ${wagerItems.length} ${wagerItems.length === 1 ? 'скин потерян' : 'скина потеряны'}`;
-      resultEl.classList.add('show', 'lose');
     }
+    wheelWrap.classList.add(win ? 'upgrade-wheel-win' : 'upgrade-wheel-lose');
 
     betData = null;
     targetData = null;
@@ -5140,7 +5213,7 @@ setInterval(() => {
 setInterval(() => { void refreshWallet(); }, 10000);
 setInterval(() => { void refreshCurrentUserSuspension(); }, 5000);
 setInterval(() => {
-  if (currentUser && !currentUserRealtimeReady) queueCurrentUserStateRefresh();
-}, 20000);
+  if (currentUser) void pollCurrentUserGameState();
+}, 15000);
 
 loadSkins();

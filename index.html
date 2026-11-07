@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
-  <link rel="stylesheet" href="style.css?v=20261107-r6">
+  <link rel="stylesheet" href="style.css?v=20261107-r7">
 </head>
 <body>
 
@@ -14,7 +14,10 @@
     <div class="panel-title-row"><div><h2 class="panel-title" style="margin-bottom:4px">Лента выигрышей</h2><div class="feed-subtitle">Новые сверху · обновляется онлайн</div></div><button type="button" class="btn-small" id="authRefreshUpgradeFeedBtn" aria-label="Обновить ленту">↻</button></div>
     <div class="upgrade-feed" id="authUpgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
   </aside>
-  <div class="auth-box">
+  <div class="auth-stage">
+    <div class="auth-brand" aria-hidden="true"><img src="newlogo.png" alt=""></div>
+    <div class="auth-divider" role="separator" aria-orientation="vertical"></div>
+    <div class="auth-box">
     <div class="auth-logo">SGRADER<span></span></div>
     <h1 class="auth-title" id="authTitle">Вход</h1>
 
@@ -37,6 +40,7 @@
 
     <div class="auth-hint" id="backendSetupHint" role="status"></div>
     <div class="auth-hint">Указывай игровой ник; email не требуется. Новому аккаунту начисляется 500 ₽.</div>
+    </div>
   </div>
 </div>
 
@@ -142,6 +146,15 @@
               <input type="number" id="myInvPriceFrom" class="price-input" placeholder="от ₽" data-price-placeholder="от" min="0" step="any">
               <span class="price-sep">—</span>
               <input type="number" id="myInvPriceTo" class="price-input" placeholder="до ₽" data-price-placeholder="до" min="0" step="any">
+            </div>
+            <div class="personal-inventory-sort">
+              <label for="myInvSortCustomTrigger">Сортировка</label>
+              <select id="myInvSort" class="sort-select" aria-label="Сортировать инвентарь">
+                <option value="price-asc">Цена ↑</option>
+                <option value="price-desc">Цена ↓</option>
+                <option value="name-asc">Имя A→Z</option>
+                <option value="name-desc">Имя Z→A</option>
+              </select>
             </div>
             <div class="personal-inventory-filter-footer"><span class="filter-count" id="myInvFilterCount">0</span><button type="button" class="btn-small" id="clearMyInvPriceFilter">Сбросить</button></div>
           </div>
@@ -572,6 +585,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
-<script src="script.js?v=20261107-r6"></script>
+<script src="script.js?v=20261107-r7"></script>
 </body>
 </html>
