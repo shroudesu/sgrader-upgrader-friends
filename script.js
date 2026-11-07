@@ -3665,7 +3665,7 @@ function updateChance() {
   }
   chanceValue.textContent = formatChance(currentChance);
   const serverRoundedChance = Math.round(currentChance * 10000) / 10000;
-  currentBonusChance = betData.price > 50000 && serverRoundedChance >= 15 && serverRoundedChance <= 95 ? 5 : 0;
+  currentBonusChance = betData.price > 50000 && serverRoundedChance >= 10 && serverRoundedChance <= 95 ? 5 : 0;
   upgradeBonusStatus.hidden = true;
   upgradeBtn.disabled = false;
   updateTargetShortcuts();
