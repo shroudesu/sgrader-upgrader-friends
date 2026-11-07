@@ -283,6 +283,12 @@ const upgradeInventoryTitle = document.getElementById('upgradeInventoryTitle');
 const adminNav = document.getElementById('adminNav');
 const casesGrid = document.getElementById('casesGrid');
 const caseFeedback = document.getElementById('caseFeedback');
+const caseOpenSetup = document.getElementById('caseOpenSetup');
+const caseOpenResults = document.getElementById('caseOpenResults');
+const caseOpenQuantityInput = document.getElementById('caseOpenQuantity');
+const caseOpenButton = document.getElementById('caseOpenButton');
+const caseOpenContents = document.getElementById('caseOpenContents');
+const caseOpenContentsCount = document.getElementById('caseOpenContentsCount');
 const adminCaseList = document.getElementById('adminCaseList');
 const adminCaseNewBtn = document.getElementById('adminCaseNewBtn');
 const adminCaseForm = document.getElementById('adminCaseForm');
@@ -312,6 +318,7 @@ const caseRewardList = document.getElementById('caseRewardList');
 const caseClaimAllBtn = document.getElementById('caseClaimAllBtn');
 const caseSellAllBtn = document.getElementById('caseSellAllBtn');
 const caseResultClose = document.getElementById('caseResultClose');
+const onlineUsersCount = document.getElementById('onlineUsersCount');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
 const adminInventoryModal = document.getElementById('adminInventoryModal');
@@ -485,6 +492,10 @@ let caseAnimationSequence = 0;
 let caseSettlementInProgress = false;
 let pendingCaseRewards = [];
 let activeCaseOpening = null;
+let selectedGameCase = null;
+let onlinePresenceChannel = null;
+let onlinePresenceReady = false;
+let onlinePresenceSessionId = '';
 let winVolume = 0.7;
 let musicVolume = 0.3;
 let musicEnabled = false;
@@ -694,6 +705,7 @@ async function loginAs(authUser) {
     role: profile.role,
     promoCode: profile.promo_code
   };
+  void updateOnlinePresenceIdentity();
   await loadUserState();
   marketSelection.clear();
   if (migrateCatalogIdsInInventory()) await saveState();
@@ -754,6 +766,7 @@ logoutBtn.addEventListener('click', async () => {
   if (supabaseClient) await supabaseClient.auth.signOut();
   closeSettings();
   currentUser = null;
+  void updateOnlinePresenceIdentity();
   pendingCaseRewards = [];
   renderPendingCaseRewards();
   marketSelection.clear();
@@ -1300,23 +1313,59 @@ function renderCaseCards() {
     return;
   }
   casesGrid.innerHTML = gameCases.map(gameCase => {
-    const contents = Array.isArray(gameCase.contents) ? gameCase.contents : [];
-    const odds = contents.map(entry => `<div class="case-odds-item"><span title="${escapeHtml(entry.item?.name || 'Предмет')}">${escapeHtml(entry.item?.name || 'Предмет')}</span><strong>${Number(entry.chance || 0).toFixed(1)}%</strong></div>`).join('');
     const art = gameCase.image_url
       ? `<img src="${escapeHtml(gameCase.image_url)}" alt="${escapeHtml(gameCase.name)}">`
       : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>';
     return `<article class="case-card" data-case-id="${escapeHtml(gameCase.id)}">
       <div class="case-card-art">${art}</div>
       <div class="case-card-body"><h2 title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</h2>
-        <div class="case-card-meta"><span>${contents.length} скинов</span><strong>${fmt(Number(gameCase.price))}</strong></div>
-        <details class="case-odds"><summary>Содержимое и шансы</summary><div class="case-odds-list">${odds}</div></details>
-        <label class="case-quantity-control">Количество
-          <input type="number" class="case-open-quantity" min="1" max="10" step="1" value="1" aria-label="Количество кейсов ${escapeHtml(gameCase.name)}">
-        </label>
-        <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть × 1</button>
+        <div class="case-card-meta"><span>Цена</span><strong>${fmt(Number(gameCase.price))}</strong></div>
+        <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть</button>
       </div>
     </article>`;
   }).join('');
+}
+
+function renderCaseDetails(gameCase) {
+  const contents = Array.isArray(gameCase.contents) ? gameCase.contents : [];
+  caseResultCaseName.textContent = gameCase.name;
+  caseResultCaseImage.src = gameCase.image_url || '';
+  caseResultCaseImage.hidden = !gameCase.image_url;
+  caseOpenContentsCount.textContent = `${contents.length} предметов`;
+  caseOpenContents.innerHTML = contents.map(entry => {
+    const item = entry.item || {};
+    const qualifiers = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : ''].filter(Boolean).join(' · ');
+    return `<article class="case-detail-item">
+      <div class="case-detail-image">${item.img ? `<img src="${escapeHtml(item.img)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}</div>
+      <div class="case-detail-name"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong>${qualifiers ? `<small>${escapeHtml(qualifiers)}</small>` : ''}</div>
+      <div class="case-detail-stat"><span>Цена</span><strong>${fmt(Number(item.price || 0))}</strong></div>
+      <div class="case-detail-stat case-detail-chance"><span>Шанс</span><strong>${Number(entry.chance || 0).toFixed(1)}%</strong></div>
+    </article>`;
+  }).join('') || '<div class="case-empty">В кейсе пока нет предметов.</div>';
+  caseOpenQuantityInput.value = '1';
+  caseSkipAnimationToggle.checked = caseSkipAnimation;
+  caseFeedback.textContent = '';
+  caseOpenSetup.hidden = false;
+  caseOpenResults.hidden = true;
+  caseResultClose.disabled = false;
+  updateCaseOpenButton();
+}
+
+function updateCaseOpenButton() {
+  if (!selectedGameCase) return;
+  const quantity = Math.max(1, Math.min(10, Math.trunc(Number(caseOpenQuantityInput.value) || 1)));
+  const total = Number(selectedGameCase.price) * quantity;
+  caseOpenButton.textContent = `Открыть × ${quantity} · ${fmt(total)}`;
+}
+
+function openCaseDetails(caseId) {
+  selectedGameCase = gameCases.find(item => String(item.id) === String(caseId)) || null;
+  if (!selectedGameCase) return;
+  renderCaseDetails(selectedGameCase);
+  renderPendingCaseRewards();
+  caseResultModal.classList.add('show');
+  caseResultModal.setAttribute('aria-hidden', 'false');
+  void loadPendingCaseRewards();
 }
 
 function renderAdminCaseList() {
@@ -1555,13 +1604,25 @@ async function loadPendingCaseRewards() {
   renderPendingCaseRewards();
 }
 
-function makeCaseReelMarkup(item, fillerPool, rewardIndex) {
+function pickCaseContentsItem(contents, fallbackItem) {
+  const entries = (Array.isArray(contents) ? contents : []).filter(entry => entry?.item && Number(entry.chance) > 0);
+  const total = entries.reduce((sum, entry) => sum + Number(entry.chance || 0), 0);
+  if (!entries.length || total <= 0) return fallbackItem;
+  let roll = Math.random() * total;
+  for (const entry of entries) {
+    roll -= Number(entry.chance || 0);
+    if (roll < 0) return entry.item;
+  }
+  return entries[entries.length - 1].item;
+}
+
+function makeCaseReelMarkup(item, caseContents, rewardIndex) {
   const winnerIndex = 24;
   const reel = Array.from({ length: 28 }, (_, index) => {
     const isWinner = index === winnerIndex;
-    const shownItem = isWinner || !fillerPool.length
+    const shownItem = isWinner
       ? item
-      : fillerPool[Math.floor(Math.random() * fillerPool.length)];
+      : pickCaseContentsItem(caseContents, item);
     return `<div class="case-reel-item${isWinner ? ' case-reel-winner' : ''}" ${isWinner ? 'data-reel-winner="true"' : ''}>
       <img src="${escapeHtml(shownItem.img || '')}" alt=""><span>${escapeHtml(shownItem.name || 'Предмет')}</span>
     </div>`;
@@ -1574,7 +1635,7 @@ function renderCaseOpeningView(animate = false) {
   const rewards = activeCaseOpening.rewards || [];
   const pending = rewards.filter(reward => reward.status === 'pending');
   const sellTotal = pending.reduce((sum, reward) => sum + caseSellValue(reward.item), 0);
-  caseResultCaseName.textContent = `${activeCaseOpening.case_name || 'Кейс'} · ${rewards.length} ${rewards.length === 1 ? 'кейс' : 'кейсов'}`;
+  caseResultCaseName.textContent = activeCaseOpening.case_name || 'Кейс';
   const caseImage = activeCaseOpening.case_image_url || '';
   if (caseImage) caseResultCaseImage.src = caseImage;
   else caseResultCaseImage.removeAttribute('src');
@@ -1585,10 +1646,12 @@ function renderCaseOpeningView(animate = false) {
       ? `Выбери действие для каждого скина. Продать все можно за ${fmt(sellTotal)}.`
       : 'Все награды уже обработаны.';
 
-  const fillerPool = SKINS_CATALOG.filter(item => item.catalogType === 'skin' && item.img).slice(0, 120);
+  const caseContents = selectedGameCase && selectedGameCase.name === activeCaseOpening.case_name
+    ? selectedGameCase.contents || []
+    : [];
   caseRewardList.innerHTML = rewards.map((reward, index) => {
     const item = reward.item || {};
-    const reel = animate ? makeCaseReelMarkup(item, fillerPool, index)
+    const reel = animate ? makeCaseReelMarkup(item, caseContents, index)
       : `<div class="case-reel-static"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name || 'Предмет')}</span></div>`;
     const status = reward.status === 'claimed' ? '<span class="case-reward-status claimed">В инвентаре</span>'
       : reward.status === 'sold' ? '<span class="case-reward-status sold">Продан</span>' : '';
@@ -1636,6 +1699,8 @@ async function playCaseReels() {
 
 async function showCaseOpeningReview(opening, animate = false) {
   activeCaseOpening = opening;
+  caseOpenSetup.hidden = true;
+  caseOpenResults.hidden = false;
   caseAnimationInProgress = Boolean(animate && opening.rewards?.some(reward => reward.status === 'pending'));
   renderCaseOpeningView(caseAnimationInProgress);
   caseResultModal.classList.add('show');
@@ -1745,7 +1810,9 @@ async function openGameCase(caseId, quantity) {
   const gameCase = gameCases.find(item => String(item.id) === String(caseId));
   if (!gameCase) return;
   caseOpeningInProgress = true;
-  casesGrid.querySelectorAll('.case-open-btn').forEach(button => { button.disabled = true; });
+  caseOpenButton.disabled = true;
+  caseOpenQuantityInput.disabled = true;
+  caseSkipAnimationToggle.disabled = true;
   caseFeedback.textContent = `Открываю ${quantity} ${quantity === 1 ? 'кейс' : 'кейса'}…`;
   try {
     await stateSaveQueue;
@@ -1782,7 +1849,9 @@ async function openGameCase(caseId, quantity) {
     console.error('Could not open game cases:', error);
   } finally {
     caseOpeningInProgress = false;
-    casesGrid.querySelectorAll('.case-open-btn').forEach(button => { button.disabled = false; });
+    caseOpenButton.disabled = false;
+    caseOpenQuantityInput.disabled = false;
+    caseSkipAnimationToggle.disabled = false;
   }
 }
 
@@ -1876,28 +1945,28 @@ adminCaseDeleteBtn.addEventListener('click', () => {
     await loadCases();
   });
 });
-casesGrid.addEventListener('input', event => {
-  const input = event.target.closest('.case-open-quantity');
-  if (!input || input.value === '') return;
-  const value = Number(input.value);
-  if (!Number.isFinite(value)) return;
-  input.value = String(Math.max(1, Math.min(10, Math.trunc(value))));
-  const openButton = input.closest('.case-card')?.querySelector('.case-open-btn');
-  if (openButton) openButton.textContent = `Открыть × ${input.value}`;
-});
 casesGrid.addEventListener('click', event => {
   const button = event.target.closest('[data-case-open]');
   if (!button || caseOpeningInProgress) return;
-  const gameCase = gameCases.find(item => String(item.id) === button.dataset.caseOpen);
-  if (!gameCase) return;
-  const quantityInput = button.closest('.case-card')?.querySelector('.case-open-quantity');
-  const quantity = Number(quantityInput?.value || 1);
+  openCaseDetails(button.dataset.caseOpen);
+});
+caseOpenQuantityInput.addEventListener('input', () => {
+  if (caseOpenQuantityInput.value === '') return;
+  const value = Number(caseOpenQuantityInput.value);
+  if (!Number.isFinite(value)) return;
+  caseOpenQuantityInput.value = String(Math.max(1, Math.min(10, Math.trunc(value))));
+  updateCaseOpenButton();
+});
+caseOpenButton.addEventListener('click', () => {
+  if (!selectedGameCase || caseOpeningInProgress) return;
+  const quantity = Number(caseOpenQuantityInput.value || 1);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
     caseFeedback.textContent = 'Можно открыть от 1 до 10 кейсов за раз.';
     return;
   }
-  const total = Number(gameCase.price) * quantity;
-  openConfirm('Открыть кейсы?', `${gameCase.name} × ${quantity} · всего ${fmt(total)}. Сумма спишется с денежного баланса.`, () => void openGameCase(gameCase.id, quantity));
+  caseOpenQuantityInput.value = String(quantity);
+  updateCaseOpenButton();
+  void openGameCase(selectedGameCase.id, quantity);
 });
 pendingCaseRewardsList.addEventListener('click', event => {
   const button = event.target.closest('[data-pending-opening]');
@@ -4080,6 +4149,55 @@ function initCustomSelects() {
 // ============================================================
 // СТАРТ
 // ============================================================
+function setOnlineUsersCount(count, live = true) {
+  const indicator = onlineUsersCount?.closest('.online-users');
+  if (onlineUsersCount) onlineUsersCount.textContent = Number.isFinite(count) ? String(count) : '—';
+  indicator?.classList.toggle('is-live', live && Number.isFinite(count));
+}
+
+function readUniqueOnlineUsers() {
+  const presence = onlinePresenceChannel?.presenceState?.() || {};
+  const identities = new Set();
+  Object.values(presence).flat().forEach(entry => {
+    if (entry?.user_id) identities.add(`user:${entry.user_id}`);
+    else if (entry?.session_id) identities.add(`session:${entry.session_id}`);
+  });
+  return identities.size;
+}
+
+async function updateOnlinePresenceIdentity() {
+  if (!onlinePresenceChannel || !onlinePresenceReady) return;
+  try {
+    await onlinePresenceChannel.track({
+      session_id: onlinePresenceSessionId,
+      user_id: currentUser?.id || null,
+      last_seen: new Date().toISOString()
+    });
+  } catch (error) {
+    console.warn('Could not update online presence:', error);
+  }
+}
+
+function startOnlinePresence() {
+  if (!supabaseClient || onlinePresenceChannel) return;
+  onlinePresenceSessionId = makeInstanceId();
+  setOnlineUsersCount(NaN, false);
+  onlinePresenceChannel = supabaseClient.channel('site-online-users', {
+    config: { presence: { key: onlinePresenceSessionId } }
+  });
+  onlinePresenceChannel
+    .on('presence', { event: 'sync' }, () => setOnlineUsersCount(readUniqueOnlineUsers()))
+    .subscribe(status => {
+      if (status === 'SUBSCRIBED') {
+        onlinePresenceReady = true;
+        void updateOnlinePresenceIdentity();
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        onlinePresenceReady = false;
+        setOnlineUsersCount(NaN, false);
+      }
+    });
+}
+
 async function initSession() {
   if (!supabaseClient) {
     backendSetupHint.textContent = 'Общая база ещё не подключена. Владелец сайта должен настроить Supabase по инструкции в папке supabase.';
@@ -4087,6 +4205,7 @@ async function initSession() {
     showAuthScreen();
     return;
   }
+  startOnlinePresence();
   backendSetupHint.textContent = '';
   authSubmit.disabled = false;
   try {

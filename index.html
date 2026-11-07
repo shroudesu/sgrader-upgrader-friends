@@ -41,6 +41,11 @@
 
 <header class="header">
   <div class="logo">SGRADER<span>UP</span></div>
+  <div class="online-users" title="Игроки, подключённые к сайту сейчас" aria-live="polite">
+    <span class="online-users-dot" aria-hidden="true"></span>
+    <strong id="onlineUsersCount">—</strong>
+    <span>онлайн</span>
+  </div>
 
   <nav class="nav-tabs">
     <button class="nav-tab active" data-tab="upgrade">Апгрейд</button>
@@ -252,17 +257,6 @@
   <!-- КЕЙСЫ -->
   <section class="tab-page" id="page-cases">
     <h1 class="title">Кейсы</h1>
-    <p class="cases-intro">Выбирай от 1 до 10 кейсов, смотри прокрутку и решай, забрать выпавшие скины или продать их.</p>
-    <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
-    <label class="settings-switch-row case-skip-toggle" for="caseSkipAnimation">
-      <span><strong>Пропуск анимации</strong><small>Включи, чтобы сразу показывать результат кейса</small></span>
-      <input type="checkbox" id="caseSkipAnimation">
-      <span class="settings-switch" aria-hidden="true"></span>
-    </label>
-    <div class="pending-case-rewards" id="pendingCaseRewards" hidden>
-      <div class="pending-case-heading"><div><h2>Незабранные скины</h2><span id="pendingCaseRewardsCount">0 предметов</span></div></div>
-      <div class="pending-case-list" id="pendingCaseRewardsList"></div>
-    </div>
     <div class="cases-grid" id="casesGrid"><div class="case-empty">Загружаю кейсы…</div></div>
   </section>
 
@@ -372,17 +366,44 @@
   </div>
 
   <div class="modal-overlay" id="caseResultModal" aria-hidden="true">
-    <div class="modal case-result-modal" role="dialog" aria-modal="true" aria-labelledby="caseResultTitle">
-      <h3 class="modal-title" id="caseResultTitle">Результаты открытия</h3>
-      <img class="case-result-case-image" id="caseResultCaseImage" alt="">
-      <p id="caseResultCaseName"></p>
-      <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
-      <div class="case-result-rewards" id="caseRewardList"></div>
-      <div class="case-result-bulk-actions">
-        <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
-        <button type="button" class="btn-modal btn-case-sell" id="caseSellAllBtn">Продать все</button>
+    <div class="modal case-result-modal case-open-modal" role="dialog" aria-modal="true" aria-labelledby="caseResultTitle">
+      <div class="case-open-heading">
+        <div class="case-open-identity">
+          <img class="case-result-case-image" id="caseResultCaseImage" alt="">
+          <div><span>КЕЙС</span><h3 class="modal-title" id="caseResultCaseName">Выбери кейс</h3></div>
+        </div>
+        <button type="button" class="settings-close" id="caseResultClose" aria-label="Закрыть кейс">×</button>
       </div>
-      <button type="button" class="btn-modal btn-cancel case-result-close" id="caseResultClose">Закрыть</button>
+      <section class="case-open-setup" id="caseOpenSetup">
+        <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
+        <div class="case-open-options">
+          <label class="case-quantity-control" for="caseOpenQuantity">Количество кейсов
+            <input type="number" id="caseOpenQuantity" min="1" max="10" step="1" value="1" inputmode="numeric">
+          </label>
+          <label class="settings-switch-row case-skip-toggle" for="caseSkipAnimation">
+            <span><strong>Пропустить анимацию</strong><small>Показывать результат сразу</small></span>
+            <input type="checkbox" id="caseSkipAnimation">
+            <span class="settings-switch" aria-hidden="true"></span>
+          </label>
+          <button type="button" class="btn-confirm case-open-submit" id="caseOpenButton">Открыть кейс</button>
+        </div>
+        <section class="case-open-contents">
+          <div class="case-open-contents-heading"><h4>Содержимое кейса</h4><span id="caseOpenContentsCount"></span></div>
+          <div class="case-open-contents-list" id="caseOpenContents"></div>
+        </section>
+        <div class="pending-case-rewards" id="pendingCaseRewards" hidden>
+          <div class="pending-case-heading"><div><h2>Незабранные предметы</h2><span id="pendingCaseRewardsCount">0 предметов</span></div></div>
+          <div class="pending-case-list" id="pendingCaseRewardsList"></div>
+        </div>
+      </section>
+      <section class="case-open-results" id="caseOpenResults" hidden>
+        <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
+        <div class="case-result-rewards" id="caseRewardList"></div>
+        <div class="case-result-bulk-actions">
+          <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
+          <button type="button" class="btn-modal btn-case-sell" id="caseSellAllBtn">Продать все</button>
+        </div>
+      </section>
     </div>
   </div>
 
