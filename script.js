@@ -1332,7 +1332,9 @@ function renderCaseCards() {
 }
 
 function renderCaseDetails(gameCase) {
-  const contents = Array.isArray(gameCase.contents) ? gameCase.contents : [];
+  const contents = Array.isArray(gameCase.contents)
+    ? [...gameCase.contents].sort((a, b) => Number(a.chance || 0) - Number(b.chance || 0))
+    : [];
   caseResultCaseName.textContent = gameCase.name;
   caseResultCaseImage.src = gameCase.image_url || '';
   caseResultCaseImage.hidden = !gameCase.image_url;
@@ -1657,7 +1659,7 @@ function renderCaseOpeningView(animate = false) {
   const caseContents = selectedGameCase && selectedGameCase.name === activeCaseOpening.case_name
     ? selectedGameCase.contents || []
     : [];
-  caseRewardList.innerHTML = rewards.map((reward, index) => {
+  caseRewardList.innerHTML = pending.map((reward, index) => {
     const item = reward.item || {};
     const reel = animate ? makeCaseReelMarkup(item, caseContents, index)
       : `<div class="case-reel-static"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name || 'Предмет')}</span></div>`;
@@ -1753,7 +1755,14 @@ function updateCaseRewardLocally(rewardId, status) {
     activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => String(reward.id) === String(rewardId) ? { ...reward, status } : reward);
   }
   renderPendingCaseRewards();
-  renderCaseOpeningView(false);
+  if (!closeSettledCaseResultsIfEmpty()) renderCaseOpeningView(false);
+}
+
+function closeSettledCaseResultsIfEmpty() {
+  if (!activeCaseOpening || activeCaseOpening.rewards?.some(reward => reward.status === 'pending')) return false;
+  caseOpenResults.hidden = true;
+  activeCaseOpening = null;
+  return true;
 }
 
 async function settleOneCaseReward(rewardId, action) {
@@ -1802,6 +1811,7 @@ async function settleAllCaseRewards(action) {
     activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => reward.status === 'pending' ? { ...reward, status: settledStatus } : reward);
     pendingCaseRewards = pendingCaseRewards.filter(reward => String(reward.opening_id) !== String(openingId));
     renderPendingCaseRewards();
+    closeSettledCaseResultsIfEmpty();
     caseFeedback.textContent = action === 'claim'
       ? `В инвентарь добавлено ${Number(data.settled_count || 0)} скинов.`
       : `Продано ${Number(data.settled_count || 0)} скинов за ${fmt(Number(data.amount || 0))}.`;
@@ -2190,6 +2200,27 @@ drawWheel(0);
 // ============================================================
 // ЗАГРУЗКА КАТАЛОГА
 // ============================================================
+async function fetchCatalogJson(file) {
+  // GitHub Pages serves .gz files as ordinary downloads rather than applying
+  // HTTP content-encoding. Fetching them directly cuts the catalog transfer
+  // from tens of megabytes to well under one megabyte.
+  if (typeof DecompressionStream === 'function') {
+    try {
+      const compressedResponse = await fetch(`${file}.gz`);
+      if (compressedResponse.ok && compressedResponse.body) {
+        const decompressed = compressedResponse.body.pipeThrough(new DecompressionStream('gzip'));
+        return await new Response(decompressed).json();
+      }
+    } catch (error) {
+      console.warn(`Compressed catalog ${file}.gz could not be read; trying JSON fallback:`, error);
+    }
+  }
+
+  const response = await fetch(file);
+  if (!response.ok) throw new Error(`Catalog file failed: ${response.url} (${response.status})`);
+  return response.json();
+}
+
 async function loadSkins() {
   try {
     const catalogFiles = [
@@ -2199,13 +2230,10 @@ async function loadSkins() {
       { file: 'graffiti.json', type: 'graffiti', category: 'Graffiti' },
       { file: 'music_kits.json', type: 'music_kits', category: 'Music Kits' },
     ];
-    const [responses, metadataResponse] = await Promise.all([
-      Promise.all(catalogFiles.map(entry => fetch(entry.file))),
+    const [datasets, metadataResponse] = await Promise.all([
+      Promise.all(catalogFiles.map(entry => fetchCatalogJson(entry.file))),
       fetch('catalog-source.json').catch(() => null),
     ]);
-    const failedResponse = responses.find(response => !response.ok);
-    if (failedResponse) throw new Error(`Catalog file failed: ${failedResponse.url} (${failedResponse.status})`);
-    const datasets = await Promise.all(responses.map(response => response.json()));
 
     SKINS_CATALOG = catalogFiles.flatMap((entry, dataIndex) => datasets[dataIndex].map((item, idx) => ({
       id: `${entry.type}_${item.id || idx}`,

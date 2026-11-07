@@ -14,6 +14,23 @@ $fileMap = @(
   @{ file = 'music_kits.json'; type = 'music_kits'; category = 'Music Kits' }
 )
 
+function Write-GzipText($Path, $Text) {
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+  $memory = [System.IO.MemoryStream]::new()
+  try {
+    $gzip = [System.IO.Compression.GZipStream]::new(
+      $memory,
+      [System.IO.Compression.CompressionLevel]::Optimal,
+      $true
+    )
+    try { $gzip.Write($bytes, 0, $bytes.Length) }
+    finally { $gzip.Dispose() }
+    [System.IO.File]::WriteAllBytes($Path, $memory.ToArray())
+  } finally {
+    $memory.Dispose()
+  }
+}
+
 $script:CollectionReleaseDateById = @{}
 
 function Get-CompactCatalogEntry($item, $entry, $releaseItem = $item) {
@@ -156,15 +173,21 @@ $deployRoot = Join-Path $projectRoot 'deploy-site'
 if (Test-Path -LiteralPath $deployRoot -PathType Container) {
   $destinations += $deployRoot
 }
+$publishRoot = Join-Path $projectRoot 'github-publish'
+if (Test-Path -LiteralPath $publishRoot -PathType Container) {
+  $destinations += $publishRoot
+}
 
 # Write the completed snapshot only after every upstream file and the license were fetched.
 foreach ($destination in $destinations) {
   foreach ($entry in $fileMap) {
     $json = ConvertTo-Json -InputObject @($datasets[$entry.file]) -Depth 10 -Compress
     Set-Content -LiteralPath (Join-Path $destination $entry.file) -Value $json -Encoding utf8NoBOM -NoNewline
+    Write-GzipText -Path (Join-Path $destination "$($entry.file).gz") -Text $json
   }
   $variantJson = ConvertTo-Json -InputObject @($datasets['skins_variants.json']) -Depth 10 -Compress
   Set-Content -LiteralPath (Join-Path $destination 'skins_variants.json') -Value $variantJson -Encoding utf8NoBOM -NoNewline
+  Write-GzipText -Path (Join-Path $destination 'skins_variants.json.gz') -Text $variantJson
   $metadataJson = ConvertTo-Json -InputObject $metadata -Depth 10
   Set-Content -LiteralPath (Join-Path $destination 'catalog-source.json') -Value $metadataJson -Encoding utf8NoBOM
   Set-Content -LiteralPath (Join-Path $destination 'CS2-API-LICENSE.txt') -Value $license -Encoding utf8NoBOM

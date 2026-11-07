@@ -19,6 +19,27 @@ drop policy if exists game_cases_read_authenticated on public.game_cases;
 create policy game_cases_read_authenticated on public.game_cases
   for select to authenticated using (true);
 
+-- Keep case drops in the same public wins feed used by upgrades.
+create table if not exists public.upgrade_wins (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(user_id) on delete cascade,
+  instance_id text not null,
+  player_id bigint not null,
+  username text not null,
+  avatar text,
+  item jsonb not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, instance_id)
+);
+
+create index if not exists upgrade_wins_created_at_idx on public.upgrade_wins (created_at desc);
+alter table public.upgrade_wins enable row level security;
+revoke all on table public.upgrade_wins from public, anon, authenticated;
+grant select on table public.upgrade_wins to authenticated;
+drop policy if exists upgrade_wins_read_authenticated on public.upgrade_wins;
+create policy upgrade_wins_read_authenticated on public.upgrade_wins
+  for select to authenticated using (true);
+
 alter table public.wallet_transactions
   drop constraint if exists wallet_transactions_reason_check;
 alter table public.wallet_transactions
@@ -335,6 +356,9 @@ declare
   v_rewards jsonb := '[]'::jsonb;
   v_reward_id uuid;
   v_index integer;
+  v_player_id bigint;
+  v_username text;
+  v_avatar text;
 begin
   if v_user_id is null then raise exception 'Sign in required'; end if;
   if p_quantity is null or p_quantity < 1 or p_quantity > 10 then
@@ -369,6 +393,13 @@ begin
   if v_wallet_balance < v_total_price then
     raise exception 'Insufficient balance' using errcode = '22023';
   end if;
+
+  select p.player_id, p.username, nullif(gs.state ->> 'avatar', '')
+    into v_player_id, v_username, v_avatar
+    from public.profiles p
+    left join public.game_states gs on gs.user_id = p.user_id
+   where p.user_id = v_user_id;
+  if v_player_id is null then raise exception 'Player profile not found'; end if;
 
   insert into public.case_openings (user_id, case_id, case_name, case_image_url, case_price, quantity)
   values (v_user_id, p_case_id, v_case_name, v_case_image_url, v_case_price, p_quantity)
@@ -412,6 +443,24 @@ begin
     insert into public.case_rewards (opening_id, user_id, sequence_no, item)
     values (v_opening_id, v_user_id, v_index, v_item)
     returning id into v_reward_id;
+    insert into public.upgrade_wins (user_id, instance_id, player_id, username, avatar, item)
+    values (
+      v_user_id,
+      v_item ->> 'instanceId',
+      v_player_id,
+      v_username,
+      v_avatar,
+      jsonb_build_object(
+        'name', v_item ->> 'name',
+        'price', (v_item ->> 'price')::numeric(14, 2),
+        'img', v_item ->> 'img',
+        'wear', v_item ->> 'wear',
+        'stattrak', coalesce(v_item -> 'stattrak' = 'true'::jsonb, false),
+        'souvenir', coalesce(v_item -> 'souvenir' = 'true'::jsonb, false),
+        'rarity', v_item -> 'rarity'
+      )
+    )
+    on conflict (user_id, instance_id) do nothing;
     v_rewards := v_rewards || jsonb_build_array(jsonb_build_object(
       'id', v_reward_id,
       'opening_id', v_opening_id,

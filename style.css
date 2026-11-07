@@ -923,7 +923,7 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .case-result-modal .case-empty { padding: 14px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .case-card,.case-reel-track,.case-reel-item { transition-duration: .01ms !important; }
+  .case-card,.case-reel-item { transition-duration: .01ms !important; }
 }
 
 @media (max-width: 700px) {
@@ -1153,17 +1153,17 @@ select.native-select-source,
 .case-detail-banner-copy > span { color: var(--success); font-size: 9px; font-weight: 800; letter-spacing: 1.6px; }
 .case-detail-banner-copy h2 { overflow: hidden; color: var(--white); font-size: clamp(20px,2vw,28px); text-overflow: ellipsis; white-space: nowrap; }
 .case-detail-banner-copy strong { color: var(--text-dim); font-size: 13px; }
-.case-detail-controls { display: grid; grid-template-columns: minmax(150px,.55fr) minmax(260px,1.2fr) minmax(200px,.7fr); align-items: center; gap: 12px; margin-bottom: 5px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); }
-.case-detail-controls .case-quantity-control { display: grid; gap: 6px; }
+.case-detail-controls { display: grid; grid-template-columns: minmax(150px,.55fr) minmax(220px,1fr) minmax(260px,1.2fr); grid-template-areas: "quantity open skip"; align-items: center; gap: 12px; margin-bottom: 5px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); }
+.case-detail-controls .case-quantity-control { grid-area: quantity; display: grid; gap: 6px; }
 .case-detail-controls .case-quantity-control input { width: 100%; min-height: 40px; }
-.case-detail-controls .case-skip-toggle { min-height: 52px; margin: 0; }
-.case-open-submit { min-height: 42px; padding: 9px 12px; border: 1px solid var(--success); border-radius: 8px; font-size: 11px; font-weight: 800; cursor: pointer; }
+.case-detail-controls .case-skip-toggle { grid-area: skip; min-height: 52px; margin: 0; }
+.case-open-submit { grid-area: open; width: 100%; min-height: 42px; padding: 9px 12px; border: 1px solid var(--success); border-radius: 8px; font-size: 11px; font-weight: 800; cursor: pointer; }
 .case-open-submit:disabled { opacity: .5; cursor: wait; }
 .case-feedback { min-height: 18px; margin: 4px 0 8px; color: var(--success); font-size: 11px; }
 .case-open-results { margin: 8px 0 16px; padding: 12px; border: 1px solid rgba(74,222,128,.28); border-radius: 11px; background: rgba(74,222,128,.035); scroll-margin-top: 85px; }
 .case-result-status { min-height: 18px; margin-bottom: 9px; color: var(--success); font-size: 10px; }
 .case-result-rewards { display: grid; gap: 8px; max-height: min(58vh,620px); margin-bottom: 12px; overflow-y: auto; }
-.case-reward-row { min-width: 0; display: grid; grid-template-columns: 26px minmax(300px,1fr) minmax(130px,.32fr) auto; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-3); }
+.case-reward-row { min-width: 0; display: grid; grid-template-columns: 26px minmax(0,1fr) minmax(130px,.32fr) auto; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-3); }
 .case-reward-number { color: var(--text-dim); text-align: center; font-size: 10px; font-variant-numeric: tabular-nums; }
 .case-reel-viewport { position: relative; min-width: 0; height: 100px; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: repeating-linear-gradient(135deg,#171a17 0 14px,#101210 14px 28px); contain: layout paint; }
 .case-reel-track { position: absolute; inset: 0 auto 0 0; width: max-content; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 8px; will-change: transform; transform: translate3d(0,0,0); backface-visibility: hidden; }
@@ -1192,8 +1192,8 @@ select.native-select-source,
 .case-open-contents-heading span { color: var(--text-dim); font-size: 10px; }
 .case-open-contents-list { display: grid; grid-template-columns: repeat(8,minmax(0,1fr)); gap: 14px 12px; max-height: none; overflow: visible; padding: 0; }
 .case-detail-item { min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
-.case-detail-image { width: 100%; height: clamp(90px,9vw,142px); display: grid; place-items: center; padding: 9px; border-bottom: 4px solid var(--item-rarity-color,#777); background: linear-gradient(145deg,#696969,#4c4c4c); }
-.case-detail-image img { width: 100%; height: 100%; object-fit: contain; }
+.case-detail-image { width: 100%; height: clamp(90px,9vw,142px); display: grid; place-items: center; overflow: hidden; padding: 9px; border-bottom: 4px solid var(--item-rarity-color,#777); background: linear-gradient(145deg,#696969,#4c4c4c); }
+.case-detail-image img { width: 100%; height: 100%; max-width: 90%; max-height: 90%; object-fit: contain; }
 .case-detail-image iconify-icon { color: #ddd; font-size: 44px; }
 .case-detail-name { min-width: 0; min-height: 36px; display: flex; flex-direction: column; gap: 2px; padding-top: 5px; }
 .case-detail-name strong { display: block; overflow: hidden; color: var(--white); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1208,13 +1208,13 @@ select.native-select-source,
 
 @media (max-width: 1280px) {
   .case-open-contents-list { grid-template-columns: repeat(6,minmax(0,1fr)); }
-  .case-reward-row { grid-template-columns: 24px minmax(260px,1fr) minmax(120px,.35fr) auto; gap: 8px; }
+  .case-reward-row { grid-template-columns: 24px minmax(0,1fr) minmax(120px,.35fr) auto; gap: 8px; }
   .case-reward-actions .btn-small { padding: 6px 7px; font-size: 8px; }
 }
 @media (max-width: 920px) {
   .case-open-contents-list { grid-template-columns: repeat(4,minmax(0,1fr)); }
-  .case-detail-controls { grid-template-columns: minmax(120px,.5fr) minmax(220px,1fr); }
-  .case-detail-controls .case-open-submit { grid-column: 1/-1; }
+  .case-detail-controls { grid-template-columns: minmax(120px,.5fr) minmax(220px,1fr); grid-template-areas: "quantity skip" "open open"; }
+  .case-detail-controls .case-open-submit { justify-self: center; width: min(100%,360px); }
   .case-reward-row { grid-template-columns: 24px minmax(0,1fr); }
   .case-reward-details,.case-reward-actions,.case-reward-status { grid-column: 2; justify-self: start; }
   .case-reward-actions { justify-content: flex-start; }
@@ -1222,8 +1222,8 @@ select.native-select-source,
 @media (max-width: 600px) {
   .case-detail-banner { min-height: 112px; gap: 12px; padding: 10px; }
   .case-detail-banner-image { width: 112px; height: 90px; flex-basis: 112px; }
-  .case-detail-controls { grid-template-columns: 1fr; }
-  .case-detail-controls .case-open-submit { grid-column: auto; }
+  .case-detail-controls { grid-template-columns: 1fr; grid-template-areas: "quantity" "open" "skip"; }
+  .case-detail-controls .case-open-submit { width: 100%; }
   .case-open-contents { padding: 9px; }
   .case-open-contents-list { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 9px; }
   .case-detail-image { height: 112px; }
