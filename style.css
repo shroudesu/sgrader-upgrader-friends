@@ -1150,6 +1150,59 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
   .public-profile-stats { grid-template-columns: 1fr; }
 }
 
+/* ===== ОБНОВЛЁННЫЕ СЛОТЫ, КЕЙСЫ И АПГРЕЙДЕР ===== */
+.header-balances { margin-left: auto; }
+.user-info { margin-left: 8px; }
+.target-shortcuts { margin: 8px 0 8px; max-width: 390px; gap: 8px; }
+.target-shortcut { min-height: 38px; padding: 9px 5px; font-size: 12px; }
+#inventoryGrid,#targetGrid { max-height: 560px !important; }
+.inv-card { overflow: hidden; border: 1px solid color-mix(in srgb,var(--item-rarity-color,#414141) 46%,#202020); border-top: 2px solid var(--item-rarity-color,#414141); background: radial-gradient(ellipse at 50% 30%,color-mix(in srgb,var(--item-rarity-color,#414141) 15%,transparent),transparent 72%),var(--bg-3); box-shadow: inset 0 0 18px rgba(255,255,255,.025); }
+.inv-card:hover { border-color: color-mix(in srgb,var(--item-rarity-color,#414141) 78%,#fff); box-shadow: 0 0 12px color-mix(in srgb,var(--item-rarity-color,#414141) 22%,transparent); }
+.inv-card .item-img { overflow: hidden; border-radius: 5px; background: radial-gradient(ellipse at 50% 65%,color-mix(in srgb,var(--item-rarity-color,#414141) 18%,transparent),transparent 72%); }
+.inv-card .item-price,.inv-card .item-price-green { color: var(--success); font-weight: 800; font-variant-numeric: tabular-nums; }
+.wear-badge { position: absolute; z-index: 1; top: 3px; left: 3px; padding: 2px 4px; border: 1px solid rgba(255,255,255,.12); border-radius: 4px; background: rgba(10,10,10,.78); color: #c5c5c5; font-size: 7px; font-weight: 800; line-height: 1; }
+.inv-card .card-badge.new { top: 20px; }
+.targetGrid, #targetGrid { min-height: 360px; }
+.case-list-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: -8px 0 12px; color: var(--text-dim); font-size: 10px; }
+.case-list-toolbar select { width: min(190px,55vw); }
+.case-category-divider { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; margin: 12px 0 2px; color: var(--text-dim); font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.case-category-divider::before,.case-category-divider::after { height: 1px; flex: 1; background: linear-gradient(90deg,transparent,#303030); content: ''; }
+.case-category-divider::after { transform: scaleX(-1); }
+.case-detail-view { width: calc(100% + 28px); margin-left: -14px; }
+.case-open-results { overflow: visible; }
+.case-result-rewards { width: calc(100% + 12px); max-height: min(78vh,850px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 6px 12px 8px 4px; scrollbar-gutter: stable; scrollbar-color: #454545 #111; scrollbar-width: thin; }
+.case-result-rewards::-webkit-scrollbar { width: 9px; }
+.case-result-rewards::-webkit-scrollbar-track { border-radius: 999px; background: #111; }
+.case-result-rewards::-webkit-scrollbar-thumb { border: 2px solid #111; border-radius: 999px; background: linear-gradient(180deg,#505050,#303030); }
+.case-category-manager { display: grid; grid-template-columns: minmax(150px,.7fr) minmax(250px,1fr); align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.02); }
+.case-category-manager > div:first-child { display: grid; gap: 4px; }
+.case-category-manager > div:first-child strong { color: var(--white); font-size: 11px; }
+.case-category-manager > div:first-child small,.case-category-list > small { color: var(--text-dim); font-size: 9px; }
+.case-category-create { display: flex; gap: 7px; }
+.case-category-create input { min-width: 0; flex: 1; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; background: #101010; color: var(--text); }
+.case-category-list { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.case-category-chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 7px 4px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-3); color: var(--text); font-size: 9px; }
+.case-category-chip button { display: grid; place-items: center; width: 17px; height: 17px; padding: 0; border: 0; border-radius: 50%; background: rgba(255,85,85,.12); color: var(--danger); cursor: pointer; font-size: 14px; line-height: 1; }
+.case-editor-fields { grid-template-columns: minmax(0,1fr) minmax(150px,.45fr) minmax(150px,.55fr); }
+.case-editor-fields select { width: 100%; }
+.case-admin-list { max-height: 360px; overflow-y: auto; padding-right: 4px; }
+.wheel-center { width: 124px; height: 124px; border: 0; background: radial-gradient(circle,#1c1c1c 0,#171717 72%,rgba(23,23,23,.82) 100%); box-shadow: inset 0 0 22px rgba(255,255,255,.025); }
+.wheel-chance { color: #a5e52e; font-size: 31px; text-shadow: 0 0 12px rgba(165,229,46,.18); font-variant-numeric: tabular-nums; }
+.wheel-sub { margin-top: 1px; color: #a5e52e; font-size: 10px; text-transform: none; }
+.pointer-arrow { top: auto; bottom: -6px; border-top-color: #e8e8e8; filter: drop-shadow(0 0 6px rgba(255,255,255,.4)); }
+.upgrade-feed-card { transition: border-color .2s,transform .25s,opacity .25s; }
+.case-category-manager .case-category-list { min-height: 18px; }
+
+@media (max-width: 700px) {
+  .user-info { margin-left: 0; }
+  .header-balances { margin-left: auto; }
+  .case-detail-view { width: 100%; margin-left: 0; }
+  .case-result-rewards { width: 100%; max-height: 70vh; }
+  .case-category-manager { grid-template-columns: 1fr; }
+  .case-editor-fields { grid-template-columns: 1fr; }
+  .case-category-list { grid-column: 1; }
+}
+
 /* ===== ЕДИНЫЙ СТИЛЬ ВЫПАДАЮЩИХ СПИСКОВ И ФИЛЬТРОВ ===== */
 select {
   min-height: 36px;
@@ -1368,4 +1421,14 @@ select.native-select-source,
   .case-reveal-copy strong { font-size: 10px; }
   .case-reveal-actions button { min-height: 30px; padding: 5px 4px; font-size: 8px; }
   .case-result-bulk-actions { grid-template-columns: 1fr; }
+}
+
+/* Keep a long multi-case opening inside its own scroll area. */
+.case-open-results { overflow: visible; }
+.case-result-rewards { width: calc(100% + 12px); max-height: min(78vh,850px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 6px 12px 8px 4px; scrollbar-gutter: stable; scrollbar-color: #454545 #111; scrollbar-width: thin; }
+.case-result-rewards::-webkit-scrollbar { width: 9px; }
+.case-result-rewards::-webkit-scrollbar-track { border-radius: 999px; background: #111; }
+.case-result-rewards::-webkit-scrollbar-thumb { border: 2px solid #111; border-radius: 999px; background: linear-gradient(180deg,#505050,#303030); }
+@media (max-width: 700px) {
+  .case-result-rewards { width: 100%; max-height: 70vh; }
 }

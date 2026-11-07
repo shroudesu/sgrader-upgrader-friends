@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
-  <link rel="stylesheet" href="style.css?v=20261107-r7">
+  <link rel="stylesheet" href="style.css?v=20261107-r8">
 </head>
 <body>
 
@@ -174,7 +174,7 @@
           </div>
           <div class="wheel-center">
             <span class="wheel-chance" id="chanceValue">—</span>
-            <span class="wheel-sub">шанс</span>
+            <span class="wheel-sub">средний шанс</span>
           </div>
         </div>
 
@@ -187,7 +187,6 @@
           <button type="button" class="target-shortcut" data-target-chance="75" data-target-label="75%" disabled>75%</button>
         </div>
 
-        <div class="multiplier-row">Множитель: <span id="multiplier">—</span></div>
         <div class="warning" id="warning"></div>
 
         <div class="slots-row">
@@ -280,6 +279,7 @@
   <section class="tab-page" id="page-cases">
     <h1 class="title">Кейсы</h1>
     <div class="case-list-view" id="caseListView">
+      <div class="case-list-toolbar"><label for="caseSort">Сортировка по цене</label><select id="caseSort" class="sort-select" aria-label="Сортировать кейсы по цене"><option value="price-asc">Цена ↑</option><option value="price-desc">Цена ↓</option></select></div>
       <div class="cases-grid" id="casesGrid"><div class="case-empty">Загружаю кейсы…</div></div>
     </div>
     <section class="case-detail-view" id="caseDetailView" hidden>
@@ -409,12 +409,18 @@
     <div class="panel admin-panel case-admin-panel">
       <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Управление кейсами</h2><button type="button" class="btn-small" id="adminCaseNewBtn">Создать кейс</button></div>
       <p class="admin-notice">Добавь скины и укажи шанс каждого. Сумма шансов должна быть ровно 100%.</p>
+      <div class="case-category-manager">
+        <div><strong>Категории кейсов</strong><small>Группируй кейсы разделителями в общем каталоге.</small></div>
+        <form id="adminCaseCategoryForm" class="case-category-create"><input type="text" id="adminCaseCategoryName" maxlength="32" placeholder="Название категории" aria-label="Название категории" required><button type="submit" class="btn-small">Добавить</button></form>
+        <div class="case-category-list" id="adminCaseCategories"><small>Загрузка категорий…</small></div>
+      </div>
       <div class="case-admin-list" id="adminCaseList"><div class="case-empty">Загрузка кейсов…</div></div>
       <form class="case-editor" id="adminCaseForm" hidden>
         <div class="case-editor-heading"><h3 id="adminCaseFormTitle">Новый кейс</h3><button type="button" class="settings-close" id="adminCaseCancel" aria-label="Закрыть редактор кейса">×</button></div>
         <div class="case-editor-fields">
           <label>Название кейса<input type="text" id="adminCaseName" maxlength="40" required placeholder="Например, SGRADER Case"></label>
           <label>Цена кейса (<span data-currency-symbol>₽</span>)<input type="number" id="adminCasePrice" min="0.01" max="100000000" step="0.01" required></label>
+          <label>Категория<select id="adminCaseCategory"><option value="">Без категории</option></select></label>
         </div>
         <div class="case-image-editor">
           <label class="case-file-label" for="adminCaseImageFile">PNG-дизайн кейса<input type="file" id="adminCaseImageFile" accept="image/png,.png"></label>
@@ -544,8 +550,8 @@
           <input type="range" id="musicVolumeSlider" min="0" max="100" value="30" aria-label="Громкость фоновой музыки">
         </label>
         <label class="settings-audio-volume settings-win-volume" for="volumeSlider">
-          <span>Громкость звука победы <strong id="volumeValue">70%</strong></span>
-          <div class="settings-volume-control"><span class="volume-icon" id="volumeIcon" aria-hidden="true">🔊</span><input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="70" aria-label="Громкость звука победы"></div>
+          <span>Громкость звука прокрутки <strong id="volumeValue">70%</strong></span>
+          <div class="settings-volume-control"><span class="volume-icon" id="volumeIcon" aria-hidden="true">🔊</span><input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="70" aria-label="Громкость звука прокрутки"></div>
         </label>
       </div>
       <div class="settings-avatar-row"><img id="settingsAvatarPreview" alt="Аватар"><div><strong>Аватар</strong><p>Выбери изображение с устройства</p><label class="btn-small avatar-file-label" for="avatarFile">Изменить аватар</label><input type="file" id="avatarFile" accept="image/png,image/jpeg,image/webp" hidden></div></div>
@@ -574,17 +580,13 @@
 
 </main>
 
-<footer class="footer">
-  Баланс и цены используются внутри игры.
-</footer>
-
 </div><!-- /.app -->
 
-<audio id="winSound" src="win.mp3" preload="auto"></audio>
+<audio id="spinSound" src="win.mp3" preload="auto"></audio>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
-<script src="script.js?v=20261107-r7"></script>
+<script src="script.js?v=20261107-r8"></script>
 </body>
 </html>

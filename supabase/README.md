@@ -5,7 +5,7 @@
 ## Первичная настройка
 
 1. Создай проект Supabase.
-2. В **SQL Editor** запусти весь файл [`schema.sql`](schema.sql). Затем запусти [`skin-battles.sql`](skin-battles.sql), [`community-features.sql`](community-features.sql), [`admin-inventory.sql`](admin-inventory.sql), [`cases.sql`](cases.sql) и [`admin-moderation.sql`](admin-moderation.sql). Они добавят батлы, ленту апгрейдов, просмотр профилей, управление инвентарём, кейсы, статусы игроков и отстранения. `cases.sql` создаёт публичное хранилище PNG, но разрешает загружать туда картинки только администраторам.
+2. В **SQL Editor** запусти весь файл [`schema.sql`](schema.sql). Затем запусти [`skin-battles.sql`](skin-battles.sql), [`community-features.sql`](community-features.sql), [`admin-inventory.sql`](admin-inventory.sql), [`cases.sql`](cases.sql), [`case-categories.sql`](case-categories.sql) и [`admin-moderation.sql`](admin-moderation.sql). Они добавят батлы, ленту апгрейдов, просмотр профилей, управление инвентарём, кейсы и категории кейсов, статусы игроков и отстранения. `cases.sql` создаёт публичное хранилище PNG, но разрешает загружать туда картинки только администраторам.
 3. В **Authentication → Sign In / Providers → Email** отключи **Confirm email**. Приложение не собирает email: ник преобразуется в технический адрес вида `u-…@players.sgrader.invalid`. Поэтому восстановить забытый пароль нельзя; игрокам нужно использовать отдельный пароль для этой демо-игры.
 4. В настройках Auth укажи Site URL `https://shroudesu.github.io/sgrader-upgrader-friends/`.
 5. В **Project Settings → API** скопируй Project URL и публичный **publishable/anon key** в `supabase-config.js`. Не вставляй `service_role` key: он даёт полный доступ к базе.

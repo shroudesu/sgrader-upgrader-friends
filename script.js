@@ -284,6 +284,7 @@ const caseListView = document.getElementById('caseListView');
 const caseDetailView = document.getElementById('caseDetailView');
 const caseBackButton = document.getElementById('caseBackButton');
 const casesGrid = document.getElementById('casesGrid');
+const caseSort = document.getElementById('caseSort');
 const caseFeedback = document.getElementById('caseFeedback');
 const caseOpenResults = document.getElementById('caseOpenResults');
 const caseOpenQuantityInput = document.getElementById('caseOpenQuantity');
@@ -307,6 +308,10 @@ const adminCaseChanceTotal = document.getElementById('adminCaseChanceTotal');
 const adminCaseFeedback = document.getElementById('adminCaseFeedback');
 const adminCaseSaveBtn = document.getElementById('adminCaseSaveBtn');
 const adminCaseDeleteBtn = document.getElementById('adminCaseDeleteBtn');
+const adminCaseCategoryForm = document.getElementById('adminCaseCategoryForm');
+const adminCaseCategoryName = document.getElementById('adminCaseCategoryName');
+const adminCaseCategories = document.getElementById('adminCaseCategories');
+const adminCaseCategory = document.getElementById('adminCaseCategory');
 const caseSkipAnimationToggle = document.getElementById('caseSkipAnimation');
 const pendingCaseRewardsPanel = document.getElementById('pendingCaseRewards');
 const pendingCaseRewardsCount = document.getElementById('pendingCaseRewardsCount');
@@ -414,7 +419,6 @@ const targetCategory = $('targetCategory');
 const targetCount = $('targetCount');
 const targetLoading = $('targetLoading');
 const chanceValue = $('chanceValue');
-const multiplierEl = $('multiplier');
 const upgradeBtn = $('upgradeBtn');
 const resultEl = $('result');
 const warningEl = $('warning');
@@ -462,7 +466,7 @@ const confirmText = $('confirmText');
 const confirmCancel = $('confirmCancel');
 const confirmOk = $('confirmOk');
 
-const winSound = $('winSound');
+const spinSound = $('spinSound');
 const volumeSlider = $('volumeSlider');
 const volumeValue = $('volumeValue');
 const volumeIcon = $('volumeIcon');
@@ -509,6 +513,7 @@ let presenceHeartbeatTimer = null;
 let lastUserActivityAt = Date.now();
 let lastPresenceTrackAt = 0;
 let gameCases = [];
+let gameCaseCategories = [];
 let caseDraftContents = [];
 let caseEditorId = null;
 let caseImageUrl = '';
@@ -534,6 +539,8 @@ let onlinePresenceChannel = null;
 let onlinePresenceReady = false;
 let onlinePresenceSessionId = '';
 let winVolume = 0.7;
+let wheelDisplayChance = 0;
+let wheelChanceAnimation = 0;
 let musicVolume = 0.3;
 let musicEnabled = false;
 let musicTrackIndex = 0;
@@ -1312,7 +1319,7 @@ function applyVolume(percent) {
   volumeValue.textContent = Math.round(percent) + '%';
   updateVolumeIcon(winVolume);
   updateRangeProgress(volumeSlider, percent);
-  if (winSound) winSound.volume = winVolume;
+  if (spinSound) spinSound.volume = winVolume;
   try { localStorage.setItem(VOLUME_KEY, String(percent)); } catch (e) {}
 }
 
@@ -1442,25 +1449,15 @@ loadSpinSettings();
 // ============================================================
 // ЗВУК
 // ============================================================
-function playWinSound() {
-  if (!winSound || winVolume === 0) return;
+function playSpinSound() {
+  if (!spinSound || winVolume === 0) return;
   try {
-    winSound.currentTime = 0;
-    winSound.volume = winVolume;
-    const p = winSound.play();
+    spinSound.currentTime = 0;
+    spinSound.volume = winVolume;
+    const p = spinSound.play();
     if (p && p.catch) p.catch(() => {});
   } catch (e) {}
 }
-
-document.addEventListener('click', () => {
-  if (!winSound) return;
-  const prev = winSound.volume;
-  winSound.volume = 0;
-  const p = winSound.play();
-  if (p && p.then) {
-    p.then(() => { winSound.pause(); winSound.currentTime = 0; winSound.volume = prev; }).catch(() => {});
-  }
-}, { once: true });
 
 // ============================================================
 // НАВИГАЦИЯ
@@ -1676,12 +1673,36 @@ function caseSkinSnapshot(item) {
   };
 }
 
+function sortGameCases(items) {
+  const result = [...items];
+  const sort = caseSort?.value || 'price-asc';
+  return result.sort((left, right) => {
+    const priceOrder = Number(left.price || 0) - Number(right.price || 0);
+    return sort === 'price-desc' ? -priceOrder : priceOrder;
+  });
+}
+
 function renderCaseCards() {
   if (!gameCases.length) {
     casesGrid.innerHTML = '<div class="case-empty">Кейсов пока нет.</div>';
     return;
   }
-  casesGrid.innerHTML = gameCases.map(gameCase => {
+  const categoryNames = new Map(gameCaseCategories.map(category => [String(category.id), category.name]));
+  const groups = new Map();
+  gameCases.forEach(gameCase => {
+    const id = gameCase.category_id ? String(gameCase.category_id) : '';
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(gameCase);
+  });
+  const orderedGroups = [...groups.entries()].sort(([leftId], [rightId]) => {
+    if (!leftId) return 1;
+    if (!rightId) return -1;
+    return String(categoryNames.get(leftId) || '').localeCompare(String(categoryNames.get(rightId) || ''), 'ru');
+  });
+  casesGrid.innerHTML = orderedGroups.map(([categoryId, items]) => {
+    const categoryName = categoryId ? categoryNames.get(categoryId) : 'Без категории';
+    const heading = `<div class="case-category-divider"><span>${escapeHtml(categoryName || 'Категория')}</span></div>`;
+    return heading + sortGameCases(items).map(gameCase => {
     const art = gameCase.image_url
       ? `<img src="${escapeHtml(gameCase.image_url)}" alt="${escapeHtml(gameCase.name)}">`
       : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>';
@@ -1692,6 +1713,7 @@ function renderCaseCards() {
         <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть</button>
       </div>
     </article>`;
+    }).join('');
   }).join('');
 }
 
@@ -1761,11 +1783,37 @@ function renderAdminCaseList() {
     adminCaseList.innerHTML = '<div class="case-empty">Созданных кейсов пока нет.</div>';
     return;
   }
-  adminCaseList.innerHTML = gameCases.map(gameCase => `<article class="case-admin-row">
+  const categoryNames = new Map(gameCaseCategories.map(category => [String(category.id), category.name]));
+  adminCaseList.innerHTML = sortGameCases(gameCases).map(gameCase => `<article class="case-admin-row">
     ${gameCase.image_url ? `<img src="${escapeHtml(gameCase.image_url)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}
-    <div class="case-admin-info"><strong title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</strong><span>${fmt(Number(gameCase.price))} · ${(gameCase.contents || []).length} скинов</span></div>
+    <div class="case-admin-info"><strong title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</strong><span>${fmt(Number(gameCase.price))} · ${escapeHtml(categoryNames.get(String(gameCase.category_id)) || 'Без категории')} · ${(gameCase.contents || []).length} скинов</span></div>
     <button type="button" class="btn-small" data-case-edit="${escapeHtml(gameCase.id)}">Изменить</button>
   </article>`).join('');
+}
+
+function renderAdminCaseCategories() {
+  if (!adminCaseCategories) return;
+  adminCaseCategories.innerHTML = gameCaseCategories.length
+    ? gameCaseCategories.map(category => `<span class="case-category-chip">${escapeHtml(category.name)}<button type="button" data-case-category-delete="${escapeHtml(category.id)}" aria-label="Удалить категорию ${escapeHtml(category.name)}" title="Удалить">×</button></span>`).join('')
+    : '<small>Категорий пока нет.</small>';
+  const selected = adminCaseCategory.value;
+  adminCaseCategory.innerHTML = '<option value="">Без категории</option>' + gameCaseCategories.map(category => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join('');
+  if (gameCaseCategories.some(category => String(category.id) === selected)) adminCaseCategory.value = selected;
+  syncCustomSelect(adminCaseCategory);
+}
+
+async function loadCaseCategories() {
+  if (!supabaseClient) return;
+  const { data, error } = await supabaseClient.from('game_case_categories').select('id,name').order('name');
+  if (error) {
+    gameCaseCategories = [];
+    renderAdminCaseCategories();
+    if (currentUser?.role === 'admin') adminCaseCategories.innerHTML = '<small>Для категорий запусти supabase/case-categories.sql в SQL Editor.</small>';
+    console.warn('Could not load case categories; apply supabase/case-categories.sql:', error);
+    return;
+  }
+  gameCaseCategories = Array.isArray(data) ? data : [];
+  renderAdminCaseCategories();
 }
 
 async function loadCases() {
@@ -1773,9 +1821,15 @@ async function loadCases() {
     casesGrid.innerHTML = '<div class="case-empty">Сначала подключи Supabase.</div>';
     return;
   }
-  const { data, error } = await supabaseClient.from('game_cases')
-    .select('id,name,price,image_url,contents,created_at,updated_at')
+  await loadCaseCategories();
+  let { data, error } = await supabaseClient.from('game_cases')
+    .select('id,name,price,image_url,contents,category_id,created_at,updated_at')
     .order('created_at', { ascending: false });
+  if (error && /category_id|column/i.test(String(error.message || ''))) {
+    ({ data, error } = await supabaseClient.from('game_cases')
+      .select('id,name,price,image_url,contents,created_at,updated_at')
+      .order('created_at', { ascending: false }));
+  }
   if (error) {
     casesGrid.innerHTML = '<div class="case-empty">Кейсы ещё не подключены. Выполни supabase/cases.sql в SQL Editor.</div>';
     if (currentUser?.role === 'admin') adminCaseList.innerHTML = '<div class="case-empty">Выполни supabase/cases.sql, чтобы настроить кейсы.</div>';
@@ -1902,6 +1956,8 @@ function openCaseEditor(gameCase) {
   caseImageUrl = gameCase.image_url || '';
   caseDraftContents = (gameCase.contents || []).map(entry => ({ item: entry.item, chance: Number(entry.chance) }));
   adminCaseName.value = gameCase.name || '';
+  adminCaseCategory.value = gameCase.category_id || '';
+  syncCustomSelect(adminCaseCategory);
   adminCasePrice.value = displayCurrency === 'USD'
     ? (Number(gameCase.price || 0) / RUB_PER_USD).toFixed(2)
     : String(gameCase.price || '');
@@ -2616,6 +2672,45 @@ async function openGameCase(caseId, quantity) {
 
 adminCaseNewBtn.addEventListener('click', openNewCaseEditor);
 adminCaseCancel.addEventListener('click', resetCaseEditor);
+caseSort.addEventListener('change', renderCaseCards);
+adminCaseCategoryForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!currentUser || currentUser.role !== 'admin') return;
+  const name = adminCaseCategoryName.value.trim();
+  if (name.length < 2 || name.length > 32) {
+    adminCaseCategories.innerHTML = '<small>Название категории должно содержать 2–32 символа.</small>';
+    return;
+  }
+  const { error } = await supabaseClient.rpc('admin_create_game_case_category', { p_name: name });
+  if (error) {
+    adminCaseCategories.innerHTML = /function|schema cache|does not exist/i.test(String(error.message || ''))
+      ? '<small>Запусти supabase/case-categories.sql в SQL Editor.</small>'
+      : '<small>Не удалось создать категорию. Проверь, что название уникально.</small>';
+    console.error('Could not create case category:', error);
+    return;
+  }
+  adminCaseCategoryName.value = '';
+  await loadCaseCategories();
+  renderCaseCards();
+});
+adminCaseCategories.addEventListener('click', event => {
+  const button = event.target.closest('[data-case-category-delete]');
+  if (!button || !currentUser || currentUser.role !== 'admin') return;
+  const category = gameCaseCategories.find(item => String(item.id) === button.dataset.caseCategoryDelete);
+  if (!category) return;
+  openConfirm('Удалить категорию?', `Категория «${category.name}» удалится. Кейсы сохранятся без категории.`, async () => {
+    const { error } = await supabaseClient.rpc('admin_delete_game_case_category', { p_category_id: category.id });
+    if (error) {
+      adminCaseCategories.innerHTML = /function|schema cache|does not exist/i.test(String(error.message || ''))
+        ? '<small>Запусти supabase/case-categories.sql в SQL Editor.</small>'
+        : '<small>Не удалось удалить категорию.</small>';
+      console.error('Could not delete case category:', error);
+      return;
+    }
+    if (String(adminCaseCategory.value) === String(category.id)) adminCaseCategory.value = '';
+    await loadCases();
+  });
+});
 adminCaseSkinSearch.addEventListener('input', renderCaseSkinResults);
 adminCaseImageFile.addEventListener('change', () => void uploadCaseImage(adminCaseImageFile.files?.[0]));
 adminCaseSkinResults.addEventListener('click', event => {
@@ -2666,13 +2761,20 @@ adminCaseForm.addEventListener('submit', async event => {
   adminCaseSaveBtn.disabled = true;
   adminCaseFeedback.textContent = 'Сохраняю кейс…';
   try {
-    const { data, error } = await supabaseClient.rpc('admin_save_game_case', {
+    const saveArgs = {
       p_case_id: caseEditorId,
       p_name: name,
       p_price: price,
       p_image_url: caseImageUrl || null,
       p_contents: caseDraftContents.map(entry => ({ item: entry.item, chance: Number(entry.chance) }))
+    };
+    let { data, error } = await supabaseClient.rpc('admin_save_game_case', {
+      ...saveArgs,
+      p_category_id: adminCaseCategory.value || null
     });
+    if (error && !adminCaseCategory.value && /function|schema cache|does not exist/i.test(String(error.message || ''))) {
+      ({ data, error } = await supabaseClient.rpc('admin_save_game_case', saveArgs));
+    }
     if (error) throw error;
     caseEditorId = data.id;
     adminCaseFormTitle.textContent = 'Изменить кейс';
@@ -2681,8 +2783,8 @@ adminCaseForm.addEventListener('submit', async event => {
     await loadCases();
     adminCaseDeleteBtn.hidden = false;
   } catch (error) {
-    adminCaseFeedback.textContent = String(error.message || '').toLowerCase().includes('admin_save_game_case')
-      ? 'Выполни supabase/cases.sql в SQL Editor.'
+    adminCaseFeedback.textContent = /function|schema cache|does not exist/i.test(String(error.message || ''))
+      ? 'Выполни supabase/case-categories.sql в SQL Editor.'
       : 'Не удалось сохранить кейс. Проверь данные и подключение.';
     console.error('Could not save game case:', error);
   } finally {
@@ -3004,21 +3106,86 @@ function calculateChance(betPrice, targetPrice) {
 // ============================================================
 // КОЛЕСО
 // ============================================================
-function drawWheel(chancePercent) {
+function paintWheel(chancePercent) {
   const size = canvas.width;
   const r = size / 2;
   const cx = r, cy = r;
   ctx.clearRect(0, 0, size, size);
-  const start = -Math.PI / 2;
-  const winAngle = Math.PI * 2 * Math.max(0, Math.min(100, chancePercent)) / 100;
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r - 4, start, start + winAngle); ctx.closePath();
-  ctx.fillStyle = '#ffffff'; ctx.fill();
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r - 4, start + winAngle, start + Math.PI * 2); ctx.closePath();
-  ctx.fillStyle = '#171717'; ctx.fill();
-  ctx.strokeStyle = '#080808'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx, cy, r - 9, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1; ctx.stroke();
+  const chance = Math.max(0, Math.min(100, Number(chancePercent) || 0));
+  const ringRadius = r - 36;
+  const tickRadius = r - 10;
+  ctx.lineCap = 'butt';
+  for (let degree = 0; degree < 360; degree += 5) {
+    const angle = degree * Math.PI / 180;
+    const major = degree % 30 === 0;
+    const innerRadius = tickRadius - (major ? 13 : 7);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle) * innerRadius, cy + Math.sin(angle) * innerRadius);
+    ctx.lineTo(cx + Math.cos(angle) * tickRadius, cy + Math.sin(angle) * tickRadius);
+    ctx.strokeStyle = major ? 'rgba(230,230,230,.24)' : 'rgba(230,230,230,.12)';
+    ctx.lineWidth = major ? 1.5 : 1;
+    ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = '#242424';
+  ctx.lineWidth = 28;
+  ctx.stroke();
+
+  const winAngle = Math.PI * 2 * chance / 100;
+  if (chance > 0) {
+    const start = Math.PI / 2 - winAngle / 2;
+    const end = Math.PI / 2 + winAngle / 2;
+    const gradient = ctx.createLinearGradient(0, cy + ringRadius, size, cy - ringRadius);
+    gradient.addColorStop(0, '#777');
+    gradient.addColorStop(.48, '#c9c9c9');
+    gradient.addColorStop(1, '#f4f4f4');
+    ctx.beginPath();
+    if (chance >= 99.999) ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+    else ctx.arc(cx, cy, ringRadius, start, end);
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 28;
+    ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, ringRadius - 22, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,.045)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.42)';
+  ctx.font = '600 11px Segoe UI, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('100%', cx, 34);
+  ctx.textAlign = 'left';
+  ctx.fillText('50%', 18, cy + 4);
+  ctx.textAlign = 'right';
+  ctx.fillText('50%', size - 18, cy + 4);
 }
-drawWheel(0);
+
+function drawWheel(chancePercent, animate = true) {
+  const target = Math.max(0, Math.min(100, Number(chancePercent) || 0));
+  if (wheelChanceAnimation) cancelAnimationFrame(wheelChanceAnimation);
+  const start = wheelDisplayChance;
+  if (!animate || Math.abs(start - target) < 0.001) {
+    wheelDisplayChance = target;
+    paintWheel(target);
+    return;
+  }
+  const beganAt = performance.now();
+  const duration = 360;
+  const frame = now => {
+    const progress = Math.min(1, (now - beganAt) / duration);
+    const eased = progress < .5 ? 4 * progress ** 3 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+    wheelDisplayChance = start + (target - start) * eased;
+    paintWheel(wheelDisplayChance);
+    if (progress < 1) wheelChanceAnimation = requestAnimationFrame(frame);
+    else { wheelDisplayChance = target; wheelChanceAnimation = 0; }
+  };
+  wheelChanceAnimation = requestAnimationFrame(frame);
+}
+drawWheel(0, false);
 
 // ============================================================
 // ЗАГРУЗКА КАТАЛОГА
@@ -3268,7 +3435,6 @@ function updateChance() {
   if (!betData || !targetData) {
     currentChance = 0;
     chanceValue.textContent = '—';
-    multiplierEl.textContent = '—';
     upgradeBtn.disabled = true;
     warningEl.classList.remove('show');
     warningEl.textContent = '';
@@ -3280,7 +3446,6 @@ function updateChance() {
   if (isSkinAlreadyStaked(targetData)) {
     currentChance = 0;
     chanceValue.textContent = '—';
-    multiplierEl.textContent = '—';
     upgradeBtn.disabled = true;
     warningEl.textContent = '⚠ Нельзя выбрать тот же скин и для ставки, и для цели';
     warningEl.classList.add('show');
@@ -3292,7 +3457,6 @@ function updateChance() {
   if (betData.price > targetData.price) {
     currentChance = 0;
     chanceValue.textContent = '—';
-    multiplierEl.textContent = '—';
     upgradeBtn.disabled = true;
     warningEl.textContent = '⚠ Ставка дороже цели — выберите другой скин';
     warningEl.classList.add('show');
@@ -3308,7 +3472,6 @@ function updateChance() {
   if (currentChance < 0.01) {
     currentChance = 0;
     chanceValue.textContent = formatChance(0);
-    multiplierEl.textContent = `x${(targetData.price / betData.price).toFixed(2)}`;
     upgradeBtn.disabled = true;
     warningEl.textContent = 'Шанс ниже минимального значения 0.01%.';
     warningEl.classList.add('show');
@@ -3317,7 +3480,6 @@ function updateChance() {
     return;
   }
   chanceValue.textContent = formatChance(currentChance);
-  multiplierEl.textContent = 'x' + (targetData.price / betData.price).toFixed(2);
   upgradeBtn.disabled = false;
   updateTargetShortcuts();
   drawWheel(currentChance);
@@ -3426,6 +3588,30 @@ function restoreSlotsFromState() {
 // ============================================================
 // КАРТОЧКА
 // ============================================================
+function itemRarityColor(item) {
+  const supplied = typeof item?.rarity === 'object' ? item.rarity?.color : '';
+  if (/^#[0-9a-f]{6}$/i.test(supplied || '')) return supplied;
+  const rarity = String(typeof item?.rarity === 'object' ? item.rarity?.name : item?.rarity || '').toLowerCase();
+  const category = String(item?.category || item?.catalogType || '').toLowerCase();
+  if (/contraband|extraordinary|exotic|covert|knife|glove/.test(rarity) || /knives|gloves/.test(category)) return '#d9a534';
+  if (/classified|mythical/.test(rarity)) return '#d32ce6';
+  if (/restricted|rare/.test(rarity)) return '#8847ff';
+  if (/mil-spec|high grade/.test(rarity)) return '#4b69ff';
+  if (/industrial|remarkable/.test(rarity)) return '#5e98d9';
+  if (/consumer|base grade|common/.test(rarity)) return '#b0c3d9';
+  return '#414141';
+}
+
+function wearCode(value) {
+  const wear = String(value || '').toLowerCase();
+  if (/factory new/.test(wear)) return 'FN';
+  if (/minimal wear/.test(wear)) return 'MW';
+  if (/field-tested|field tested/.test(wear)) return 'FT';
+  if (/well-worn|well worn/.test(wear)) return 'WW';
+  if (/battle-scarred|battle scarred/.test(wear)) return 'BS';
+  return '';
+}
+
 function buildCatalogCard(item, { disabled, source, onClick }) {
   const card = document.createElement('div');
   card.className = 'inv-card' + (disabled ? ' disabled' : '');
@@ -3433,14 +3619,15 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   if (item.id != null) card.dataset.catalogId = String(item.id);
   card.dataset.cardSource = source;
   card.dataset.price = String(Number(item.price || 0));
-  const rarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
-  if (rarityColor) card.style.setProperty('--item-rarity-color', rarityColor);
+  const rarityColor = itemRarityColor(item);
+  card.style.setProperty('--item-rarity-color', rarityColor);
   const isCurrentYearItem = item.releaseYear === catalogReleaseYear;
   const selected = source === 'catalog' && state.inventory.some(inv => inv.catalogId === item.id && state.betItemIds.includes(inv.instanceId));
   const marketQuantity = source === 'catalog' ? Number(marketSelection.get(String(item.id)) || 0) : 0;
   const selectedForPurchase = marketQuantity > 0;
   if (selected) card.classList.add('active');
   const qualityParts = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect].filter(Boolean);
+  const rarityName = typeof item.rarity === 'object' ? item.rarity?.name : item.rarity;
   if (item.floatMin != null && item.floatMax != null && item.floatMax > item.floatMin) {
     qualityParts.push(`${Number(item.floatMin).toFixed(2)}–${Number(item.floatMax).toFixed(2)}`);
   }
@@ -3449,11 +3636,11 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   card.innerHTML = `
     ${source === 'catalog' ? '<div class="card-badge buy">$</div>' : ''}
     ${isCurrentYearItem ? `<div class="card-badge new">${escapeHtml(catalogReleaseYear)}</div>` : ''}
-    <div class="item-img"><img src="${escapeHtml(item.img || '')}" alt="" loading="lazy">${selectedForPurchase ? `<span class="market-quantity-badge">×${marketQuantity}</span>` : ''}</div>
+    <div class="item-img"><img src="${escapeHtml(item.img || '')}" alt="" loading="lazy">${wearCode(item.wear) ? `<span class="wear-badge">${wearCode(item.wear)}</span>` : ''}${selectedForPurchase ? `<span class="market-quantity-badge">×${marketQuantity}</span>` : ''}</div>
     <div class="item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
     <div class="item-price">${fmt(item.price)}</div>
     ${qualityParts.length ? `<div class="item-quality">${qualityParts.map(part => escapeHtml(part)).join(' · ')}</div>` : ''}
-    <div class="item-rarity">${escapeHtml(item.rarity?.name || item.category || 'Предмет')}</div>
+    <div class="item-rarity">${escapeHtml(rarityName || item.category || 'Предмет')}</div>
   `;
 
   const marketCancelBadge = card.querySelector('.market-quantity-badge');
@@ -3683,6 +3870,7 @@ function appendMyInventoryCard(idx) {
   card.setAttribute('role', 'button');
   card.setAttribute('tabindex', '0');
   card.setAttribute('aria-label', `${inv.name || 'Предмет'}, ${fmt(inv.price)}`);
+  card.style.setProperty('--item-rarity-color', itemRarityColor(inv));
   if (selected) {
     const badge = document.createElement('div');
     badge.className = 'card-badge owned';
@@ -3696,12 +3884,19 @@ function appendMyInventoryCard(idx) {
   image.alt = '';
   image.loading = 'lazy';
   imageWrap.appendChild(image);
+  if (wearCode(inv.wear)) {
+    const wear = document.createElement('span');
+    wear.className = 'wear-badge';
+    wear.textContent = wearCode(inv.wear);
+    imageWrap.appendChild(wear);
+  }
   const name = document.createElement('div');
   name.className = 'item-name';
   name.textContent = inv.name || 'Предмет';
   name.title = inv.name || 'Предмет';
   const price = document.createElement('div');
   price.className = 'item-price';
+  price.classList.add('item-price-green');
   price.textContent = fmt(inv.price);
   const qualities = [inv.wear, inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
   card.append(imageWrap, name, price);
@@ -4709,20 +4904,57 @@ function renderUpgradeFeed(items) {
     feeds.forEach(feed => { feed.innerHTML = '<div class="feed-empty">Выигранные предметы появятся здесь.</div>'; });
     return;
   }
-  upgradeFeed.innerHTML = items.map(entry => {
+  const entries = items.map((entry, index) => {
     const item = entry.item || {};
     const date = entry.created_at ? new Date(entry.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
-    return `<button type="button" class="upgrade-feed-card" data-user-id="${escapeHtml(entry.user_id || '')}" ${currentUser ? '' : 'disabled'}>
-      <span class="feed-user"><img src="${escapeHtml(entry.avatar || '')}" alt=""><strong>${escapeHtml(entry.username || 'Игрок')}</strong></span>
+    const key = String(entry.id || `${entry.user_id || 'player'}:${entry.created_at || index}:${item.name || ''}`);
+    return { key, html: `<span class="feed-user"><img src="${escapeHtml(entry.avatar || '')}" alt=""><strong>${escapeHtml(entry.username || 'Игрок')}</strong></span>
       <img class="feed-item-image" src="${escapeHtml(item.img || '')}" alt="">
       <span class="feed-item-name">${escapeHtml(item.name || 'Скин')}</span>
       <span class="feed-item-price">${fmt(Number(item.price || 0))}</span>
       ${item.case_name ? `<small class="feed-item-source">Кейс: ${escapeHtml(item.case_name)}</small>` : ''}
-      <small class="feed-item-date">${date}</small>
-    </button>`;
-  }).join('');
-  const markup = upgradeFeed.innerHTML;
-  feeds.forEach(feed => { feed.innerHTML = markup; });
+      <small class="feed-item-date">${date}</small>`, userId: entry.user_id || '' };
+  });
+  feeds.forEach(feed => {
+    const oldPositions = new Map([...feed.querySelectorAll('.upgrade-feed-card[data-feed-id]')]
+      .map(card => [card.dataset.feedId, card.getBoundingClientRect()]));
+    const existing = new Map([...feed.querySelectorAll('.upgrade-feed-card[data-feed-id]')]
+      .map(card => [card.dataset.feedId, card]));
+    feed.querySelector('.feed-empty')?.remove();
+    entries.forEach(entry => {
+      let card = existing.get(entry.key);
+      const isNew = !card;
+      if (!card) {
+        card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'upgrade-feed-card';
+        card.dataset.feedId = entry.key;
+        card.dataset.userId = entry.userId;
+        if (!currentUser) card.disabled = true;
+      }
+      card.innerHTML = entry.html;
+      feed.appendChild(card);
+      const old = oldPositions.get(entry.key);
+      if (old && typeof card.animate === 'function') {
+        const next = card.getBoundingClientRect();
+        const dx = old.left - next.left;
+        const dy = old.top - next.top;
+        if (Math.abs(dx) + Math.abs(dy) > 1) {
+          card.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'translate(0,0)' }], {
+            duration: 300, easing: 'cubic-bezier(.2,.75,.25,1)'
+          });
+        }
+      } else if (isNew && typeof card.animate === 'function') {
+        card.animate([{ opacity: 0, transform: 'translateY(-12px)' }, { opacity: 1, transform: 'translateY(0)' }], {
+          duration: 360, easing: 'cubic-bezier(.2,.75,.25,1)'
+        });
+      }
+    });
+    const visibleKeys = new Set(entries.map(entry => entry.key));
+    feed.querySelectorAll('.upgrade-feed-card[data-feed-id]').forEach(card => {
+      if (!visibleKeys.has(card.dataset.feedId)) card.remove();
+    });
+  });
 }
 
 async function loadUpgradeFeed() {
@@ -4878,6 +5110,7 @@ upgradeBtn.addEventListener('click', () => {
   const wagerData = betData;
   const prizeData = targetData;
 
+  playSpinSound();
   spinning = true;
   upgradeBtn.disabled = true;
   updateTargetShortcuts();
@@ -4889,8 +5122,8 @@ upgradeBtn.addEventListener('click', () => {
   const winArcDeg = currentChance * 3.6;
   const edgePadding = Math.min(0.0001, winArcDeg / 4, (360 - winArcDeg) / 4);
   const finalAngle = win
-    ? edgePadding + Math.random() * Math.max(0, winArcDeg - edgePadding * 2)
-    : winArcDeg + edgePadding + Math.random() * Math.max(0, 360 - winArcDeg - edgePadding * 2);
+    ? (360 - winArcDeg / 2 + Math.random() * winArcDeg + 360) % 360
+    : winArcDeg / 2 + edgePadding + Math.random() * Math.max(0, 360 - winArcDeg - edgePadding * 2);
 
   const fullSpins = 2 + Number(spinStrength) + Math.floor(Math.random() * 3);
   const startAngle = rotorAngle % 360;
@@ -4938,7 +5171,6 @@ upgradeBtn.addEventListener('click', () => {
         };
       }
 
-      playWinSound();
     }
     wheelWrap.classList.add(win ? 'upgrade-wheel-win' : 'upgrade-wheel-lose');
 
