@@ -5480,12 +5480,18 @@ async function resumeActiveUpgrade() {
         if (error) {
           console.error('Could not restore active upgrade:', error);
           if (/get_active_skin_upgrade|function|schema cache|does not exist/i.test(String(error.message || ''))) {
-            warningEl.textContent = 'Для апгрейдера примени supabase/upgrade-bonus.sql в SQL Editor.';
+            warningEl.textContent = currentUser?.role === 'admin'
+              ? `Supabase RPC get_active_skin_upgrade: ${describeUpgradeRpcError(error)}`
+              : 'Апгрейдер временно недоступен. Сообщи администратору.';
             warningEl.classList.add('show');
           }
           return;
         }
         run = data;
+        if (!run && warningEl.textContent.startsWith('Для апгрейдера примени supabase/upgrade-bonus.sql')) {
+          warningEl.textContent = '';
+          warningEl.classList.remove('show');
+        }
       }
       if (run) await processSavedUpgradeRun(run);
     } catch (error) {
@@ -5567,12 +5573,24 @@ async function startSavedUpgrade() {
     spinning = false;
     updateChance();
     const needsMigration = /begin_skin_upgrade|function|schema cache|does not exist/i.test(String(error?.message || ''));
-    warningEl.textContent = needsMigration
-      ? 'Для апгрейдера примени supabase/upgrade-bonus.sql в SQL Editor.'
-      : 'Не удалось начать апгрейд. Обнови страницу или попробуй ещё раз.';
+    warningEl.textContent = currentUser?.role === 'admin'
+      ? `Supabase RPC begin_skin_upgrade: ${describeUpgradeRpcError(error)}`
+      : needsMigration
+        ? 'Апгрейдер временно недоступен. Сообщи администратору.'
+        : 'Не удалось начать апгрейд. Обнови страницу или попробуй ещё раз.';
     warningEl.classList.add('show');
     console.error('Could not begin saved upgrade:', error);
   }
+}
+
+function describeUpgradeRpcError(error) {
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || 'неизвестная ошибка').replace(/\s+/g, ' ').trim();
+  const detail = [error?.details, error?.hint]
+    .map(value => String(value || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ');
+  return `${code ? `${code}: ` : ''}${message}${detail ? ` — ${detail}` : ''}`.slice(0, 360);
 }
 
 upgradeBtn.addEventListener('click', () => {
