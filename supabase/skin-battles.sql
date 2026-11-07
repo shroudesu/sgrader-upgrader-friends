@@ -43,7 +43,11 @@ begin
 end
 $$;
 
-create or replace function public.create_skin_battle(p_inventory_item_id text)
+-- Replace the former one-skin RPCs with the multi-skin versions.
+drop function if exists public.create_skin_battle(text);
+drop function if exists public.join_skin_battle(uuid, text);
+
+create or replace function public.create_skin_battle(p_inventory_item_ids text[])
 returns uuid
 language plpgsql
 security definer
@@ -52,14 +56,21 @@ as $$
 declare
   v_user_id uuid := auth.uid();
   v_state jsonb;
-  v_skin jsonb;
+  v_skins jsonb;
   v_inventory jsonb;
   v_battle_id uuid;
-  v_price numeric(14, 2);
+  v_price numeric(14, 2) := 0;
+  v_selected_count integer;
 begin
   if v_user_id is null then raise exception 'Sign in required'; end if;
-  if nullif(trim(coalesce(p_inventory_item_id, '')), '') is null then
-    raise exception 'Choose a skin from inventory';
+  if coalesce(cardinality(p_inventory_item_ids), 0) < 1 or cardinality(p_inventory_item_ids) > 5 then
+    raise exception 'Choose between one and five skins';
+  end if;
+  if exists (select 1 from unnest(p_inventory_item_ids) as requested(item_id) where nullif(trim(requested.item_id), '') is null) then
+    raise exception 'Inventory item id is invalid';
+  end if;
+  if (select count(distinct requested.item_id) from unnest(p_inventory_item_ids) as requested(item_id)) <> cardinality(p_inventory_item_ids) then
+    raise exception 'The same inventory item cannot be selected twice';
   end if;
 
   select gs.state into v_state
@@ -68,28 +79,53 @@ begin
    for update;
   if not found then raise exception 'Game state not found'; end if;
 
-  select entry.item into v_skin
-    from jsonb_array_elements(coalesce(v_state -> 'inventory', '[]'::jsonb)) as entry(item)
-   where entry.item ->> 'instanceId' = p_inventory_item_id
-   limit 1;
-  if v_skin is null then raise exception 'Skin is no longer in inventory'; end if;
-  if coalesce(v_skin ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$' then
+  select count(distinct requested.item_id) into v_selected_count
+    from unnest(p_inventory_item_ids) as requested(item_id)
+    join jsonb_array_elements(coalesce(v_state -> 'inventory', '[]'::jsonb)) as entry(item)
+      on entry.item ->> 'instanceId' = requested.item_id;
+  if v_selected_count <> cardinality(p_inventory_item_ids) then
+    raise exception 'One or more skins are no longer in inventory';
+  end if;
+
+  if exists (
+    select 1
+      from unnest(p_inventory_item_ids) with ordinality as requested(item_id, position)
+      cross join lateral (
+        select entry.item
+          from jsonb_array_elements(coalesce(v_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, inventory_position)
+         where entry.item ->> 'instanceId' = requested.item_id
+         order by entry.inventory_position
+         limit 1
+      ) as picked
+     where coalesce(picked.item ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$'
+  ) then
     raise exception 'Skin price is invalid';
   end if;
-  v_price := (v_skin ->> 'price')::numeric(14, 2);
+
+  select coalesce(jsonb_agg(picked.item order by requested.position), '[]'::jsonb),
+         coalesce(sum((picked.item ->> 'price')::numeric), 0)::numeric(14, 2)
+    into v_skins, v_price
+    from unnest(p_inventory_item_ids) with ordinality as requested(item_id, position)
+    cross join lateral (
+      select entry.item
+        from jsonb_array_elements(coalesce(v_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, inventory_position)
+       where entry.item ->> 'instanceId' = requested.item_id
+       order by entry.inventory_position
+       limit 1
+    ) as picked;
   if v_price <= 0 then raise exception 'Skin price must be positive'; end if;
 
   select coalesce(jsonb_agg(entry.item order by entry.ordinality), '[]'::jsonb)
     into v_inventory
     from jsonb_array_elements(coalesce(v_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, ordinality)
-   where entry.item ->> 'instanceId' <> p_inventory_item_id;
+   where not coalesce(entry.item ->> 'instanceId' = any(p_inventory_item_ids), false);
 
   update public.game_states
      set state = jsonb_set(v_state, '{inventory}', v_inventory, true), updated_at = now()
    where user_id = v_user_id;
 
   insert into public.skin_battles (creator_user_id, creator_name, creator_skin, bank_value)
-  select p.user_id, p.username, v_skin, v_price
+  select p.user_id, p.username, v_skins, v_price
     from public.profiles p
    where p.user_id = v_user_id
   returning id into v_battle_id;
@@ -99,12 +135,12 @@ begin
 end;
 $$;
 
-revoke all on function public.create_skin_battle(text) from public, anon;
-grant execute on function public.create_skin_battle(text) to authenticated;
+revoke all on function public.create_skin_battle(text[]) from public, anon;
+grant execute on function public.create_skin_battle(text[]) to authenticated;
 
 create or replace function public.join_skin_battle(
   p_battle_id uuid,
-  p_inventory_item_id text
+  p_inventory_item_ids text[]
 )
 returns jsonb
 language plpgsql
@@ -116,18 +152,26 @@ declare
   v_battle public.skin_battles%rowtype;
   v_guest_state jsonb;
   v_creator_state jsonb;
-  v_guest_skin jsonb;
+  v_guest_skins jsonb;
+  v_creator_skins jsonb;
   v_guest_inventory jsonb;
   v_winner_side text;
   v_winner_id uuid;
   v_winner_name text;
   v_guest_name text;
-  v_guest_price numeric(14, 2);
+  v_guest_price numeric(14, 2) := 0;
   v_bank_value numeric(14, 2);
+  v_selected_count integer;
 begin
   if v_user_id is null then raise exception 'Sign in required'; end if;
-  if nullif(trim(coalesce(p_inventory_item_id, '')), '') is null then
-    raise exception 'Choose a skin from inventory';
+  if coalesce(cardinality(p_inventory_item_ids), 0) < 1 or cardinality(p_inventory_item_ids) > 5 then
+    raise exception 'Choose between one and five skins';
+  end if;
+  if exists (select 1 from unnest(p_inventory_item_ids) as requested(item_id) where nullif(trim(requested.item_id), '') is null) then
+    raise exception 'Inventory item id is invalid';
+  end if;
+  if (select count(distinct requested.item_id) from unnest(p_inventory_item_ids) as requested(item_id)) <> cardinality(p_inventory_item_ids) then
+    raise exception 'The same inventory item cannot be selected twice';
   end if;
 
   select b.* into v_battle
@@ -151,24 +195,52 @@ begin
   select gs.state into v_creator_state from public.game_states gs where gs.user_id = v_battle.creator_user_id;
   if v_guest_state is null or v_creator_state is null then raise exception 'Game state not found'; end if;
 
-  select entry.item into v_guest_skin
-    from jsonb_array_elements(coalesce(v_guest_state -> 'inventory', '[]'::jsonb)) as entry(item)
-   where entry.item ->> 'instanceId' = p_inventory_item_id
-   limit 1;
-  if v_guest_skin is null then raise exception 'Skin is no longer in inventory'; end if;
-  if coalesce(v_guest_skin ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$' then
-    raise exception 'Skin price is invalid';
-  end if;
-  v_guest_price := (v_guest_skin ->> 'price')::numeric(14, 2);
-  if v_guest_price <= 0 then raise exception 'Skin price must be positive'; end if;
-  if v_guest_price < v_battle.bank_value * 0.95 then
-    raise exception 'Guest skin value must be at least 95%% of creator skin' using errcode = '22023';
+  select count(distinct requested.item_id) into v_selected_count
+    from unnest(p_inventory_item_ids) as requested(item_id)
+    join jsonb_array_elements(coalesce(v_guest_state -> 'inventory', '[]'::jsonb)) as entry(item)
+      on entry.item ->> 'instanceId' = requested.item_id;
+  if v_selected_count <> cardinality(p_inventory_item_ids) then
+    raise exception 'One or more skins are no longer in inventory';
   end if;
 
+  if exists (
+    select 1
+      from unnest(p_inventory_item_ids) with ordinality as requested(item_id, position)
+      cross join lateral (
+        select entry.item
+          from jsonb_array_elements(coalesce(v_guest_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, inventory_position)
+         where entry.item ->> 'instanceId' = requested.item_id
+         order by entry.inventory_position
+         limit 1
+      ) as picked
+     where coalesce(picked.item ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$'
+  ) then
+    raise exception 'Skin price is invalid';
+  end if;
+  select coalesce(jsonb_agg(picked.item order by requested.position), '[]'::jsonb),
+         coalesce(sum((picked.item ->> 'price')::numeric), 0)::numeric(14, 2)
+    into v_guest_skins, v_guest_price
+    from unnest(p_inventory_item_ids) with ordinality as requested(item_id, position)
+    cross join lateral (
+      select entry.item
+        from jsonb_array_elements(coalesce(v_guest_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, inventory_position)
+       where entry.item ->> 'instanceId' = requested.item_id
+       order by entry.inventory_position
+       limit 1
+    ) as picked;
+  if v_guest_price <= 0 then raise exception 'Skin price must be positive'; end if;
+  if v_guest_price < v_battle.bank_value * 0.95 then
+    raise exception 'Guest total skin value must be at least 95%% of creator stake' using errcode = '22023';
+  end if;
+
+  v_creator_skins := case
+    when jsonb_typeof(v_battle.creator_skin) = 'array' then v_battle.creator_skin
+    else jsonb_build_array(v_battle.creator_skin)
+  end;
   select coalesce(jsonb_agg(entry.item order by entry.ordinality), '[]'::jsonb)
     into v_guest_inventory
     from jsonb_array_elements(coalesce(v_guest_state -> 'inventory', '[]'::jsonb)) with ordinality as entry(item, ordinality)
-   where entry.item ->> 'instanceId' <> p_inventory_item_id;
+   where not coalesce(entry.item ->> 'instanceId' = any(p_inventory_item_ids), false);
 
   update public.game_states
      set state = jsonb_set(v_guest_state, '{inventory}', v_guest_inventory, true), updated_at = now()
@@ -177,7 +249,8 @@ begin
   select p.username into v_guest_name from public.profiles p where p.user_id = v_user_id;
   if v_guest_name is null then raise exception 'Player profile not found'; end if;
 
-  v_winner_side := case when random() < 0.5 then 'creator' else 'guest' end;
+  -- One uniform server-side draw: each side owns exactly half of the wheel.
+  v_winner_side := case when pg_catalog.random() < 0.5 then 'creator' else 'guest' end;
   if v_winner_side = 'creator' then
     v_winner_id := v_battle.creator_user_id;
     v_winner_name := v_battle.creator_name;
@@ -185,7 +258,7 @@ begin
        set state = jsonb_set(
          v_creator_state,
          '{inventory}',
-         coalesce(v_creator_state -> 'inventory', '[]'::jsonb) || jsonb_build_array(v_battle.creator_skin, v_guest_skin),
+         coalesce(v_creator_state -> 'inventory', '[]'::jsonb) || v_creator_skins || v_guest_skins,
          true
        ), updated_at = now()
      where user_id = v_battle.creator_user_id;
@@ -196,7 +269,7 @@ begin
        set state = jsonb_set(
          v_guest_state,
          '{inventory}',
-         v_guest_inventory || jsonb_build_array(v_battle.creator_skin, v_guest_skin),
+         v_guest_inventory || v_creator_skins || v_guest_skins,
          true
        ), updated_at = now()
      where user_id = v_user_id;
@@ -206,7 +279,7 @@ begin
   update public.skin_battles
      set guest_user_id = v_user_id,
          guest_name = v_guest_name,
-         guest_skin = v_guest_skin,
+         guest_skin = v_guest_skins,
          status = 'completed',
          winner_user_id = v_winner_id,
          winner_name = v_winner_name,
@@ -221,9 +294,9 @@ begin
     'creator_user_id', v_battle.creator_user_id,
     'guest_user_id', v_user_id,
     'creator_name', v_battle.creator_name,
-    'creator_skin', v_battle.creator_skin,
+    'creator_skin', v_creator_skins,
     'guest_name', v_guest_name,
-    'guest_skin', v_guest_skin,
+    'guest_skin', v_guest_skins,
     'winner_name', v_winner_name,
     'winner_side', v_winner_side,
     'winner_user_id', v_winner_id,
@@ -232,8 +305,8 @@ begin
 end;
 $$;
 
-revoke all on function public.join_skin_battle(uuid, text) from public, anon;
-grant execute on function public.join_skin_battle(uuid, text) to authenticated;
+revoke all on function public.join_skin_battle(uuid, text[]) from public, anon;
+grant execute on function public.join_skin_battle(uuid, text[]) to authenticated;
 
 create or replace function public.cancel_skin_battle(p_battle_id uuid)
 returns boolean
@@ -268,7 +341,11 @@ begin
      set state = jsonb_set(
        v_state,
        '{inventory}',
-       coalesce(v_state -> 'inventory', '[]'::jsonb) || jsonb_build_array(v_battle.creator_skin),
+       coalesce(v_state -> 'inventory', '[]'::jsonb) ||
+       case when jsonb_typeof(v_battle.creator_skin) = 'array'
+         then v_battle.creator_skin
+         else jsonb_build_array(v_battle.creator_skin)
+       end,
        true
      ), updated_at = now()
    where user_id = v_user_id;
@@ -341,3 +418,5 @@ $$;
 
 revoke all on function public.admin_debit_demo_credits(bigint, numeric) from public, anon;
 grant execute on function public.admin_debit_demo_credits(bigint, numeric) to authenticated;
+
+notify pgrst, 'reload schema';

@@ -400,7 +400,7 @@ let displayCurrency = (() => {
   try { return localStorage.getItem(CURRENCY_KEY) === 'USD' ? 'USD' : 'RUB'; } catch (e) { return 'RUB'; }
 })();
 let catalogMode = false;
-const marketSelection = new Set();
+const marketSelection = new Map();
 let stateSaveQueue = Promise.resolve();
 let state = {
   balance: 0,
@@ -432,7 +432,7 @@ let deferredBattleResults = new Set();
 let battleOutcomeQueue = [];
 let battleAnimationInProgress = false;
 let latestBattles = [];
-let selectedBattleSkinId = null;
+let selectedBattleSkinIds = new Set();
 let battlePickerMode = 'create';
 let battlePickerBattleId = null;
 let activeBattleRoom = null;
@@ -1535,12 +1535,11 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   card.className = 'inv-card' + (disabled ? ' disabled' : '');
   const rarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
   if (rarityColor) card.style.setProperty('--item-rarity-color', rarityColor);
-  const owned = source === 'catalog' && isInMyInventory(item.id);
   const isCurrentYearItem = item.releaseYear === catalogReleaseYear;
   const selected = source === 'catalog' && state.inventory.some(inv => inv.catalogId === item.id && state.betItemIds.includes(inv.instanceId));
-  const selectedForPurchase = source === 'catalog' && marketSelection.has(String(item.id));
+  const marketQuantity = source === 'catalog' ? Number(marketSelection.get(String(item.id)) || 0) : 0;
+  const selectedForPurchase = marketQuantity > 0;
   if (selected || selectedForPurchase) card.classList.add('active');
-  if (selectedForPurchase) card.classList.add('market-selected');
   const qualityParts = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect].filter(Boolean);
   if (item.floatMin != null && item.floatMax != null && item.floatMax > item.floatMin) {
     qualityParts.push(`${Number(item.floatMin).toFixed(2)}–${Number(item.floatMax).toFixed(2)}`);
@@ -1548,9 +1547,9 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   if (item.pattern && item.pattern !== item.name) qualityParts.push(item.pattern);
 
   card.innerHTML = `
-    ${owned ? '<div class="card-badge owned">✓</div>' : (selectedForPurchase ? '<div class="card-badge owned">✓</div>' : (source === 'catalog' ? `<div class="card-badge buy">${displayCurrency === 'USD' ? '$' : '₽'}</div>` : ''))}
+    ${source === 'catalog' ? '<div class="card-badge buy">$</div>' : ''}
     ${isCurrentYearItem ? `<div class="card-badge new">${escapeHtml(catalogReleaseYear)}</div>` : ''}
-    <div class="item-img"><img src="${escapeHtml(item.img || '')}" alt="" loading="lazy"></div>
+    <div class="item-img"><img src="${escapeHtml(item.img || '')}" alt="" loading="lazy">${selectedForPurchase ? `<span class="market-quantity-badge">×${marketQuantity}</span>` : ''}</div>
     <div class="item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
     <div class="item-price">${fmt(item.price)}</div>
     ${qualityParts.length ? `<div class="item-quality">${qualityParts.map(part => escapeHtml(part)).join(' · ')}</div>` : ''}
@@ -1561,37 +1560,35 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   return card;
 }
 
-function getMarketSelectionItems() {
+function getMarketSelectionEntries() {
   return [...marketSelection]
-    .map(id => SKINS_CATALOG.find(item => String(item.id) === id))
-    .filter(Boolean);
+    .map(([id, quantity]) => ({ item: SKINS_CATALOG.find(item => String(item.id) === id), quantity: Number(quantity) }))
+    .filter(entry => entry.item && entry.quantity > 0);
 }
 
 function marketSelectionTotal() {
-  return getMarketSelectionItems().reduce((sum, item) => sum + Number(item.price || 0), 0);
+  return getMarketSelectionEntries().reduce((sum, entry) => sum + Number(entry.item.price || 0) * entry.quantity, 0);
 }
 
 function updateBuySelectedButton() {
-  const items = getMarketSelectionItems();
-  const total = items.reduce((sum, item) => sum + Number(item.price || 0), 0);
-  buySelectedBtn.hidden = !catalogMode || !items.length;
-  buySelectedBtn.disabled = items.length === 0 || total > Number(state.balance || 0) + 1e-8;
-  buySelectedBtn.textContent = `Купить ${items.length} · ${fmt(total)}`;
+  const entries = getMarketSelectionEntries();
+  const quantity = entries.reduce((sum, entry) => sum + entry.quantity, 0);
+  const total = entries.reduce((sum, entry) => sum + Number(entry.item.price || 0) * entry.quantity, 0);
+  buySelectedBtn.hidden = !catalogMode || quantity === 0;
+  buySelectedBtn.disabled = quantity === 0 || total > Number(state.balance || 0) + 1e-8;
+  buySelectedBtn.textContent = `Купить ${quantity} · ${fmt(total)}`;
 }
 
 function toggleMarketSelection(item) {
   const id = String(item.id);
-  if (marketSelection.has(id)) {
-    marketSelection.delete(id);
-  } else {
-    const nextTotal = marketSelectionTotal() + Number(item.price || 0);
-    if (nextTotal > Number(state.balance || 0) + 1e-8) {
-      warningEl.textContent = `Не хватает баланса на этот выбор. Доступно ${fmt(state.balance)}.`;
-      warningEl.classList.add('show');
-      return;
-    }
-    marketSelection.add(id);
+  const price = Number(item.price || 0);
+  const nextTotal = marketSelectionTotal() + price;
+  if (!(price > 0) || nextTotal > Number(state.balance || 0) + 1e-8) {
+    warningEl.textContent = `Не хватает баланса на этот выбор. Доступно ${fmt(state.balance)}.`;
+    warningEl.classList.add('show');
+    return;
   }
+  marketSelection.set(id, Number(marketSelection.get(id) || 0) + 1);
   warningEl.classList.remove('show');
   renderInventory();
 }
@@ -1624,15 +1621,9 @@ function renderInventory() {
   const shown = items.slice(0, MAX_RENDER);
 
   shown.forEach((item, i) => {
-    const owned = isInMyInventory(item.id);
-    const disabled = owned && ((targetData && item.price > targetData.price) || (targetData && isSkinAlreadyStaked(item)));
-
     const card = buildCatalogCard(item, {
-      disabled, source: 'catalog',
-      onClick: () => {
-        if (owned) selectBet(state.inventory.find(inv => inv.catalogId === item.id));
-        else toggleMarketSelection(item);
-      }
+      disabled: false, source: 'catalog',
+      onClick: () => toggleMarketSelection(item)
     });
     card.style.animationDelay = (i * 0.005) + 's';
     inventoryGrid.appendChild(card);
@@ -1725,14 +1716,14 @@ function renderMyInventory() {
 function openBattlePicker(mode, battleId = null) {
   battlePickerMode = mode === 'join' ? 'join' : 'create';
   battlePickerBattleId = battlePickerMode === 'join' ? battleId : null;
-  selectedBattleSkinId = null;
-  battlePickerTitle.textContent = battlePickerMode === 'join' ? 'Выбери скин для входа' : 'Создать батл';
+  selectedBattleSkinIds.clear();
+  battlePickerTitle.textContent = battlePickerMode === 'join' ? 'Выбери скины для входа' : 'Создать батл';
   const battle = latestBattles.find(item => item.id === battlePickerBattleId);
   battlePickerHelp.textContent = battlePickerMode === 'join'
-    ? `Нужен предмет стоимостью не меньше ${fmt(minimumGuestStake(battle?.creator_skin?.price))}. Скин спишется из инвентаря до результата.`
-    : 'Выбери один скин. После создания он будет заблокирован до отмены или завершения батла.';
+    ? `Выбери от 1 до 5 скинов. Общая ставка должна быть не меньше 95% ставки создателя (${fmt(minimumGuestStake(getBattleStakeTotal(battle?.creator_skin)))}).`
+    : 'Выбери от 1 до 5 скинов. Предметы будут заблокированы до отмены или завершения батла.';
   battlePickerFeedback.textContent = '';
-  battlePickerStatus.textContent = 'Выбери предмет';
+  battlePickerStatus.textContent = 'Выбери от 1 до 5 предметов';
   battlePickerConfirm.textContent = battlePickerMode === 'join' ? 'Вступить в батл' : 'Создать батл';
   battlePickerModal.classList.add('show');
   battlePickerModal.setAttribute('aria-hidden', 'false');
@@ -1742,34 +1733,46 @@ function openBattlePicker(mode, battleId = null) {
 function closeBattlePicker() {
   battlePickerModal.classList.remove('show');
   battlePickerModal.setAttribute('aria-hidden', 'true');
-  selectedBattleSkinId = null;
+  selectedBattleSkinIds.clear();
 }
 
 function renderBattlePicker() {
   const battle = latestBattles.find(item => item.id === battlePickerBattleId);
-  const requiredPrice = battlePickerMode === 'join' ? minimumGuestStake(battle?.creator_skin?.price) : 0;
-  const available = state.inventory.filter(item => Number(item.price || 0) >= requiredPrice);
-  if (!available.some(item => item.instanceId === selectedBattleSkinId)) selectedBattleSkinId = null;
+  const requiredPrice = battlePickerMode === 'join' ? minimumGuestStake(getBattleStakeTotal(battle?.creator_skin)) : 0;
+  const available = state.inventory;
+  const availableIds = new Set(available.map(item => item.instanceId));
+  selectedBattleSkinIds = new Set([...selectedBattleSkinIds].filter(id => availableIds.has(id)));
   battlePickerGrid.innerHTML = '';
   if (!available.length) {
-    battlePickerGrid.innerHTML = `<div class="battle-empty">${battlePickerMode === 'join' ? 'В инвентаре нет скина нужной стоимости.' : 'Инвентарь пуст. Сначала добавь скин из каталога.'}</div>`;
+    battlePickerGrid.innerHTML = '<div class="battle-empty">Инвентарь пуст. Сначала добавь скин из каталога.</div>';
   } else {
     available.forEach(item => {
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = `battle-inventory-item${item.instanceId === selectedBattleSkinId ? ' selected' : ''}`;
-      card.setAttribute('aria-pressed', String(item.instanceId === selectedBattleSkinId));
+      const selected = selectedBattleSkinIds.has(item.instanceId);
+      card.className = `battle-inventory-item${selected ? ' selected' : ''}`;
+      card.setAttribute('aria-pressed', String(selected));
       card.innerHTML = `<img src="${escapeHtml(item.img || '')}" alt=""><span class="battle-inventory-name">${escapeHtml(item.name)}</span><span class="battle-inventory-price">${fmt(Number(item.price || 0))}</span>`;
       card.addEventListener('click', () => {
-        selectedBattleSkinId = item.instanceId;
+        if (selectedBattleSkinIds.has(item.instanceId)) {
+          selectedBattleSkinIds.delete(item.instanceId);
+          battlePickerFeedback.textContent = '';
+        } else if (selectedBattleSkinIds.size < 5) {
+          selectedBattleSkinIds.add(item.instanceId);
+          battlePickerFeedback.textContent = '';
+        } else battlePickerFeedback.textContent = 'В одном батле можно поставить максимум 5 скинов.';
         renderBattlePicker();
       });
       battlePickerGrid.appendChild(card);
     });
   }
-  const selected = state.inventory.find(item => item.instanceId === selectedBattleSkinId);
-  battlePickerStatus.textContent = selected ? `Выбран: ${selected.name} · ${fmt(Number(selected.price || 0))}` : 'Выбери предмет';
-  battlePickerConfirm.disabled = !selected;
+  const selected = state.inventory.filter(item => selectedBattleSkinIds.has(item.instanceId));
+  const selectedTotal = selected.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  const enoughForJoin = battlePickerMode !== 'join' || selectedTotal + 1e-8 >= requiredPrice;
+  battlePickerStatus.textContent = selected.length
+    ? `Выбрано ${selected.length}/5 · сумма ${fmt(selectedTotal)}${battlePickerMode === 'join' ? ` · минимум ${fmt(requiredPrice)}` : ''}`
+    : `Выбери от 1 до 5 предметов${battlePickerMode === 'join' ? ` · минимум ${fmt(requiredPrice)}` : ''}`;
+  battlePickerConfirm.disabled = selected.length === 0 || !enoughForJoin;
 }
 
 openCreateBattleBtn.addEventListener('click', () => openBattlePicker('create'));
@@ -1778,6 +1781,21 @@ battlePickerModal.addEventListener('click', event => { if (event.target === batt
 
 function minimumGuestStake(creatorPrice) {
   return Math.ceil(Number(creatorPrice || 0) * 95 - 1e-7) / 100;
+}
+
+function getBattleStakeItems(stake) {
+  if (Array.isArray(stake)) return stake.filter(item => item && typeof item === 'object');
+  return stake && typeof stake === 'object' ? [stake] : [];
+}
+
+function getBattleStakeTotal(stake) {
+  return getBattleStakeItems(stake).reduce((sum, item) => sum + Number(item.price || 0), 0);
+}
+
+function renderBattleStakeItems(stake, emptyText = 'Ожидает входа') {
+  const items = getBattleStakeItems(stake);
+  if (!items.length) return `<span>${escapeHtml(emptyText)}</span>`;
+  return `<div class="battle-stake-items">${items.map(item => `<div class="battle-stake-item"><img src="${escapeHtml(item.img || '')}" alt=""><span title="${escapeHtml(item.name || 'Скин')}">${escapeHtml(item.name || 'Скин')}</span><small>${fmt(Number(item.price || 0))}</small></div>`).join('')}</div>`;
 }
 
 function drawBattleWheel() {
@@ -1807,6 +1825,14 @@ function drawBattleWheel() {
   battleWheelCtx.beginPath();
   battleWheelCtx.arc(cx, cy, radius - 4, 0, Math.PI * 2);
   battleWheelCtx.stroke();
+  battleWheelCtx.save();
+  battleWheelCtx.fillStyle = '#101010';
+  battleWheelCtx.font = '700 15px Arial';
+  battleWheelCtx.textAlign = 'center';
+  battleWheelCtx.textBaseline = 'middle';
+  battleWheelCtx.fillText('СОЗДАТЕЛЬ', cx - radius * 0.46, cy);
+  battleWheelCtx.fillText('ГОСТЬ', cx + radius * 0.46, cy);
+  battleWheelCtx.restore();
 }
 
 const battleProfileCache = new Map();
@@ -1839,19 +1865,17 @@ function setBattleAvatar(imageId, fallbackId, avatarUrl) {
 async function renderBattleRoom(battle) {
   if (!battle) return;
   activeBattleRoom = battle;
-  battleRoomBank.textContent = fmt(Number(battle.bank_value || battle.creator_skin?.price || 0));
+  battleRoomBank.textContent = fmt(Number(battle.bank_value || getBattleStakeTotal(battle.creator_skin) + getBattleStakeTotal(battle.guest_skin)));
   const creatorProfile = await getBattleParticipantProfile(battle.creator_user_id).catch(() => null);
   const guestProfile = battle.guest_user_id ? await getBattleParticipantProfile(battle.guest_user_id).catch(() => null) : null;
   $('battleCreatorName').textContent = creatorProfile?.username || battle.creator_name || 'Создатель';
   setBattleAvatar('battleCreatorAvatar', 'battleCreatorAvatarFallback', creatorProfile?.avatar);
-  $('battleCreatorSkinImage').src = battle.creator_skin?.img || '';
-  $('battleCreatorSkinName').textContent = battle.creator_skin?.name || 'Скин';
-  $('battleCreatorSkinPrice').textContent = fmt(Number(battle.creator_skin?.price || 0));
+  $('battleCreatorSkins').innerHTML = renderBattleStakeItems(battle.creator_skin, 'Нет скинов');
+  $('battleCreatorSkinPrice').textContent = fmt(getBattleStakeTotal(battle.creator_skin));
   $('battleGuestName').textContent = guestProfile?.username || battle.guest_name || 'Ждём гостя';
   setBattleAvatar('battleGuestAvatar', 'battleGuestAvatarFallback', guestProfile?.avatar);
-  $('battleGuestSkinImage').src = battle.guest_skin?.img || '';
-  $('battleGuestSkinName').textContent = battle.guest_skin?.name || 'Ожидает входа';
-  $('battleGuestSkinPrice').textContent = battle.guest_skin ? fmt(Number(battle.guest_skin.price || 0)) : '—';
+  $('battleGuestSkins').innerHTML = renderBattleStakeItems(battle.guest_skin);
+  $('battleGuestSkinPrice').textContent = battle.guest_skin ? fmt(getBattleStakeTotal(battle.guest_skin)) : '—';
   battleRoomCancel.hidden = battle.status !== 'waiting' || battle.creator_user_id !== currentUser?.id;
   if (battle.status === 'waiting') {
     battleRoomStatus.textContent = 'Ожидание соперника';
@@ -1889,7 +1913,10 @@ function closeBattleRoom() {
 function spinBattleWheel(battle) {
   battleRoomStatus.textContent = 'Колесо крутится';
   battleResult.textContent = 'Колесо прокручивается…';
-  const targetAngle = battle.winner_side === 'creator' ? 90 : 270;
+  const winnerSide = battle.winner_side === 'creator' ? 'creator' : 'guest';
+  const sliceCenter = winnerSide === 'creator' ? 180 : 0;
+  const pointerAngle = 270;
+  const targetAngle = (pointerAngle - sliceCenter + 360) % 360;
   const startAngle = battleWheelAngle % 360;
   const delta = ((targetAngle - startAngle + 360) % 360) + 5 * 360;
   battleWheelAngle += delta;
@@ -1977,12 +2004,12 @@ function showBattleOutcome(battle) {
 }
 
 function renderBattleCard(battle, archived = false) {
-  const creatorSkin = battle.creator_skin || {};
-  const guestSkin = battle.guest_skin || {};
+  const creatorSkins = getBattleStakeItems(battle.creator_skin);
+  const guestSkins = getBattleStakeItems(battle.guest_skin);
   const waiting = battle.status === 'waiting';
   const ownBattle = battle.creator_user_id === currentUser.id;
   const outcomeDeferred = battle.status === 'completed' && deferredBattleResults.has(battle.id);
-  const bankValue = Number(battle.bank_value || Number(creatorSkin.price || 0) + Number(guestSkin.price || 0));
+  const bankValue = Number(battle.bank_value || getBattleStakeTotal(battle.creator_skin) + getBattleStakeTotal(battle.guest_skin));
   let action = '';
   if (waiting && ownBattle) {
     action = `<button type="button" class="btn-small" data-battle-action="view" data-battle-id="${escapeHtml(battle.id)}">Открыть свою комнату</button>`;
@@ -1993,16 +2020,16 @@ function renderBattleCard(battle, archived = false) {
   } else {
     action = '<div class="battle-winner-line">Батл отменён</div>';
   }
-  const guestContent = guestSkin.name
-    ? `<img src="${escapeHtml(guestSkin.img || '')}" alt=""><span>${escapeHtml(guestSkin.name)}</span><small>${fmt(Number(guestSkin.price || 0))}</small>`
+  const guestContent = guestSkins.length
+    ? renderBattleStakeItems(guestSkins)
     : '<span>Ожидает гостя</span>';
   const stateLabel = waiting ? (ownBattle ? 'Ожидание' : 'Открыт') : (outcomeDeferred ? 'Колесо крутится…' : battle.status === 'completed' ? 'Завершён' : 'Отменён');
   return `<article class="battle-card ${waiting ? 'battle-open' : 'battle-finished'} ${archived ? 'archive-card' : ''}">
     <div class="battle-card-head"><span>Батл ${escapeHtml(String(battle.id).slice(0, 8))}</span><span>${stateLabel}</span></div>
     <div class="battle-matchup">
-      <div class="battle-side creator-side"><span class="battle-side-label">Создатель · зелёная</span><strong>${escapeHtml(battle.creator_name || 'Игрок')}</strong><img src="${escapeHtml(creatorSkin.img || '')}" alt=""><span>${escapeHtml(creatorSkin.name || 'Скин')}</span><small>${fmt(Number(creatorSkin.price || 0))}</small></div>
+      <div class="battle-side creator-side"><span class="battle-side-label">Создатель · зелёная</span><strong>${escapeHtml(battle.creator_name || 'Игрок')}</strong>${renderBattleStakeItems(creatorSkins, 'Нет скинов')}<small>Ставка ${fmt(getBattleStakeTotal(creatorSkins))}</small></div>
       <div class="battle-vs"><strong>VS</strong><span>Банк<br>${fmt(bankValue)}</span></div>
-      <div class="battle-side guest-side ${guestSkin.name ? '' : 'waiting-side'}"><span class="battle-side-label">Гость · белая</span><strong>${escapeHtml(battle.guest_name || 'Гость')}</strong>${guestContent}</div>
+      <div class="battle-side guest-side ${guestSkins.length ? '' : 'waiting-side'}"><span class="battle-side-label">Гость · белая</span><strong>${escapeHtml(battle.guest_name || 'Гость')}</strong>${guestContent}${guestSkins.length ? `<small>Ставка ${fmt(getBattleStakeTotal(guestSkins))}</small>` : ''}</div>
     </div>
     <div class="battle-card-actions">${action}</div>
   </article>`;
@@ -2087,13 +2114,14 @@ async function recoverBattleAfterCancelFailure(room) {
 }
 
 battlePickerConfirm.addEventListener('click', async () => {
-  const selectedStake = state.inventory.find(item => item.instanceId === selectedBattleSkinId);
-  if (!selectedStake) return;
+  const selectedStakes = state.inventory.filter(item => selectedBattleSkinIds.has(item.instanceId));
+  const selectedTotal = selectedStakes.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  if (!selectedStakes.length || selectedStakes.length > 5) return;
   battlePickerConfirm.disabled = true;
   battlePickerFeedback.textContent = battlePickerMode === 'join' ? 'Вступаю в батл…' : 'Создаю батл…';
   if (battlePickerMode === 'create') {
-    const creatorSkin = { ...selectedStake };
-    const { data: battleId, error } = await supabaseClient.rpc('create_skin_battle', { p_inventory_item_id: selectedStake.instanceId });
+    const creatorSkins = selectedStakes.map(item => ({ ...item }));
+    const { data: battleId, error } = await supabaseClient.rpc('create_skin_battle', { p_inventory_item_ids: selectedStakes.map(item => item.instanceId) });
     if (error) {
       battlePickerFeedback.textContent = String(error.message || '').includes('Could not find the function')
         ? 'Выполни SQL из папки supabase, чтобы включить батлы.'
@@ -2109,19 +2137,19 @@ battlePickerConfirm.addEventListener('click', async () => {
     await loadBattles();
     const battle = latestBattles.find(item => String(item.id) === String(battleId)) || {
       id: battleId, creator_user_id: currentUser.id, creator_name: currentUser.username,
-      creator_skin: creatorSkin, bank_value: Number(creatorSkin.price || 0), status: 'waiting'
+      creator_skin: creatorSkins, bank_value: selectedTotal, status: 'waiting'
     };
     openBattleRoom(battle);
   } else {
     const battle = latestBattles.find(item => item.id === battlePickerBattleId);
-    if (!battle || Number(selectedStake.price || 0) + 1e-8 < minimumGuestStake(battle.creator_skin?.price)) {
-      battlePickerFeedback.textContent = 'Выбранный скин не подходит по минимальной цене.';
+    if (!battle || selectedTotal + 1e-8 < minimumGuestStake(getBattleStakeTotal(battle.creator_skin))) {
+      battlePickerFeedback.textContent = 'Сумма выбранных скинов должна быть не меньше 95% ставки создателя.';
       battlePickerConfirm.disabled = false;
       return;
     }
     const { data, error } = await supabaseClient.rpc('join_skin_battle', {
       p_battle_id: battlePickerBattleId,
-      p_inventory_item_id: selectedStake.instanceId
+      p_inventory_item_ids: selectedStakes.map(item => item.instanceId)
     });
     if (error) {
       const message = String(error.message || '').toLowerCase();
@@ -2249,20 +2277,21 @@ function selectTarget(item) {
 // ============================================================
 // МОДАЛКА ПОКУПКИ
 // ============================================================
-function openBuyModal(items) {
-  const selectedItems = (Array.isArray(items) ? items : [items]).filter(Boolean);
-  if (!selectedItems.length) return;
-  const total = selectedItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+function openBuyModal(entries) {
+  const selectedEntries = (Array.isArray(entries) ? entries : []).filter(entry => entry?.item && Number(entry.quantity) > 0);
+  if (!selectedEntries.length) return;
+  const quantity = selectedEntries.reduce((sum, entry) => sum + Number(entry.quantity), 0);
+  const total = selectedEntries.reduce((sum, entry) => sum + Number(entry.item.price || 0) * Number(entry.quantity), 0);
   if (total > Number(state.balance || 0) + 1e-8) {
     warningEl.textContent = 'Выбранные предметы дороже денежного баланса.';
     warningEl.classList.add('show');
     return;
   }
-  pendingBuy = { items: selectedItems };
-  modalTitle.textContent = selectedItems.length === 1 ? 'Добавить предмет?' : `Купить предметы (${selectedItems.length})?`;
-  modalItem.innerHTML = selectedItems.length === 1
-    ? `<img src="${escapeHtml(selectedItems[0].img || '')}" alt=""><div class="item-name">${escapeHtml(selectedItems[0].name)}</div>`
-    : `<div class="purchase-batch-list">${selectedItems.map(item => `<div class="purchase-batch-item"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name)}</span><strong>${fmt(item.price)}</strong></div>`).join('')}</div>`;
+  pendingBuy = { entries: selectedEntries };
+  modalTitle.textContent = quantity === 1 ? 'Добавить предмет?' : `Купить предметы (${quantity})?`;
+  modalItem.innerHTML = quantity === 1
+    ? `<img src="${escapeHtml(selectedEntries[0].item.img || '')}" alt=""><div class="item-name">${escapeHtml(selectedEntries[0].item.name)}</div>`
+    : `<div class="purchase-batch-list">${selectedEntries.map(({ item, quantity: count }) => `<div class="purchase-batch-item"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name)} ×${count}</span><strong>${fmt(Number(item.price || 0) * count)}</strong></div>`).join('')}</div>`;
   modalPrice.textContent = fmt(total);
   modalConfirm.textContent = `Купить за ${fmt(total)}`;
   buyModal.classList.add('show');
@@ -2274,15 +2303,15 @@ function closeBuyModal() {
 }
 
 modalCancel.addEventListener('click', closeBuyModal);
-buySelectedBtn.addEventListener('click', () => openBuyModal(getMarketSelectionItems()));
+buySelectedBtn.addEventListener('click', () => openBuyModal(getMarketSelectionEntries()));
 buyModal.addEventListener('click', (e) => {
   if (e.target === buyModal) closeBuyModal();
 });
 
 modalConfirm.addEventListener('click', async () => {
   if (!pendingBuy) return;
-  const { items } = pendingBuy;
-  const total = items.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  const { entries } = pendingBuy;
+  const total = entries.reduce((sum, entry) => sum + Number(entry.item.price || 0) * Number(entry.quantity), 0);
 
   if (!await spendBalance(total)) {
     warningEl.textContent = '⚠ Недостаточно средств или нет связи с базой';
@@ -2292,22 +2321,26 @@ modalConfirm.addEventListener('click', async () => {
     return;
   }
 
-  state.inventory.push(...items.map(item => ({
-    instanceId: makeInstanceId(),
-    catalogId: item.id,
-    name: item.name,
-    price: item.price,
-    img: item.img,
-    rarity: item.rarity,
-    catalogType: item.catalogType,
-    wear: item.wear,
-    floatMin: item.floatMin,
-    floatMax: item.floatMax,
-    stattrak: item.stattrak,
-    souvenir: item.souvenir,
-    effect: item.effect,
-    pattern: item.pattern
-  })));
+  entries.forEach(({ item, quantity }) => {
+    for (let copy = 0; copy < quantity; copy += 1) {
+      state.inventory.push({
+        instanceId: makeInstanceId(),
+        catalogId: item.id,
+        name: item.name,
+        price: item.price,
+        img: item.img,
+        rarity: item.rarity,
+        catalogType: item.catalogType,
+        wear: item.wear,
+        floatMin: item.floatMin,
+        floatMax: item.floatMax,
+        stattrak: item.stattrak,
+        souvenir: item.souvenir,
+        effect: item.effect,
+        pattern: item.pattern
+      });
+    }
+  });
   await saveState();
   marketSelection.clear();
   renderMyInventory();
