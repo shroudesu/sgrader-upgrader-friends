@@ -1103,9 +1103,13 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .custom-skin-admin-list { display: grid; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 8px; margin-top: 12px; }
 .custom-skin-admin-item { min-width: 0; display: grid; grid-template-columns: 58px minmax(0,1fr); align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); }
 .custom-skin-admin-item img { width: 58px; height: 42px; object-fit: contain; }
-.custom-skin-admin-item div { min-width: 0; display: grid; gap: 3px; }
+.custom-skin-admin-copy { min-width: 0; display: grid; gap: 3px; }
 .custom-skin-admin-item strong { overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .custom-skin-admin-item span { color: var(--success); font-size: 10px; }
+.custom-skin-admin-actions { grid-column: 1 / -1; display: flex !important; justify-content: flex-end; gap: 6px !important; }
+.custom-skin-admin-actions .btn-small { min-height: 29px; padding: 5px 9px; font-size: 9px; }
+.custom-skin-form-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.custom-skin-form-actions [hidden] { display: none !important; }
 @keyframes case-scroll-appear { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .case-result-enter { animation: case-scroll-appear .48s ease-out both; }
 
@@ -1113,7 +1117,7 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
   .custom-skin-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .custom-skin-file-label { grid-column: 1 / -1; }
   .custom-skin-preview { grid-column: 1; }
-  .custom-skin-form > button { grid-column: 2; }
+  .custom-skin-form-actions { grid-column: 2; }
   .battle-room-wheel-wrap { width: 210px; height: 210px; }
 }
 @media (min-width: 641px) and (max-width: 920px) {

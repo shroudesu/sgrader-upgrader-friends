@@ -545,6 +545,7 @@ const adminCustomSkinQualityColor = document.getElementById('adminCustomSkinQual
 const adminCustomSkinImage = document.getElementById('adminCustomSkinImage');
 const adminCustomSkinPreview = document.getElementById('adminCustomSkinPreview');
 const adminCustomSkinSave = document.getElementById('adminCustomSkinSave');
+const adminCustomSkinCancel = document.getElementById('adminCustomSkinCancel');
 const adminCustomSkinFeedback = document.getElementById('adminCustomSkinFeedback');
 const adminCustomSkinList = document.getElementById('adminCustomSkinList');
 const caseSkipAnimationToggle = document.getElementById('caseSkipAnimation');
@@ -765,6 +766,8 @@ let caseImageUrl = '';
 let caseImagePreviewObjectUrl = null;
 let caseImageUploadInProgress = false;
 let customSkinPreviewObjectUrl = null;
+let activeCustomSkinEditId = null;
+let activeCustomSkinImagePath = '';
 let caseOpeningInProgress = false;
 let caseSkipAnimation = false;
 let caseAnimationInProgress = false;
@@ -3255,9 +3258,46 @@ adminCustomSkinImage.addEventListener('change', () => {
   adminCustomSkinPreview.hidden = false;
 });
 
+adminCustomSkinCancel.addEventListener('click', () => resetCustomSkinEditor());
+
+adminCustomSkinList.addEventListener('click', event => {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  const editButton = event.target.closest('[data-custom-skin-edit]');
+  if (editButton) {
+    const item = SKINS_CATALOG.find(entry => entry.isCustomSkin && entry.sourceItemId === `custom_${editButton.dataset.customSkinEdit}`);
+    if (item) openCustomSkinEditor(item);
+    return;
+  }
+
+  const deleteButton = event.target.closest('[data-custom-skin-delete]');
+  if (!deleteButton) return;
+  const id = deleteButton.dataset.customSkinDelete;
+  const item = SKINS_CATALOG.find(entry => entry.isCustomSkin && entry.sourceItemId === `custom_${id}`);
+  if (!id || !item) return;
+  openConfirm('Удалить пользовательский скин?', `«${item.name}» будет удалён из общего каталога. Предметы, уже находящиеся в инвентарях игроков, останутся там.`, async () => {
+    deleteButton.disabled = true;
+    const { error } = await supabaseClient.from('custom_catalog_skins').delete().eq('id', id);
+    if (error) {
+      adminCustomSkinFeedback.textContent = `Не удалось удалить скин: ${String(error.message || 'ошибка базы').slice(0, 160)}`;
+      deleteButton.disabled = false;
+      console.error('Could not delete custom catalog skin:', error);
+      return;
+    }
+    if (item.imagePath) {
+      const { error: storageError } = await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).remove([item.imagePath]);
+      if (storageError) console.warn('Custom skin record was deleted, but its image could not be removed:', storageError);
+    }
+    if (activeCustomSkinEditId === id) resetCustomSkinEditor();
+    adminCustomSkinFeedback.textContent = 'Скин удалён из общего каталога.';
+    await loadCustomCatalogSkins();
+    if (!adminCaseForm.hidden) renderCaseSkinResults();
+  });
+});
+
 adminCustomSkinForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (!currentUser || currentUser.role !== 'admin' || !supabaseClient) return;
+  const editing = Boolean(activeCustomSkinEditId);
   const name = adminCustomSkinName.value.trim();
   const quality = adminCustomSkinQuality.value.trim();
   const price = amountToRub(Number(adminCustomSkinPrice.value));
@@ -3267,46 +3307,70 @@ adminCustomSkinForm.addEventListener('submit', async event => {
     adminCustomSkinFeedback.textContent = 'Проверь название, цену, качество и его цвет.';
     return;
   }
-  if (!file || !['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > CUSTOM_SKIN_IMAGE_MAX_BYTES) {
-    adminCustomSkinFeedback.textContent = 'Добавь PNG, JPEG или WebP размером до 5 МБ.';
+  if (file && (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > CUSTOM_SKIN_IMAGE_MAX_BYTES)) {
+    adminCustomSkinFeedback.textContent = 'Выбери PNG, JPEG или WebP размером до 5 МБ.';
+    return;
+  }
+  if (!editing && !file) {
+    adminCustomSkinFeedback.textContent = 'Добавь изображение PNG, JPEG или WebP размером до 5 МБ.';
     return;
   }
 
   adminCustomSkinSave.disabled = true;
-  adminCustomSkinFeedback.textContent = 'Загружаю изображение и сохраняю скин…';
+  adminCustomSkinCancel.disabled = true;
+  adminCustomSkinFeedback.textContent = editing ? 'Сохраняю изменения…' : 'Загружаю изображение и сохраняю скин…';
   let uploadedPath = '';
+  let uploadedImageUrl = '';
   try {
-    const extension = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/webp' ? 'webp' : 'png';
-    uploadedPath = `${currentUser.id}/${makeInstanceId()}.${extension}`;
-    const { data: upload, error: uploadError } = await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).upload(uploadedPath, file, {
-      contentType: file.type, cacheControl: '3600', upsert: false
-    });
-    if (uploadError) throw uploadError;
-    const imageUrl = supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).getPublicUrl(upload.path).data.publicUrl;
-    const { error } = await supabaseClient.from('custom_catalog_skins').insert({
-      created_by: currentUser.id,
+    if (file) {
+      const extension = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/webp' ? 'webp' : 'png';
+      uploadedPath = `${currentUser.id}/${makeInstanceId()}.${extension}`;
+      const { data: upload, error: uploadError } = await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).upload(uploadedPath, file, {
+        contentType: file.type, cacheControl: '3600', upsert: false
+      });
+      if (uploadError) throw uploadError;
+      uploadedPath = upload.path;
+      uploadedImageUrl = supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).getPublicUrl(upload.path).data.publicUrl;
+    }
+
+    const values = {
       name,
       price,
       quality,
       quality_color: qualityColor,
-      image_url: imageUrl,
-      image_path: upload.path,
-    });
-    if (error) throw error;
-    adminCustomSkinForm.reset();
-    adminCustomSkinQualityColor.value = '#d32ce6';
-    if (customSkinPreviewObjectUrl) URL.revokeObjectURL(customSkinPreviewObjectUrl);
-    customSkinPreviewObjectUrl = null;
-    adminCustomSkinPreview.hidden = true;
-    adminCustomSkinPreview.removeAttribute('src');
-    adminCustomSkinFeedback.textContent = 'Скин добавлен в общий каталог.';
+    };
+    let saveError;
+    if (editing) {
+      if (file) {
+        values.image_url = uploadedImageUrl;
+        values.image_path = uploadedPath;
+      }
+      ({ error: saveError } = await supabaseClient.from('custom_catalog_skins').update(values).eq('id', activeCustomSkinEditId));
+    } else {
+      ({ error: saveError } = await supabaseClient.from('custom_catalog_skins').insert({
+        created_by: currentUser.id,
+        ...values,
+        image_url: uploadedImageUrl,
+        image_path: uploadedPath,
+      }));
+    }
+    if (saveError) throw saveError;
+
+    const previousImagePath = activeCustomSkinImagePath;
+    if (editing && file && previousImagePath && previousImagePath !== uploadedPath) {
+      const { error: oldImageError } = await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).remove([previousImagePath]);
+      if (oldImageError) console.warn('Custom skin was updated, but the previous image could not be removed:', oldImageError);
+    }
+
+    resetCustomSkinEditor({ keepFeedback: true });
+    adminCustomSkinFeedback.textContent = editing ? 'Изменения скина сохранены.' : 'Скин добавлен в общий каталог.';
     await loadCustomCatalogSkins();
     if (!adminCaseForm.hidden) renderCaseSkinResults();
   } catch (error) {
     if (uploadedPath) await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).remove([uploadedPath]).catch(() => {});
     const errorMessage = String(error.message || 'Неизвестная ошибка').replace(/\s+/g, ' ').slice(0, 180);
     if (/permission denied for table custom_catalog_skins/i.test(errorMessage)) {
-      adminCustomSkinFeedback.textContent = 'Выполни обновлённую supabase/site-shared-features.sql: она выдаёт право INSERT, а RLS оставляет добавление только администратору.';
+      adminCustomSkinFeedback.textContent = 'Выполни обновлённую supabase/site-shared-features.sql: она выдаёт права добавления, изменения и удаления, а RLS оставляет их только администратору.';
     } else if (/bucket|storage|row-level security/i.test(errorMessage)) {
       adminCustomSkinFeedback.textContent = `Ошибка загрузки изображения. Проверь bucket custom-skin-images и политику администратора: ${errorMessage}`;
     } else if (/custom_catalog_skins|schema cache|does not exist/i.test(errorMessage)) {
@@ -3317,6 +3381,7 @@ adminCustomSkinForm.addEventListener('submit', async event => {
     console.error('Could not save custom catalog skin:', error);
   } finally {
     adminCustomSkinSave.disabled = false;
+    adminCustomSkinCancel.disabled = false;
   }
 });
 casesGrid.addEventListener('click', event => {
@@ -3779,14 +3844,56 @@ function renderCustomSkinAdminList(items = SKINS_CATALOG.filter(item => item.isC
   }
   adminCustomSkinList.innerHTML = items.map(item => `<article class="custom-skin-admin-item">
     <img src="${escapeHtml(item.img || '')}" alt="" loading="lazy">
-    <div><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span>${fmt(Number(item.price || 0))} · ${escapeHtml(item.rarity?.name || 'Без качества')}</span></div>
+    <div class="custom-skin-admin-copy"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span>${fmt(Number(item.price || 0))} · ${escapeHtml(item.rarity?.name || 'Без качества')}</span></div>
+    <div class="custom-skin-admin-actions"><button type="button" class="btn-small" data-custom-skin-edit="${escapeHtml(item.sourceItemId.replace(/^custom_/, ''))}">Изменить</button><button type="button" class="btn-small danger" data-custom-skin-delete="${escapeHtml(item.sourceItemId.replace(/^custom_/, ''))}">Удалить</button></div>
   </article>`).join('');
+}
+
+function clearCustomSkinPreview() {
+  if (customSkinPreviewObjectUrl) URL.revokeObjectURL(customSkinPreviewObjectUrl);
+  customSkinPreviewObjectUrl = null;
+  adminCustomSkinPreview.hidden = true;
+  adminCustomSkinPreview.removeAttribute('src');
+}
+
+function resetCustomSkinEditor({ keepFeedback = false } = {}) {
+  activeCustomSkinEditId = null;
+  activeCustomSkinImagePath = '';
+  adminCustomSkinForm.reset();
+  adminCustomSkinQualityColor.value = '#d32ce6';
+  adminCustomSkinImage.required = true;
+  adminCustomSkinSave.textContent = 'Добавить скин';
+  adminCustomSkinCancel.hidden = true;
+  adminCustomSkinImage.value = '';
+  clearCustomSkinPreview();
+  if (!keepFeedback) adminCustomSkinFeedback.textContent = '';
+}
+
+function openCustomSkinEditor(item) {
+  if (!item?.isCustomSkin || currentUser?.role !== 'admin') return;
+  clearCustomSkinPreview();
+  activeCustomSkinEditId = item.sourceItemId.replace(/^custom_/, '');
+  activeCustomSkinImagePath = item.imagePath || '';
+  adminCustomSkinName.value = item.name || '';
+  adminCustomSkinPrice.value = displayCurrency === 'USD'
+    ? (Number(item.price || 0) / RUB_PER_USD).toFixed(2)
+    : String(item.price || '');
+  adminCustomSkinQuality.value = item.rarity?.name || '';
+  adminCustomSkinQualityColor.value = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '#a0a0a0';
+  adminCustomSkinImage.value = '';
+  adminCustomSkinImage.required = false;
+  adminCustomSkinSave.textContent = 'Сохранить изменения';
+  adminCustomSkinCancel.hidden = false;
+  adminCustomSkinPreview.src = item.img || '';
+  adminCustomSkinPreview.hidden = !item.img;
+  adminCustomSkinFeedback.textContent = 'Изображение можно оставить прежним или выбрать новое.';
+  adminCustomSkinForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 async function loadCustomCatalogSkins({ render = true } = {}) {
   if (!supabaseClient) return [];
   const { data, error } = await supabaseClient.from('custom_catalog_skins')
-    .select('id,name,price,quality,quality_color,image_url,created_at')
+    .select('id,name,price,quality,quality_color,image_url,image_path,created_at')
     .order('created_at', { ascending: false });
   if (error) {
     if (currentUser?.role === 'admin' && adminCustomSkinList) {
@@ -3813,6 +3920,7 @@ async function loadCustomCatalogSkins({ render = true } = {}) {
     category: 'Пользовательские скины',
     catalogType: 'skin',
     sourceItemId: `custom_${row.id}`,
+    imagePath: String(row.image_path || ''),
     isCustomSkin: true,
   }));
   SKINS_CATALOG = SKINS_CATALOG.filter(item => !item.isCustomSkin).concat(customItems);

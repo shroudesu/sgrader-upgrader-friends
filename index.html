@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
   <link rel="icon" type="image/png" href="newlogo.png">
-  <link rel="stylesheet" href="style.css?v=20261107-r17">
+  <link rel="stylesheet" href="style.css?v=20261107-r18">
 </head>
 <body>
 
@@ -446,9 +446,9 @@
         <label>Цена (<span data-currency-symbol>₽</span>)<input type="number" id="adminCustomSkinPrice" min="0.01" max="1000000000" step="0.01" required></label>
         <label>Качество<input type="text" id="adminCustomSkinQuality" maxlength="40" required placeholder="Например, Covert"></label>
         <label>Цвет качества<input type="color" id="adminCustomSkinQualityColor" value="#d32ce6" aria-label="Цвет качества"></label>
-        <label class="custom-skin-file-label">Изображение<input type="file" id="adminCustomSkinImage" accept="image/png,image/jpeg,image/webp" required></label>
+        <label class="custom-skin-file-label">Изображение<input type="file" id="adminCustomSkinImage" accept="image/png,image/jpeg,image/webp"></label>
         <img class="custom-skin-preview" id="adminCustomSkinPreview" alt="Предпросмотр скина" hidden>
-        <button class="btn-small" type="submit" id="adminCustomSkinSave">Добавить скин</button>
+        <div class="custom-skin-form-actions"><button class="btn-small" type="submit" id="adminCustomSkinSave">Добавить скин</button><button class="btn-small" type="button" id="adminCustomSkinCancel" hidden>Отмена</button></div>
         <div class="custom-skin-feedback" id="adminCustomSkinFeedback" role="status" aria-live="polite"></div>
       </form>
       <div class="custom-skin-admin-list" id="adminCustomSkinList"><div class="case-empty">Загрузка пользовательских скинов…</div></div>
@@ -604,6 +604,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
-<script src="script.js?v=20261107-r17"></script>
+<script src="script.js?v=20261107-r18"></script>
 </body>
 </html>
