@@ -70,8 +70,12 @@
   </div>
 
   <div class="balance">
-    <span class="balance-label">Баланс</span>
+    <span class="balance-label">Денежный баланс</span>
     <span class="balance-value" id="balance">0.00</span>
+  </div>
+  <div class="balance inventory-balance-summary">
+    <span class="balance-label">Баланс инвентаря</span>
+    <span class="balance-value" id="inventoryBalance">0.00</span>
   </div>
 </header>
 
@@ -86,7 +90,7 @@
         <div class="panel upgrade-inventory-panel" id="upgradeInventoryPanel">
           <div class="panel-title-row inventory-panel-heading">
             <h2 class="panel-title" id="upgradeInventoryTitle">Мой инвентарь</h2>
-            <div class="inventory-heading-actions"><span class="inv-count" id="myInvCount">0</span><button type="button" class="catalog-toggle" id="catalogToggle" aria-label="Открыть каталог" title="Открыть каталог"><iconify-icon icon="mdi:cart-outline"></iconify-icon></button></div>
+            <div class="inventory-heading-actions"><span class="inv-count" id="myInvCount">0</span><button type="button" class="btn-small buy-selected-btn" id="buySelectedBtn" hidden>Купить</button><button type="button" class="catalog-toggle" id="catalogToggle" aria-label="Открыть каталог" title="Открыть каталог"><iconify-icon icon="mdi:cart-outline"></iconify-icon></button></div>
           </div>
           <div id="catalogTools" hidden>
             <div class="catalog-source-note"><span id="catalogSourceNote">Загрузка базы предметов CS2…</span> · <a href="https://github.com/CS2Cap/CS2-API" target="_blank" rel="noopener noreferrer">источник</a></div>
@@ -177,10 +181,7 @@
             <div class="slot-card" id="targetSlot"><div class="slot-empty">—</div></div>
           </div>
         </div>
-        <div class="bet-selection-bar">
-          <button type="button" class="btn-small" id="multiBetToggle" aria-pressed="false">Выбрать несколько</button>
-          <span id="betSelectionStatus">Выбери скин в инвентаре</span>
-        </div>
+        <div class="bet-selection-bar"><span id="betSelectionStatus">Выбери один скин из инвентаря</span></div>
       </section>
 
       <aside class="col">
@@ -219,38 +220,26 @@
 
       </aside>
     </div>
+
+    <div class="panel upgrade-feed-panel">
+      <div class="panel-title-row"><div><h2 class="panel-title" style="margin-bottom:4px">Лента выигрышей</h2><div class="feed-subtitle">Новые скины из успешных апгрейдов</div></div><button type="button" class="btn-small" id="refreshUpgradeFeedBtn">Обновить</button></div>
+      <div class="upgrade-feed" id="upgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
+    </div>
   </section>
 
   <!-- БАТЛЫ СКИНОВ -->
   <section class="tab-page" id="page-battles">
     <h1 class="title">Батлы скинов</h1>
-    <p class="demo-note">Колесо выбирает победителя с вероятностью 50/50; победитель получает весь банк.</p>
-    <div class="battle-layout">
-      <div class="panel battle-create-panel">
-        <h2 class="panel-title">Создать батл</h2>
-        <p class="battle-help">Выбери скин прямо в инвентаре ниже. Для входа в чужой батл ставка гостя должна быть не меньше 95% цены скина создателя.</p>
-        <div class="battle-inventory-heading">Твой инвентарь</div>
-        <div class="battle-inventory" id="battleInventory" aria-label="Инвентарь для батлов"></div>
-        <div class="battle-selection-status" id="battleSelectionStatus" role="status">Выбери скин из инвентаря</div>
-        <button type="button" class="btn-small battle-create-btn" id="createBattleBtn" disabled>Создать батл</button>
-        <div class="battle-feedback" id="battleFeedback" role="status" aria-live="polite"></div>
-      </div>
-      <div class="panel battle-wheel-panel">
-        <h2 class="panel-title">Колесо 50/50</h2>
-        <div class="battle-wheel-wrap">
-          <div class="battle-wheel" id="battleWheel">
-            <canvas id="battleWheelCanvas" width="240" height="240"></canvas>
-          </div>
-          <div class="battle-pointer"></div>
-        </div>
-        <div class="battle-wheel-legend"><span><i class="creator-color"></i>Создатель</span><span><i class="guest-color"></i>Гость</span></div>
-        <div class="battle-result" id="battleResult" aria-live="polite">Выбери открытый батл, чтобы присоединиться.</div>
-      </div>
-    </div>
+    <div class="battle-toolbar"><p>Для входа нужен предмет стоимостью не меньше 95% ставки создателя.</p><button type="button" class="btn-small battle-create-btn" id="openCreateBattleBtn"><iconify-icon icon="mdi:plus-circle-outline"></iconify-icon> Создать батл</button></div>
     <div class="panel battle-list-panel">
-      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Открытые и завершённые батлы</h2><button type="button" class="btn-small" id="refreshBattlesBtn">Обновить</button></div>
+      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Открытые батлы</h2><button type="button" class="btn-small" id="refreshBattlesBtn">Обновить</button></div>
       <div class="battle-list" id="battleList"><div class="battle-empty">Загружаю батлы…</div></div>
     </div>
+    <div class="panel battle-list-panel">
+      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Мой архив батлов</h2></div>
+      <div class="battle-list battle-archive" id="myBattleArchive"><div class="battle-empty">Завершённые батлы появятся здесь.</div></div>
+    </div>
+    <div class="battle-feedback" id="battleFeedback" role="status" aria-live="polite"></div>
   </section>
 
   <!-- ПРОФИЛЬ -->
@@ -259,7 +248,7 @@
 
     <div class="profile-stats">
       <div class="stat-card">
-        <div class="stat-label">Баланс</div>
+        <div class="stat-label">Денежный баланс</div>
         <div class="stat-value" id="profBalance">0.00 ₽</div>
       </div>
       <div class="stat-card">
@@ -267,7 +256,7 @@
         <div class="stat-value" id="profCount">0</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Стоимость инвентаря</div>
+        <div class="stat-label">Баланс инвентаря</div>
         <div class="stat-value" id="profInvValue">0.00 ₽</div>
       </div>
       <div class="stat-card best-drop">
@@ -327,13 +316,53 @@
   <!-- Модалки -->
   <div class="modal-overlay" id="buyModal">
     <div class="modal">
-      <h3 class="modal-title">Добавить предмет?</h3>
+      <h3 class="modal-title" id="modalTitle">Добавить предмет?</h3>
       <div class="modal-item" id="modalItem"></div>
       <div class="modal-price" id="modalPrice"></div>
       <div class="modal-actions">
         <button class="btn-modal btn-cancel" id="modalCancel">Отмена</button>
         <button class="btn-modal btn-confirm" id="modalConfirm">Купить</button>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="battlePickerModal" aria-hidden="true">
+    <div class="modal battle-picker-modal" role="dialog" aria-modal="true" aria-labelledby="battlePickerTitle">
+      <h3 class="modal-title" id="battlePickerTitle">Выбери скин</h3>
+      <p class="battle-picker-help" id="battlePickerHelp">Скин будет временно заблокирован до исхода батла.</p>
+      <div class="battle-picker-grid" id="battlePickerGrid"></div>
+      <div class="battle-picker-status" id="battlePickerStatus">Выбери предмет</div>
+      <div class="battle-feedback" id="battlePickerFeedback" role="status" aria-live="polite"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-cancel" id="battlePickerCancel">Отмена</button>
+        <button type="button" class="btn-modal btn-confirm" id="battlePickerConfirm" disabled>Создать батл</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay battle-room-overlay" id="battleRoomModal" aria-hidden="true">
+    <div class="modal battle-room-modal" role="dialog" aria-modal="true" aria-labelledby="battleRoomTitle">
+      <div class="battle-room-heading"><h3 class="modal-title" id="battleRoomTitle">Батл скинов</h3><span class="battle-room-status" id="battleRoomStatus">Ожидание соперника…</span></div>
+      <div class="battle-room-bank"><span>Банк батла</span><strong id="battleRoomBank">0.00 ₽</strong></div>
+      <div class="battle-room-matchup">
+        <div class="battle-room-player creator-room-side"><div class="battle-room-color creator-color"></div><img id="battleCreatorAvatar" alt=""><strong id="battleCreatorName">Создатель</strong><img class="battle-room-skin" id="battleCreatorSkinImage" alt=""><span id="battleCreatorSkinName">—</span><small id="battleCreatorSkinPrice">—</small></div>
+        <div class="battle-room-wheel-wrap"><div class="battle-wheel" id="battleWheel"><canvas id="battleWheelCanvas" width="240" height="240"></canvas></div><div class="battle-pointer"></div></div>
+        <div class="battle-room-player guest-room-side"><div class="battle-room-color guest-color"></div><img id="battleGuestAvatar" alt=""><strong id="battleGuestName">Ждём гостя</strong><img class="battle-room-skin" id="battleGuestSkinImage" alt=""><span id="battleGuestSkinName">Ожидает входа</span><small id="battleGuestSkinPrice">—</small></div>
+      </div>
+      <div class="battle-result" id="battleResult" aria-live="polite">Создатель ждёт соперника.</div>
+      <div class="battle-room-actions"><button type="button" class="btn-small danger" id="battleRoomCancel">Отменить батл и вернуть скин</button></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="publicProfileModal" aria-hidden="true">
+    <div class="modal public-profile-modal" role="dialog" aria-modal="true" aria-labelledby="publicProfileName">
+      <div class="settings-heading"><h3 class="modal-title" id="publicProfileName">Профиль игрока</h3><button type="button" class="settings-close" id="publicProfileClose" aria-label="Закрыть профиль">×</button></div>
+      <div class="public-profile-identity"><img id="publicProfileAvatar" alt=""><span id="publicProfilePlayerId"></span></div>
+      <div class="public-profile-stats" id="publicProfileStats"></div>
+      <div class="public-best-drop" id="publicProfileBestDrop"></div>
+      <h4>Инвентарь</h4>
+      <div class="grid public-profile-inventory" id="publicProfileInventory"></div>
+      <div class="public-profile-feedback" id="publicProfileFeedback" role="status"></div>
     </div>
   </div>
 
