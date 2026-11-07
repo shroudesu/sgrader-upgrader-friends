@@ -106,7 +106,7 @@
               <input type="number" id="invPriceTo" class="price-input" placeholder="до ₽" data-price-placeholder="до" min="0" step="any">
             </div>
             <div class="filter-row">
-              <select id="invSort" class="sort-select">
+              <select id="invSort" class="sort-select" aria-label="Сортировать предметы">
                 <option value="price-asc">Цена ↑</option>
                 <option value="price-desc">Цена ↓</option>
                 <option value="name-asc">Имя A→Z</option>
@@ -115,7 +115,7 @@
               <span class="filter-count" id="invCount">—</span>
             </div>
             <div class="category-filter">
-              <label for="invCategory">Категория предмета</label>
+              <label for="invCategoryCustomTrigger">Категория предмета</label>
               <select id="invCategory" class="category-select">
                 <option value="all">Все категории</option>
                 <option value="weapons">Оружие</option>
@@ -162,22 +162,6 @@
         <div class="multiplier-row">Множитель: <span id="multiplier">—</span></div>
         <div class="warning" id="warning"></div>
 
-        <div class="spin-settings">
-          <label class="spin-strength-label" for="spinStrength">Сила прокрута указателя <strong id="spinStrengthValue">5</strong></label>
-          <input type="range" id="spinStrength" min="1" max="10" value="5" aria-label="Сила прокрута указателя">
-          <div class="spin-speed" role="group" aria-label="Скорость прокрутки">
-            <button type="button" class="spin-mode" data-spin-mode="slow">Азартная медленная</button>
-            <button type="button" class="spin-mode active" data-spin-mode="fast">Быстрая</button>
-          </div>
-          <div class="spin-note">Скорость и сила меняют анимацию, но не шанс выигрыша.</div>
-        </div>
-
-        <button class="btn-upgrade" id="upgradeBtn" disabled>
-          <span class="btn-text">КРУТИТЬ</span>
-        </button>
-
-        <div class="result" id="result"></div>
-
         <div class="slots-row">
           <div class="slot">
             <div class="slot-label">Ставка</div>
@@ -189,6 +173,22 @@
             <div class="slot-card" id="targetSlot"><div class="slot-empty">—</div></div>
           </div>
         </div>
+
+        <button class="btn-upgrade" id="upgradeBtn" disabled>
+          <span class="btn-text">КРУТИТЬ</span>
+        </button>
+
+        <div class="spin-settings">
+          <label class="spin-strength-label" for="spinStrength">Сила прокрута указателя <strong id="spinStrengthValue">5</strong></label>
+          <input type="range" id="spinStrength" min="1" max="10" value="5" aria-label="Сила прокрута указателя">
+          <div class="spin-speed" role="group" aria-label="Скорость прокрутки">
+            <button type="button" class="spin-mode" data-spin-mode="slow">Азартная медленная</button>
+            <button type="button" class="spin-mode active" data-spin-mode="fast">Быстрая</button>
+          </div>
+          <div class="spin-note">Скорость и сила меняют анимацию, но не шанс выигрыша.</div>
+        </div>
+
+        <div class="result" id="result"></div>
         <div class="bet-selection-bar"><span id="betSelectionStatus">Выбери один скин из инвентаря</span></div>
       </section>
 
@@ -202,7 +202,7 @@
             <input type="number" id="targetPriceTo" class="price-input" placeholder="до ₽" data-price-placeholder="до" min="0" step="any">
           </div>
           <div class="filter-row">
-            <select id="targetSort" class="sort-select">
+            <select id="targetSort" class="sort-select" aria-label="Сортировать цели">
               <option value="price-asc">Цена ↑</option>
               <option value="price-desc">Цена ↓</option>
               <option value="name-asc">Имя A→Z</option>
@@ -211,7 +211,7 @@
             <span class="filter-count" id="targetCount">—</span>
           </div>
           <div class="category-filter">
-            <label for="targetCategory">Категория цели</label>
+            <label for="targetCategoryCustomTrigger">Категория цели</label>
             <select id="targetCategory" class="category-select">
               <option value="all">Все категории</option>
               <option value="weapons">Оружие</option>
@@ -290,7 +290,7 @@
       <form class="topup-form" id="topupRequestForm">
         <label for="topupAmount">Сумма (<span data-currency-symbol>₽</span>)</label>
         <input id="topupAmount" type="number" min="1" max="100000000" step="1" inputmode="numeric" placeholder="Введите сумму" required>
-        <label for="topupMethod">Способ</label>
+        <label for="topupMethodCustomTrigger">Способ</label>
         <select id="topupMethod" required>
           <option value="Карта">Банковская карта</option>
           <option value="СБП">СБП</option>
@@ -391,7 +391,7 @@
   <div class="modal-overlay settings-overlay" id="settingsModal" aria-hidden="true">
     <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="settings-heading"><h3 class="modal-title" id="settingsTitle">Настройки аккаунта</h3><button type="button" class="settings-close" id="settingsClose" aria-label="Закрыть настройки">×</button></div>
-      <label class="settings-label" for="currencySelect">Валюта сайта</label>
+      <label class="settings-label" for="currencySelectCustomTrigger">Валюта сайта</label>
       <select id="currencySelect" class="settings-select"><option value="RUB">RUB · ₽</option><option value="USD">USD · $</option></select>
       <div class="settings-rate">Курс отображения: 1 USD = 90 RUB</div>
       <div class="settings-avatar-row"><img id="settingsAvatarPreview" alt="Аватар"><div><strong>Аватар</strong><p>Выбери изображение с устройства</p><label class="btn-small avatar-file-label" for="avatarFile">Изменить аватар</label><input type="file" id="avatarFile" accept="image/png,image/jpeg,image/webp" hidden></div></div>

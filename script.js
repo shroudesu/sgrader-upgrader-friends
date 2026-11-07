@@ -441,6 +441,8 @@ let battleRoomCloseTimer = null;
 let battlePollInFlight = false;
 let invQuickFilter = 'all';
 let targetQuickFilter = 'all';
+const customSelectInstances = new WeakMap();
+const customSelects = new Set();
 
 const SECTOR_COUNT = 40;
 const MAX_RENDER = 500;
@@ -633,6 +635,7 @@ async function loginAs(authUser) {
   playerIdEl.textContent = `ID игрока: ${currentUser.playerId}`;
   renderHeaderAvatar();
   currencySelect.value = displayCurrency;
+  syncCustomSelect(currencySelect);
   renderCurrencyLabels();
   adminNav.style.display = currentUser.role === 'admin' ? '' : 'none';
   telegramLink.href = TELEGRAM_URL;
@@ -706,6 +709,7 @@ function openSettings() {
   if (!currentUser) return;
   settingsFeedback.textContent = '';
   currencySelect.value = displayCurrency;
+  syncCustomSelect(currencySelect);
   renderHeaderAvatar();
   settingsModal.classList.add('show');
   settingsModal.setAttribute('aria-hidden', 'false');
@@ -1223,6 +1227,8 @@ async function loadSkins() {
         document.querySelectorAll('[data-new-items-option]').forEach(option => {
           option.textContent = `Новинки ${catalogReleaseYear}`;
         });
+        syncCustomSelect(invCategory);
+        syncCustomSelect(targetCategory);
         const currentYearItems = Number(metadata.releaseYearCounts?.[catalogReleaseYear] || 0);
         catalogSourceNote.textContent = `CS2 · ${totalItems.toLocaleString('ru-RU')} вариантов · ${baseDesigns.toLocaleString('ru-RU')} моделей · ${catalogReleaseYear}: ${currentYearItems.toLocaleString('ru-RU')} · ${fetchedDate}`;
         catalogSourceNote.title = `Источник: ${metadata.source || 'CS2 item catalog'} · данные из файлов игры · лицензия ${metadata.license || 'см. источник'}`;
@@ -2738,6 +2744,132 @@ setInterval(() => {
 }, 1200);
 
 // ============================================================
+// ВНУТРИСАЙТОВЫЕ ВЫПАДАЮЩИЕ СПИСКИ
+// ============================================================
+function closeCustomSelect(instance, restoreFocus = false) {
+  instance.wrapper.classList.remove('is-open');
+  instance.trigger.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) instance.trigger.focus();
+}
+
+function closeOtherCustomSelects(except = null) {
+  customSelects.forEach(instance => {
+    if (instance !== except) closeCustomSelect(instance);
+  });
+}
+
+function syncCustomSelect(select) {
+  const instance = customSelectInstances.get(select);
+  if (!instance) return;
+  const selectedOption = select.options[select.selectedIndex];
+  instance.trigger.textContent = selectedOption?.textContent.trim() || 'Выбрать';
+  instance.trigger.title = selectedOption?.textContent.trim() || '';
+  instance.menu.replaceChildren();
+
+  [...select.options].forEach((option, index) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'custom-select-option';
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(option.value === select.value));
+    item.disabled = option.disabled;
+    item.textContent = option.textContent.trim();
+    if (option.value === select.value) item.classList.add('selected');
+    item.addEventListener('click', () => {
+      if (item.disabled) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      closeCustomSelect(instance, true);
+    });
+    instance.menu.appendChild(item);
+  });
+}
+
+function openCustomSelect(instance) {
+  closeOtherCustomSelects(instance);
+  instance.wrapper.classList.add('is-open');
+  instance.trigger.setAttribute('aria-expanded', 'true');
+  const selected = instance.menu.querySelector('[aria-selected="true"]:not(:disabled)');
+  (selected || instance.menu.querySelector('button:not(:disabled)'))?.focus();
+}
+
+function initCustomSelects() {
+  document.querySelectorAll('select').forEach(select => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'custom-select';
+    if (select.classList.contains('sort-select')) wrapper.classList.add('custom-select-sort');
+    if (select.classList.contains('category-select')) wrapper.classList.add('custom-select-category');
+    if (select.classList.contains('settings-select')) wrapper.classList.add('custom-select-settings');
+    if (select.closest('.topup-form')) wrapper.classList.add('custom-select-payment');
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.appendChild(select);
+
+    select.classList.add('native-select-source');
+    select.tabIndex = -1;
+    select.setAttribute('aria-hidden', 'true');
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.id = `${select.id}CustomTrigger`;
+    trigger.className = 'custom-select-trigger';
+    trigger.setAttribute('role', 'combobox');
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-controls', `${select.id}CustomMenu`);
+    const label = document.querySelector(`label[for="${trigger.id}"]`);
+    trigger.setAttribute('aria-label', select.getAttribute('aria-label') || label?.textContent.trim() || select.id);
+
+    const menu = document.createElement('div');
+    menu.id = `${select.id}CustomMenu`;
+    menu.className = 'custom-select-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', trigger.getAttribute('aria-label'));
+    wrapper.append(trigger, menu);
+
+    const instance = { select, wrapper, trigger, menu };
+    customSelectInstances.set(select, instance);
+    customSelects.add(instance);
+    trigger.addEventListener('click', () => {
+      if (wrapper.classList.contains('is-open')) closeCustomSelect(instance);
+      else openCustomSelect(instance);
+    });
+    trigger.addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        openCustomSelect(instance);
+      }
+    });
+    menu.addEventListener('keydown', event => {
+      const options = [...menu.querySelectorAll('button:not(:disabled)')];
+      const index = options.indexOf(document.activeElement);
+      let nextIndex = index;
+      if (event.key === 'ArrowDown') nextIndex = Math.min(options.length - 1, index + 1);
+      else if (event.key === 'ArrowUp') nextIndex = Math.max(0, index - 1);
+      else if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = options.length - 1;
+      else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCustomSelect(instance, true);
+        return;
+      } else if (event.key === 'Tab') {
+        closeCustomSelect(instance);
+        return;
+      } else return;
+      event.preventDefault();
+      options[nextIndex]?.focus();
+    });
+    select.addEventListener('change', () => syncCustomSelect(select));
+    syncCustomSelect(select);
+  });
+
+  document.addEventListener('click', event => {
+    customSelects.forEach(instance => {
+      if (!instance.wrapper.contains(event.target)) closeCustomSelect(instance);
+    });
+  });
+}
+
+// ============================================================
 // СТАРТ
 // ============================================================
 async function initSession() {
@@ -2763,6 +2895,7 @@ async function initSession() {
     showAuthError('Не удалось подключиться к общей базе. Проверьте настройки Supabase.');
   }
 }
+initCustomSelects();
 void initSession();
 
 setInterval(() => { void refreshWallet(); }, 10000);
