@@ -221,7 +221,7 @@ function stableCatalogFactor(value) {
 
 // Market.CSGO publishes a public RUB snapshot with the cheapest active offer
 // for each market hash name. The browser cache is reduced to our catalog names.
-const MARKET_PRICE_URL = 'https://market.csgo.com/api/v2/prices/RUB.json';
+const MARKET_PRICE_URL = 'market-prices.json';
 const MARKET_PRICE_CACHE_KEY = 'cs2up_market_csgo_rub_v1';
 const MARKET_PRICE_CACHE_TTL_MS = 5 * 60 * 1000;
 const MARKET_PRICE_POLL_MS = 5 * 60 * 1000;
@@ -289,13 +289,10 @@ async function loadMarketPriceSnapshot({ force = false } = {}) {
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   const timeoutId = setTimeout(() => controller?.abort(), MARKET_PRICE_TIMEOUT_MS);
   try {
-    const response = await fetch(MARKET_PRICE_URL, {
+    const payload = await fetchCatalogJson(MARKET_PRICE_URL, {
       cache: 'no-store',
-      headers: { Accept: 'application/json' },
-      ...(controller ? { signal: controller.signal } : {}),
+      signal: controller?.signal,
     });
-    if (!response.ok) throw new Error(`Market.CSGO ответил HTTP ${response.status}`);
-    const payload = await response.json();
     if (payload?.success === false) throw new Error('Market.CSGO не отдал прайс-лист');
     const prices = new Map();
     for (const row of marketPriceRows(payload)) {
@@ -3575,13 +3572,13 @@ drawWheel(0, false);
 // ============================================================
 // ЗАГРУЗКА КАТАЛОГА
 // ============================================================
-async function fetchCatalogJson(file) {
+async function fetchCatalogJson(file, { cache = 'default', signal } = {}) {
   // GitHub Pages serves .gz files as ordinary downloads rather than applying
   // HTTP content-encoding. Fetching them directly cuts the catalog transfer
   // from tens of megabytes to well under one megabyte.
   if (typeof DecompressionStream === 'function') {
     try {
-      const compressedResponse = await fetch(`${file}.gz`);
+      const compressedResponse = await fetch(`${file}.gz`, { cache, ...(signal ? { signal } : {}) });
       if (compressedResponse.ok && compressedResponse.body) {
         const decompressed = compressedResponse.body.pipeThrough(new DecompressionStream('gzip'));
         return await new Response(decompressed).json();
@@ -3591,7 +3588,7 @@ async function fetchCatalogJson(file) {
     }
   }
 
-  const response = await fetch(file);
+  const response = await fetch(file, { cache, ...(signal ? { signal } : {}) });
   if (!response.ok) throw new Error(`Catalog file failed: ${response.url} (${response.status})`);
   return response.json();
 }

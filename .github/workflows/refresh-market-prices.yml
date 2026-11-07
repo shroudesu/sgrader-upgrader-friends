@@ -1,0 +1,37 @@
+name: Refresh Market.CSGO price snapshot
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-price-snapshot
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Build the catalog price snapshot
+        run: python3 scripts/refresh-market-prices.py
+
+      - name: Publish changed prices
+        run: |
+          if git diff --quiet -- market-prices.json market-prices.json.gz; then
+            echo "Market.CSGO prices did not change."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add market-prices.json market-prices.json.gz
+          git commit -m "Refresh Market.CSGO price snapshot"
+          git push origin main
