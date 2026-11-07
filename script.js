@@ -234,6 +234,8 @@ const TELEGRAM_URL = 'https://t.me/perkasanya';
 const RUB_PER_USD = 90;
 const MUSIC_TRACKS = ['sounds/1.mp3', 'sounds/2.mp3', 'sounds/3.mp3', 'sounds/4.mp3', 'sounds/5.mp3'];
 const PROFILE_INVENTORY_PAGE_SIZE = 150;
+const CASE_IMAGE_BUCKET = 'case-designs';
+const CASE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
 const supabaseUrl = String(window.SUPABASE_URL || '');
@@ -278,6 +280,32 @@ const catalogTools = document.getElementById('catalogTools');
 const upgradeInventoryPanel = document.getElementById('upgradeInventoryPanel');
 const upgradeInventoryTitle = document.getElementById('upgradeInventoryTitle');
 const adminNav = document.getElementById('adminNav');
+const casesGrid = document.getElementById('casesGrid');
+const caseFeedback = document.getElementById('caseFeedback');
+const adminCaseList = document.getElementById('adminCaseList');
+const adminCaseNewBtn = document.getElementById('adminCaseNewBtn');
+const adminCaseForm = document.getElementById('adminCaseForm');
+const adminCaseFormTitle = document.getElementById('adminCaseFormTitle');
+const adminCaseCancel = document.getElementById('adminCaseCancel');
+const adminCaseName = document.getElementById('adminCaseName');
+const adminCasePrice = document.getElementById('adminCasePrice');
+const adminCaseImageFile = document.getElementById('adminCaseImageFile');
+const adminCaseImagePreview = document.getElementById('adminCaseImagePreview');
+const adminCaseImageStatus = document.getElementById('adminCaseImageStatus');
+const adminCaseSkinSearch = document.getElementById('adminCaseSkinSearch');
+const adminCaseSkinResults = document.getElementById('adminCaseSkinResults');
+const adminCaseContents = document.getElementById('adminCaseContents');
+const adminCaseChanceTotal = document.getElementById('adminCaseChanceTotal');
+const adminCaseFeedback = document.getElementById('adminCaseFeedback');
+const adminCaseSaveBtn = document.getElementById('adminCaseSaveBtn');
+const adminCaseDeleteBtn = document.getElementById('adminCaseDeleteBtn');
+const caseResultModal = document.getElementById('caseResultModal');
+const caseResultCaseImage = document.getElementById('caseResultCaseImage');
+const caseResultCaseName = document.getElementById('caseResultCaseName');
+const caseResultSkinImage = document.getElementById('caseResultSkinImage');
+const caseResultSkinName = document.getElementById('caseResultSkinName');
+const caseResultSkinPrice = document.getElementById('caseResultSkinPrice');
+const caseResultClose = document.getElementById('caseResultClose');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
 const adminInventoryModal = document.getElementById('adminInventoryModal');
@@ -438,6 +466,13 @@ let pendingSell = null;
 let pendingConfirm = null;
 let activeAdminInventoryPlayerId = null;
 let adminInventoryOperationInFlight = false;
+let gameCases = [];
+let caseDraftContents = [];
+let caseEditorId = null;
+let caseImageUrl = '';
+let caseImagePreviewObjectUrl = null;
+let caseImageUploadInProgress = false;
+let caseOpeningInProgress = false;
 let winVolume = 0.7;
 let musicVolume = 0.3;
 let musicEnabled = false;
@@ -748,15 +783,27 @@ settingsBtn.addEventListener('click', openSettings);
 document.getElementById('headerAvatarButton').addEventListener('click', openSettings);
 settingsClose.addEventListener('click', closeSettings);
 settingsModal.addEventListener('click', event => { if (event.target === settingsModal) closeSettings(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && settingsModal.classList.contains('show')) closeSettings(); });
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if (settingsModal.classList.contains('show')) closeSettings();
+  if (caseResultModal.classList.contains('show')) caseResultClose.click();
+});
 
 currencySelect.addEventListener('change', () => {
+  const previousCurrency = displayCurrency;
+  const casePriceValue = Number(adminCasePrice.value);
   displayCurrency = currencySelect.value === 'USD' ? 'USD' : 'RUB';
+  if (!adminCaseForm.hidden && Number.isFinite(casePriceValue) && casePriceValue > 0) {
+    const rubPrice = previousCurrency === 'USD' ? casePriceValue * RUB_PER_USD : casePriceValue;
+    adminCasePrice.value = displayCurrency === 'USD' ? (rubPrice / RUB_PER_USD).toFixed(2) : rubPrice.toFixed(2);
+  }
   try { localStorage.setItem(CURRENCY_KEY, displayCurrency); } catch (e) {}
   renderCurrencyLabels();
   updateBalanceUI();
   if ($('page-profile').classList.contains('active')) renderProfile();
   if ($('page-admin').classList.contains('active')) void renderAdminUsers();
+  renderCaseCards();
+  renderAdminCaseList();
   renderInventory(); renderTargets(); renderMyInventory();
   updateChance();
 });
@@ -1124,6 +1171,7 @@ function activateTab(page) {
   panel.classList.add('active');
   if (page === 'profile') renderProfile();
   if (page === 'admin') void renderAdminUsers();
+  if (page === 'cases' || page === 'admin') void loadCases();
   if (page === 'battles') { drawBattleWheel(); void loadBattles(); renderBattleList(); renderBattleArchive(); }
 }
 
@@ -1210,6 +1258,411 @@ async function renderAdminUsers() {
     </tr>`;
   }).join('') || '<tr><td colspan="7">Пользователей пока нет.</td></tr>';
 }
+
+function caseSkinSnapshot(item) {
+  return {
+    id: item.id,
+    name: item.name,
+    price: Number(item.price || 0),
+    img: item.img || '',
+    rarity: item.rarity || null,
+    catalogType: item.catalogType || 'skin',
+    category: item.category || '',
+    wear: item.wear || null,
+    floatMin: item.floatMin ?? null,
+    floatMax: item.floatMax ?? null,
+    stattrak: Boolean(item.stattrak),
+    souvenir: Boolean(item.souvenir),
+    effect: catalogEffect(item) || null,
+    pattern: item.pattern || null
+  };
+}
+
+function renderCaseCards() {
+  if (!gameCases.length) {
+    casesGrid.innerHTML = '<div class="case-empty">Кейсов пока нет.</div>';
+    return;
+  }
+  casesGrid.innerHTML = gameCases.map(gameCase => {
+    const contents = Array.isArray(gameCase.contents) ? gameCase.contents : [];
+    const odds = contents.map(entry => `<div class="case-odds-item"><span title="${escapeHtml(entry.item?.name || 'Предмет')}">${escapeHtml(entry.item?.name || 'Предмет')}</span><strong>${Number(entry.chance || 0).toFixed(1)}%</strong></div>`).join('');
+    const art = gameCase.image_url
+      ? `<img src="${escapeHtml(gameCase.image_url)}" alt="${escapeHtml(gameCase.name)}">`
+      : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>';
+    return `<article class="case-card" data-case-id="${escapeHtml(gameCase.id)}">
+      <div class="case-card-art">${art}</div>
+      <div class="case-card-body"><h2 title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</h2>
+        <div class="case-card-meta"><span>${contents.length} скинов</span><strong>${fmt(Number(gameCase.price))}</strong></div>
+        <details class="case-odds"><summary>Содержимое и шансы</summary><div class="case-odds-list">${odds}</div></details>
+        <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть кейс</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function renderAdminCaseList() {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  if (!gameCases.length) {
+    adminCaseList.innerHTML = '<div class="case-empty">Созданных кейсов пока нет.</div>';
+    return;
+  }
+  adminCaseList.innerHTML = gameCases.map(gameCase => `<article class="case-admin-row">
+    ${gameCase.image_url ? `<img src="${escapeHtml(gameCase.image_url)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}
+    <div class="case-admin-info"><strong title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</strong><span>${fmt(Number(gameCase.price))} · ${(gameCase.contents || []).length} скинов</span></div>
+    <button type="button" class="btn-small" data-case-edit="${escapeHtml(gameCase.id)}">Изменить</button>
+  </article>`).join('');
+}
+
+async function loadCases() {
+  if (!supabaseClient) {
+    casesGrid.innerHTML = '<div class="case-empty">Сначала подключи Supabase.</div>';
+    return;
+  }
+  const { data, error } = await supabaseClient.from('game_cases')
+    .select('id,name,price,image_url,contents,created_at,updated_at')
+    .order('created_at', { ascending: false });
+  if (error) {
+    casesGrid.innerHTML = '<div class="case-empty">Кейсы ещё не подключены. Выполни supabase/cases.sql в SQL Editor.</div>';
+    if (currentUser?.role === 'admin') adminCaseList.innerHTML = '<div class="case-empty">Выполни supabase/cases.sql, чтобы настроить кейсы.</div>';
+    console.error('Could not load cases:', error);
+    return;
+  }
+  gameCases = Array.isArray(data) ? data : [];
+  renderCaseCards();
+  renderAdminCaseList();
+}
+
+function renderCaseChanceTotal() {
+  const total = caseDraftContents.reduce((sum, entry) => sum + Number(entry.chance || 0), 0);
+  adminCaseChanceTotal.textContent = 'Шансы: ' + total.toFixed(1) + '%';
+  adminCaseChanceTotal.classList.toggle('invalid', Math.abs(total - 100) > 0.001);
+}
+
+function renderCaseDraftContents() {
+  if (!caseDraftContents.length) {
+    adminCaseContents.innerHTML = '<div class="case-empty">Добавь скины в кейс.</div>';
+    renderCaseChanceTotal();
+    return;
+  }
+  adminCaseContents.innerHTML = caseDraftContents.map((entry, index) => `<div class="case-content-row" data-index="${index}">
+    <img src="${escapeHtml(entry.item.img || '')}" alt="">
+    <span title="${escapeHtml(entry.item.name)}">${escapeHtml(entry.item.name)}</span>
+    <label>Шанс <input type="number" min="0.1" max="100" step="0.1" value="${Number(entry.chance).toFixed(1)}" data-case-chance="${index}" aria-label="Шанс для ${escapeHtml(entry.item.name)}">%</label>
+    <button type="button" data-case-remove="${index}" aria-label="Убрать скин из кейса" title="Убрать"><iconify-icon icon="mdi:trash-can-outline"></iconify-icon></button>
+  </div>`).join('');
+  renderCaseChanceTotal();
+}
+
+function renderCaseSkinResults() {
+  const query = adminCaseSkinSearch.value.trim().toLocaleLowerCase('ru-RU');
+  if (!query) {
+    adminCaseSkinResults.innerHTML = '<div class="case-empty">Введи название, чтобы найти скин в каталоге.</div>';
+    return;
+  }
+  const matches = SKINS_CATALOG.filter(item => item.catalogType === 'skin' && String(item.name || '').toLocaleLowerCase('ru-RU').includes(query)).slice(0, 16);
+  if (!matches.length) {
+    adminCaseSkinResults.innerHTML = '<div class="case-empty">Скины не найдены.</div>';
+    return;
+  }
+  adminCaseSkinResults.innerHTML = matches.map(item => {
+    const id = String(item.id);
+    const alreadyAdded = caseDraftContents.some(entry => String(entry.item.id) === id);
+    return `<button type="button" class="case-skin-result" data-case-add="${escapeHtml(id)}" ${alreadyAdded ? 'disabled' : ''}>
+      <img src="${escapeHtml(item.img || '')}" alt=""><span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span><strong>${alreadyAdded ? 'Добавлен' : fmt(Number(item.price || 0))}</strong>
+    </button>`;
+  }).join('');
+}
+
+function addCaseSkin(item) {
+  const id = String(item.id);
+  if (caseDraftContents.some(entry => String(entry.item.id) === id)) return;
+  if (caseDraftContents.length >= 200) {
+    adminCaseFeedback.textContent = 'В кейс можно добавить не больше 200 скинов.';
+    return;
+  }
+  const nextCount = caseDraftContents.length + 1;
+  const newChance = caseDraftContents.length ? Math.round((100 / nextCount) * 10) / 10 : 100;
+  const existingTotal = caseDraftContents.reduce((sum, entry) => sum + Math.max(0, Number(entry.chance) || 0), 0);
+  const remainingChance = 100 - newChance;
+  let assignedChance = 0;
+  const redistributed = caseDraftContents.map((entry, index) => {
+    const chance = index === caseDraftContents.length - 1
+      ? Math.round((remainingChance - assignedChance) * 10) / 10
+      : Math.round(((existingTotal > 0 ? Math.max(0, Number(entry.chance) || 0) / existingTotal : 1 / caseDraftContents.length) * remainingChance) * 10) / 10;
+    assignedChance += chance;
+    return { ...entry, chance };
+  });
+  caseDraftContents = [...redistributed, { item: caseSkinSnapshot(item), chance: newChance }];
+  renderCaseDraftContents();
+  renderCaseSkinResults();
+}
+
+function setCaseImagePreview(url) {
+  if (caseImagePreviewObjectUrl) URL.revokeObjectURL(caseImagePreviewObjectUrl);
+  caseImagePreviewObjectUrl = String(url || '').startsWith('blob:') ? url : null;
+  if (!url) {
+    adminCaseImagePreview.removeAttribute('src');
+    adminCaseImagePreview.hidden = true;
+    return;
+  }
+  adminCaseImagePreview.src = url;
+  adminCaseImagePreview.hidden = false;
+}
+
+function resetCaseEditor() {
+  if (caseImagePreviewObjectUrl) URL.revokeObjectURL(caseImagePreviewObjectUrl);
+  caseImagePreviewObjectUrl = null;
+  caseEditorId = null;
+  caseImageUrl = '';
+  caseDraftContents = [];
+  adminCaseForm.reset();
+  adminCaseForm.hidden = true;
+  adminCaseImagePreview.removeAttribute('src');
+  adminCaseImagePreview.hidden = true;
+  adminCaseImageStatus.textContent = 'PNG до 5 МБ';
+  adminCaseFeedback.textContent = '';
+  adminCaseDeleteBtn.hidden = true;
+  adminCaseDeleteBtn.disabled = false;
+  adminCaseSaveBtn.disabled = false;
+  adminCaseCancel.disabled = false;
+  adminCaseSkinSearch.value = '';
+  adminCaseSkinResults.innerHTML = '';
+  renderCaseDraftContents();
+}
+
+function openNewCaseEditor() {
+  if (currentUser?.role !== 'admin' || caseImageUploadInProgress) return;
+  resetCaseEditor();
+  adminCaseFormTitle.textContent = 'Новый кейс';
+  adminCaseSaveBtn.textContent = 'Создать кейс';
+  adminCaseForm.hidden = false;
+  renderCaseSkinResults();
+  adminCaseForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function openCaseEditor(gameCase) {
+  if (currentUser?.role !== 'admin') return;
+  resetCaseEditor();
+  caseEditorId = gameCase.id;
+  caseImageUrl = gameCase.image_url || '';
+  caseDraftContents = (gameCase.contents || []).map(entry => ({ item: entry.item, chance: Number(entry.chance) }));
+  adminCaseName.value = gameCase.name || '';
+  adminCasePrice.value = displayCurrency === 'USD'
+    ? (Number(gameCase.price || 0) / RUB_PER_USD).toFixed(2)
+    : String(gameCase.price || '');
+  adminCaseFormTitle.textContent = 'Изменить кейс';
+  adminCaseSaveBtn.textContent = 'Сохранить изменения';
+  adminCaseDeleteBtn.hidden = false;
+  adminCaseImageStatus.textContent = caseImageUrl ? 'PNG уже загружен' : 'PNG до 5 МБ';
+  setCaseImagePreview(caseImageUrl);
+  adminCaseForm.hidden = false;
+  renderCaseDraftContents();
+  renderCaseSkinResults();
+  adminCaseForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function uploadCaseImage(file) {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  if (!file || file.type !== 'image/png' || !file.name.toLowerCase().endsWith('.png')) {
+    adminCaseImageStatus.textContent = 'Выбери файл PNG.';
+    adminCaseImageFile.value = '';
+    return;
+  }
+  if (file.size > CASE_IMAGE_MAX_BYTES) {
+    adminCaseImageStatus.textContent = 'Файл больше 5 МБ.';
+    adminCaseImageFile.value = '';
+    return;
+  }
+  caseImageUploadInProgress = true;
+  adminCaseImageFile.disabled = true;
+  adminCaseSaveBtn.disabled = true;
+  adminCaseCancel.disabled = true;
+  adminCaseNewBtn.disabled = true;
+  adminCaseImageStatus.textContent = 'Загружаю PNG…';
+  setCaseImagePreview(URL.createObjectURL(file));
+  try {
+    const filePath = `${currentUser.id}/${Date.now()}-${makeInstanceId()}.png`;
+    const { data, error } = await supabaseClient.storage.from(CASE_IMAGE_BUCKET).upload(filePath, file, {
+      contentType: 'image/png', cacheControl: '3600', upsert: false
+    });
+    if (error) throw error;
+    caseImageUrl = supabaseClient.storage.from(CASE_IMAGE_BUCKET).getPublicUrl(data.path).data.publicUrl;
+    setCaseImagePreview(caseImageUrl);
+    adminCaseImageStatus.textContent = 'PNG загружен.';
+  } catch (error) {
+    setCaseImagePreview(caseImageUrl);
+    adminCaseImageStatus.textContent = 'Не удалось загрузить PNG. Проверь миграцию supabase/cases.sql и права Storage.';
+    console.error('Could not upload case image:', error);
+  } finally {
+    caseImageUploadInProgress = false;
+    adminCaseImageFile.disabled = false;
+    adminCaseSaveBtn.disabled = false;
+    adminCaseCancel.disabled = false;
+    adminCaseNewBtn.disabled = false;
+  }
+}
+
+function showCaseResult(data) {
+  const gameCase = gameCases.find(item => String(item.id) === String(data.case_id)) || {};
+  const item = data.skin || {};
+  caseResultCaseName.textContent = data.case_name || gameCase.name || 'Кейс открыт';
+  const caseImage = data.case_image_url || gameCase.image_url || '';
+  if (caseImage) caseResultCaseImage.src = caseImage;
+  else caseResultCaseImage.removeAttribute('src');
+  caseResultCaseImage.hidden = !caseImage;
+  if (item.img) caseResultSkinImage.src = item.img;
+  else caseResultSkinImage.removeAttribute('src');
+  caseResultSkinImage.hidden = !item.img;
+  caseResultSkinName.textContent = item.name || 'Предмет';
+  caseResultSkinPrice.textContent = fmt(Number(item.price || 0));
+  caseResultModal.classList.add('show');
+  caseResultModal.setAttribute('aria-hidden', 'false');
+}
+
+async function openGameCase(caseId) {
+  if (!currentUser || !supabaseClient || caseOpeningInProgress) return;
+  const gameCase = gameCases.find(item => String(item.id) === String(caseId));
+  if (!gameCase) return;
+  caseOpeningInProgress = true;
+  casesGrid.querySelectorAll('.case-open-btn').forEach(button => { button.disabled = true; });
+  caseFeedback.textContent = 'Открываю кейс…';
+  try {
+    await stateSaveQueue;
+    const { data, error } = await supabaseClient.rpc('open_game_case', { p_case_id: gameCase.id });
+    if (error) throw error;
+    const oldInventoryCount = state.inventory.length;
+    state.balance = Number(data.balance);
+    if (data.skin) state.inventory.push(data.skin);
+    state.bestDrop = data.best_drop || state.bestDrop;
+    updateBalanceUI(true);
+    myInvCount.textContent = state.inventory.length;
+    if (data.skin) {
+      if (oldInventoryCount === 0) renderMyInventory();
+      else if (Number(myInventory.dataset.visibleCount || 0) >= oldInventoryCount) appendMyInventoryPage();
+      else updateMyInventoryLoadMoreButton();
+    }
+    if ($('page-profile').classList.contains('active')) renderProfile();
+    caseFeedback.textContent = `${data.case_name || gameCase.name}: выпал ${data.skin?.name || 'предмет'}.`;
+    showCaseResult(data);
+  } catch (error) {
+    const message = String(error.message || '').toLowerCase();
+    caseFeedback.textContent = message.includes('insufficient balance')
+      ? 'Не хватает баланса на открытие этого кейса.'
+      : message.includes('open_game_case') || message.includes('function')
+        ? 'Сначала выполни supabase/cases.sql в SQL Editor.'
+        : 'Кейс не открылся. Повтори попытку.';
+    console.error('Could not open game case:', error);
+  } finally {
+    caseOpeningInProgress = false;
+    casesGrid.querySelectorAll('.case-open-btn').forEach(button => { button.disabled = false; });
+  }
+}
+
+adminCaseNewBtn.addEventListener('click', openNewCaseEditor);
+adminCaseCancel.addEventListener('click', resetCaseEditor);
+adminCaseSkinSearch.addEventListener('input', renderCaseSkinResults);
+adminCaseImageFile.addEventListener('change', () => void uploadCaseImage(adminCaseImageFile.files?.[0]));
+adminCaseSkinResults.addEventListener('click', event => {
+  const button = event.target.closest('[data-case-add]');
+  if (!button || button.disabled) return;
+  const item = SKINS_CATALOG.find(entry => String(entry.id) === button.dataset.caseAdd);
+  if (item) addCaseSkin(item);
+});
+adminCaseContents.addEventListener('input', event => {
+  const input = event.target.closest('[data-case-chance]');
+  if (!input) return;
+  const index = Number(input.dataset.caseChance);
+  if (!caseDraftContents[index]) return;
+  caseDraftContents[index].chance = Number(input.value);
+  renderCaseChanceTotal();
+});
+adminCaseContents.addEventListener('click', event => {
+  const button = event.target.closest('[data-case-remove]');
+  if (!button) return;
+  caseDraftContents.splice(Number(button.dataset.caseRemove), 1);
+  renderCaseDraftContents();
+  renderCaseSkinResults();
+});
+adminCaseList.addEventListener('click', event => {
+  const button = event.target.closest('[data-case-edit]');
+  if (!button || currentUser?.role !== 'admin') return;
+  const gameCase = gameCases.find(item => String(item.id) === button.dataset.caseEdit);
+  if (gameCase) openCaseEditor(gameCase);
+});
+adminCaseForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!currentUser || currentUser.role !== 'admin' || caseImageUploadInProgress) return;
+  const name = adminCaseName.value.trim();
+  const price = amountToRub(Number(adminCasePrice.value));
+  const chanceTotal = caseDraftContents.reduce((sum, entry) => sum + Number(entry.chance || 0), 0);
+  if (name.length < 2 || name.length > 40 || !(price > 0) || price > 100000000) {
+    adminCaseFeedback.textContent = 'Проверь название и цену кейса.';
+    return;
+  }
+  if (!caseDraftContents.length) {
+    adminCaseFeedback.textContent = 'Добавь хотя бы один скин.';
+    return;
+  }
+  if (caseDraftContents.some(entry => !Number.isFinite(Number(entry.chance)) || Number(entry.chance) < 0.1 || Number(entry.chance) > 100) || Math.abs(chanceTotal - 100) > 0.001) {
+    adminCaseFeedback.textContent = 'Укажи шанс от 0.1% для каждого скина; сумма должна быть ровно 100.0%.';
+    return;
+  }
+  adminCaseSaveBtn.disabled = true;
+  adminCaseFeedback.textContent = 'Сохраняю кейс…';
+  try {
+    const { data, error } = await supabaseClient.rpc('admin_save_game_case', {
+      p_case_id: caseEditorId,
+      p_name: name,
+      p_price: price,
+      p_image_url: caseImageUrl || null,
+      p_contents: caseDraftContents.map(entry => ({ item: entry.item, chance: Number(entry.chance) }))
+    });
+    if (error) throw error;
+    caseEditorId = data.id;
+    adminCaseFormTitle.textContent = 'Изменить кейс';
+    adminCaseSaveBtn.textContent = 'Сохранить изменения';
+    adminCaseFeedback.textContent = 'Кейс сохранён.';
+    await loadCases();
+    adminCaseDeleteBtn.hidden = false;
+  } catch (error) {
+    adminCaseFeedback.textContent = String(error.message || '').toLowerCase().includes('admin_save_game_case')
+      ? 'Выполни supabase/cases.sql в SQL Editor.'
+      : 'Не удалось сохранить кейс. Проверь данные и подключение.';
+    console.error('Could not save game case:', error);
+  } finally {
+    adminCaseSaveBtn.disabled = false;
+  }
+});
+adminCaseDeleteBtn.addEventListener('click', () => {
+  if (!caseEditorId) return;
+  openConfirm('Удалить кейс?', `Кейс «${adminCaseName.value}» будет удалён из списка.`, async () => {
+    adminCaseDeleteBtn.disabled = true;
+    const { error } = await supabaseClient.rpc('admin_delete_game_case', { p_case_id: caseEditorId });
+    if (error) {
+      adminCaseFeedback.textContent = 'Не удалось удалить кейс.';
+      console.error('Could not delete game case:', error);
+      adminCaseDeleteBtn.disabled = false;
+      return;
+    }
+    resetCaseEditor();
+    await loadCases();
+  });
+});
+casesGrid.addEventListener('click', event => {
+  const button = event.target.closest('[data-case-open]');
+  if (!button || caseOpeningInProgress) return;
+  const gameCase = gameCases.find(item => String(item.id) === button.dataset.caseOpen);
+  if (!gameCase) return;
+  openConfirm('Открыть кейс?', `${gameCase.name} · ${fmt(Number(gameCase.price))}. Сумма спишется с денежного баланса.`, () => void openGameCase(gameCase.id));
+});
+caseResultClose.addEventListener('click', () => {
+  caseResultModal.classList.remove('show');
+  caseResultModal.setAttribute('aria-hidden', 'true');
+});
+caseResultModal.addEventListener('click', event => {
+  if (event.target !== caseResultModal) return;
+  caseResultClose.click();
+});
 
 function closeAdminInventoryModal() {
   adminInventoryModal.classList.remove('show');
@@ -1467,6 +1920,7 @@ async function loadSkins() {
       renderTargets();
       renderMyInventory();
       restoreSlotsFromState();
+      if (currentUser.role === 'admin' && !adminCaseForm.hidden) renderCaseSkinResults();
     }
   } catch (err) {
     invLoading.textContent = 'Ошибка загрузки каталога';
@@ -2646,10 +3100,27 @@ function selectTarget(item) {
 // ============================================================
 // МОДАЛКА ПОКУПКИ
 // ============================================================
+function renderPurchaseReview() {
+  const entries = pendingBuy?.entries || [];
+  const quantity = entries.reduce((sum, entry) => sum + Number(entry.quantity), 0);
+  const total = entries.reduce((sum, entry) => sum + Number(entry.item.price || 0) * Number(entry.quantity), 0);
+  modalTitle.textContent = quantity === 1 ? 'Подтверди покупку' : `Подтверди покупку · ${quantity} шт.`;
+  modalItem.innerHTML = entries.length
+    ? `<div class="purchase-batch-list">${entries.map(({ item, quantity: count }) => `<div class="purchase-batch-item">
+        <img src="${escapeHtml(item.img || '')}" alt="">
+        <span>${escapeHtml(item.name)} <small>×${count}</small></span>
+        <strong>${fmt(Number(item.price || 0) * count)}</strong>
+        <button type="button" class="purchase-remove" data-item-id="${escapeHtml(item.id)}" aria-label="Убрать ${escapeHtml(item.name)} из корзины" title="Убрать из корзины"><iconify-icon icon="mdi:trash-can-outline"></iconify-icon></button>
+      </div>`).join('')}</div>`
+    : '<div class="purchase-cart-empty">Корзина пуста. Вернись в каталог и выбери скины.</div>';
+  modalPrice.textContent = fmt(total);
+  modalConfirm.disabled = entries.length === 0;
+  modalConfirm.textContent = entries.length ? `Купить ${quantity} за ${fmt(total)}` : 'Корзина пуста';
+}
+
 function openBuyModal(entries) {
   const selectedEntries = (Array.isArray(entries) ? entries : []).filter(entry => entry?.item && Number(entry.quantity) > 0);
   if (!selectedEntries.length) return;
-  const quantity = selectedEntries.reduce((sum, entry) => sum + Number(entry.quantity), 0);
   const total = selectedEntries.reduce((sum, entry) => sum + Number(entry.item.price || 0) * Number(entry.quantity), 0);
   if (total > Number(state.balance || 0) + 1e-8) {
     warningEl.textContent = 'Выбранные предметы дороже денежного баланса.';
@@ -2657,12 +3128,7 @@ function openBuyModal(entries) {
     return;
   }
   pendingBuy = { entries: selectedEntries };
-  modalTitle.textContent = quantity === 1 ? 'Добавить предмет?' : `Купить предметы (${quantity})?`;
-  modalItem.innerHTML = quantity === 1
-    ? `<img src="${escapeHtml(selectedEntries[0].item.img || '')}" alt=""><div class="item-name">${escapeHtml(selectedEntries[0].item.name)}</div>`
-    : `<div class="purchase-batch-list">${selectedEntries.map(({ item, quantity: count }) => `<div class="purchase-batch-item"><img src="${escapeHtml(item.img || '')}" alt=""><span>${escapeHtml(item.name)} ×${count}</span><strong>${fmt(Number(item.price || 0) * count)}</strong></div>`).join('')}</div>`;
-  modalPrice.textContent = fmt(total);
-  modalConfirm.textContent = `Купить за ${fmt(total)}`;
+  renderPurchaseReview();
   buyModal.classList.add('show');
 }
 
@@ -2673,12 +3139,22 @@ function closeBuyModal() {
 
 modalCancel.addEventListener('click', closeBuyModal);
 buySelectedBtn.addEventListener('click', () => openBuyModal(getMarketSelectionEntries()));
+modalItem.addEventListener('click', event => {
+  const removeButton = event.target.closest('.purchase-remove');
+  if (!removeButton || !pendingBuy) return;
+  const itemId = String(removeButton.dataset.itemId);
+  pendingBuy.entries = pendingBuy.entries.filter(entry => String(entry.item.id) !== itemId);
+  marketSelection.delete(itemId);
+  updateMarketCard(itemId);
+  updateBuySelectedButton();
+  renderPurchaseReview();
+});
 buyModal.addEventListener('click', (e) => {
   if (e.target === buyModal) closeBuyModal();
 });
 
 modalConfirm.addEventListener('click', async () => {
-  if (!pendingBuy) return;
+  if (!pendingBuy?.entries?.length) return;
   const { entries } = pendingBuy;
   const total = entries.reduce((sum, entry) => sum + Number(entry.item.price || 0) * Number(entry.quantity), 0);
 

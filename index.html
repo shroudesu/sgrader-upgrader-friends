@@ -45,6 +45,7 @@
   <nav class="nav-tabs">
     <button class="nav-tab active" data-tab="upgrade">Апгрейд</button>
     <button class="nav-tab" data-tab="battles">Батлы</button>
+    <button class="nav-tab" data-tab="cases">Кейсы</button>
     <button class="nav-tab" data-tab="profile">Профиль</button>
     <button class="nav-tab" data-tab="admin" id="adminNav" style="display:none">Админка</button>
   </nav>
@@ -248,6 +249,14 @@
     <div class="battle-feedback" id="battleFeedback" role="status" aria-live="polite"></div>
   </section>
 
+  <!-- КЕЙСЫ -->
+  <section class="tab-page" id="page-cases">
+    <h1 class="title">Кейсы</h1>
+    <p class="cases-intro">Открывай демо-кейсы за баланс и получай скины в инвентарь.</p>
+    <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
+    <div class="cases-grid" id="casesGrid"><div class="case-empty">Загружаю кейсы…</div></div>
+  </section>
+
   <!-- ПРОФИЛЬ -->
   <section class="tab-page" id="page-profile">
     <h1 class="title">Профиль</h1>
@@ -318,6 +327,30 @@
       </div>
       <div class="auth-error admin-feedback" id="adminFeedback" role="status"></div>
     </div>
+    <div class="panel admin-panel case-admin-panel">
+      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Управление кейсами</h2><button type="button" class="btn-small" id="adminCaseNewBtn">Создать кейс</button></div>
+      <p class="admin-notice">Добавь скины и укажи шанс каждого. Сумма шансов должна быть ровно 100%.</p>
+      <div class="case-admin-list" id="adminCaseList"><div class="case-empty">Загрузка кейсов…</div></div>
+      <form class="case-editor" id="adminCaseForm" hidden>
+        <div class="case-editor-heading"><h3 id="adminCaseFormTitle">Новый кейс</h3><button type="button" class="settings-close" id="adminCaseCancel" aria-label="Закрыть редактор кейса">×</button></div>
+        <div class="case-editor-fields">
+          <label>Название кейса<input type="text" id="adminCaseName" maxlength="40" required placeholder="Например, SGRADER Case"></label>
+          <label>Цена кейса (<span data-currency-symbol>₽</span>)<input type="number" id="adminCasePrice" min="0.01" max="100000000" step="0.01" required></label>
+        </div>
+        <div class="case-image-editor">
+          <label class="case-file-label" for="adminCaseImageFile">PNG-дизайн кейса<input type="file" id="adminCaseImageFile" accept="image/png,.png"></label>
+          <img id="adminCaseImagePreview" alt="Предпросмотр дизайна кейса" hidden>
+          <span id="adminCaseImageStatus">PNG до 5 МБ</span>
+        </div>
+        <label class="case-skin-search-label" for="adminCaseSkinSearch">Добавить скин из каталога</label>
+        <input type="search" id="adminCaseSkinSearch" class="search-input" placeholder="Начни вводить название скина…">
+        <div class="case-skin-results" id="adminCaseSkinResults"></div>
+        <div class="case-content-heading"><h4>Содержимое кейса</h4><strong id="adminCaseChanceTotal">Шансы: 0.0%</strong></div>
+        <div class="case-content-list" id="adminCaseContents"><div class="case-empty">Добавь скины в кейс.</div></div>
+        <div class="case-admin-feedback" id="adminCaseFeedback" role="status" aria-live="polite"></div>
+        <div class="case-editor-actions"><button type="submit" class="btn-small" id="adminCaseSaveBtn">Сохранить кейс</button><button type="button" class="btn-small danger" id="adminCaseDeleteBtn" hidden>Удалить кейс</button></div>
+      </form>
+    </div>
   </section>
 
   <div class="modal-overlay" id="adminInventoryModal" aria-hidden="true">
@@ -326,6 +359,16 @@
       <p class="admin-inventory-summary" id="adminInventorySummary"></p>
       <div class="admin-inventory-feedback" id="adminInventoryFeedback" role="status" aria-live="polite"></div>
       <div class="admin-inventory-grid" id="adminInventoryGrid"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="caseResultModal" aria-hidden="true">
+    <div class="modal case-result-modal" role="dialog" aria-modal="true" aria-labelledby="caseResultTitle">
+      <h3 class="modal-title" id="caseResultTitle">Кейс открыт</h3>
+      <img class="case-result-case-image" id="caseResultCaseImage" alt="">
+      <p id="caseResultCaseName"></p>
+      <div class="case-result-skin"><img id="caseResultSkinImage" alt=""><strong id="caseResultSkinName"></strong><span id="caseResultSkinPrice"></span></div>
+      <button type="button" class="btn-modal btn-confirm" id="caseResultClose">Забрать скин</button>
     </div>
   </div>
 

@@ -39,7 +39,7 @@ alter table public.wallet_transactions
   drop constraint if exists wallet_transactions_reason_check;
 alter table public.wallet_transactions
   add constraint wallet_transactions_reason_check
-  check (reason in ('admin_grant', 'admin_debit', 'game_sale', 'game_purchase'));
+  check (reason in ('admin_grant', 'admin_debit', 'game_sale', 'game_purchase', 'case_open'));
 
 create or replace function public.is_current_user_admin()
 returns boolean
