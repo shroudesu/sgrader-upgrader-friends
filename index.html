@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
-  <link rel="stylesheet" href="style.css?v=20261107-r9">
+  <link rel="stylesheet" href="style.css?v=20261107-r10">
 </head>
 <body>
 
@@ -174,7 +174,7 @@
           </div>
           <div class="wheel-center">
             <span class="wheel-chance" id="chanceValue">—</span>
-            <span class="wheel-sub">средний шанс</span>
+            <span class="wheel-sub" id="wheelSub">средний шанс</span>
           </div>
         </div>
 
@@ -200,6 +200,7 @@
             <div class="slot-card" id="targetSlot"><div class="slot-empty">—</div></div>
           </div>
         </div>
+        <div class="upgrade-bonus-status" id="upgradeBonusStatus" hidden></div>
 
         <button class="btn-upgrade" id="upgradeBtn" disabled>
           <span class="btn-text">КРУТИТЬ</span>
@@ -587,6 +588,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
-<script src="script.js?v=20261107-r9"></script>
+<script src="script.js?v=20261107-r10"></script>
 </body>
 </html>

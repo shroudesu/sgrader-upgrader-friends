@@ -419,7 +419,10 @@ const targetCategory = $('targetCategory');
 const targetCount = $('targetCount');
 const targetLoading = $('targetLoading');
 const chanceValue = $('chanceValue');
+const wheelSub = $('wheelSub');
+const upgradeBonusStatus = $('upgradeBonusStatus');
 const upgradeBtn = $('upgradeBtn');
+const upgradeBtnText = upgradeBtn.querySelector('.btn-text');
 const resultEl = $('result');
 const warningEl = $('warning');
 const canvas = $('wheelCanvas');
@@ -496,12 +499,17 @@ let state = {
 
 let SKINS_CATALOG = [];
 let catalogLoaded = false;
+let catalogLoadPromise = Promise.resolve();
 let catalogReleaseYear = String(new Date().getFullYear());
 let betData = null;
 let targetData = null;
 let currentChance = 0;
+let currentBonusChance = 0;
 let spinning = false;
 let rotorAngle = 0;
+let activeUpgradeRun = null;
+let upgradeResumePromise = null;
+let upgradeResumeSequence = 0;
 let pendingBuy = null;
 let pendingSell = null;
 let pendingConfirm = null;
@@ -512,6 +520,7 @@ let suspensionCountdownTimer = null;
 let presenceHeartbeatTimer = null;
 let lastUserActivityAt = Date.now();
 let lastPresenceTrackAt = 0;
+let wheelDisplayBonusChance = 0;
 let gameCases = [];
 let gameCaseCategories = [];
 let caseDraftContents = [];
@@ -986,6 +995,7 @@ async function loginAs(authUser) {
   void loadUpgradeFeed();
   startUpgradeFeedRealtime();
   void loadPendingCaseRewards();
+  void resumeActiveUpgrade();
   if (currentUser.role === 'admin') await renderAdminUsers();
 }
 
@@ -1024,6 +1034,10 @@ logoutBtn.addEventListener('click', async () => {
   }
   closeSettings();
   currentUser = null;
+  activeUpgradeRun = null;
+  spinning = false;
+  upgradeResumeSequence += 1;
+  upgradeResumePromise = null;
   void updateOnlinePresenceIdentity();
   pendingCaseRewards = [];
   pendingCaseLoadError = false;
@@ -3200,12 +3214,13 @@ function calculateChance(betPrice, targetPrice) {
 // ============================================================
 // КОЛЕСО
 // ============================================================
-function paintWheel(chancePercent) {
+function paintWheel(chancePercent, bonusChancePercent = 0) {
   const size = canvas.width;
   const r = size / 2;
   const cx = r, cy = r;
   ctx.clearRect(0, 0, size, size);
   const chance = Math.max(0, Math.min(100, Number(chancePercent) || 0));
+  const bonusChance = Math.max(0, Math.min(100 - chance, Number(bonusChancePercent) || 0));
   const ringRadius = r - 36;
   const tickRadius = r - 10;
   const color = chanceColor(chance);
@@ -3258,6 +3273,37 @@ function paintWheel(chancePercent) {
     ctx.stroke();
   }
 
+  const bonusAngle = Math.PI * 2 * bonusChance / 100;
+  if (bonusAngle > 0) {
+    const start = Math.PI / 2 + winAngle / 2;
+    const end = start + bonusAngle;
+    const gold = ctx.createLinearGradient(0, cy + ringRadius, size, cy - ringRadius);
+    gold.addColorStop(0, '#b87906');
+    gold.addColorStop(.48, '#ffe16a');
+    gold.addColorStop(1, '#e9a70b');
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringRadius, start, end);
+    ctx.strokeStyle = gold;
+    ctx.lineWidth = 28;
+    ctx.stroke();
+
+    const markerAngle = start + bonusAngle / 2;
+    const markerX = cx + Math.cos(markerAngle) * ringRadius;
+    const markerY = cy + Math.sin(markerAngle) * ringRadius;
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,190,24,.9)';
+    ctx.shadowBlur = 17;
+    ctx.fillStyle = '#f0bf24';
+    ctx.fillRect(markerX - 12, markerY - 12, 24, 24);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#392600';
+    ctx.font = '900 18px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', markerX, markerY + 1);
+    ctx.restore();
+  }
+
   ctx.beginPath();
   ctx.arc(cx, cy, ringRadius - 22, 0, Math.PI * 2);
   ctx.strokeStyle = 'rgba(255,255,255,.045)';
@@ -3265,13 +3311,16 @@ function paintWheel(chancePercent) {
   ctx.stroke();
 }
 
-function drawWheel(chancePercent, animate = true) {
+function drawWheel(chancePercent, animate = true, bonusChancePercent = 0) {
   const target = Math.max(0, Math.min(100, Number(chancePercent) || 0));
+  const targetBonus = Math.max(0, Math.min(100 - target, Number(bonusChancePercent) || 0));
   if (wheelChanceAnimation) cancelAnimationFrame(wheelChanceAnimation);
   const start = wheelDisplayChance;
-  if (!animate || Math.abs(start - target) < 0.001) {
+  const startBonus = wheelDisplayBonusChance;
+  if (!animate || (Math.abs(start - target) < 0.001 && Math.abs(startBonus - targetBonus) < 0.001)) {
     wheelDisplayChance = target;
-    paintWheel(target);
+    wheelDisplayBonusChance = targetBonus;
+    paintWheel(target, targetBonus);
     return;
   }
   const beganAt = performance.now();
@@ -3280,9 +3329,10 @@ function drawWheel(chancePercent, animate = true) {
     const progress = Math.min(1, (now - beganAt) / duration);
     const eased = progress < .5 ? 4 * progress ** 3 : 1 - Math.pow(-2 * progress + 2, 3) / 2;
     wheelDisplayChance = start + (target - start) * eased;
-    paintWheel(wheelDisplayChance);
+    wheelDisplayBonusChance = startBonus + (targetBonus - startBonus) * eased;
+    paintWheel(wheelDisplayChance, wheelDisplayBonusChance);
     if (progress < 1) wheelChanceAnimation = requestAnimationFrame(frame);
-    else { wheelDisplayChance = target; wheelChanceAnimation = 0; }
+    else { wheelDisplayChance = target; wheelDisplayBonusChance = targetBonus; wheelChanceAnimation = 0; }
   };
   wheelChanceAnimation = requestAnimationFrame(frame);
 }
@@ -3533,6 +3583,35 @@ function updateBetSelection({ persist = true } = {}) {
 // ШАНС UI
 // ============================================================
 function updateChance() {
+  if (activeUpgradeRun && activeUpgradeRun.status !== 'complete') {
+    const run = activeUpgradeRun;
+    if (run.status === 'base_pending') {
+      currentChance = Number(run.base_chance || 0);
+      currentBonusChance = Number(run.bonus_chance || 0);
+      chanceValue.textContent = formatChance(currentChance);
+      wheelSub.textContent = 'средний шанс';
+      drawWheel(currentChance, false, currentBonusChance);
+    } else if (run.status === 'bonus_pending') {
+      currentChance = Number(run.bonus_chance || 0);
+      currentBonusChance = 0;
+      chanceValue.textContent = formatChance(currentChance);
+      wheelSub.textContent = `бонус · x${2 ** Number(run.stage || 1)}`;
+      drawWheel(currentChance, false, 0);
+    } else {
+      currentChance = 0;
+      currentBonusChance = 0;
+      chanceValue.textContent = '—';
+      wheelSub.textContent = 'бонус готовится';
+      drawWheel(0, false, 0);
+    }
+    upgradeBtn.disabled = true;
+    updateTargetShortcuts();
+    return;
+  }
+
+  wheelSub.textContent = 'средний шанс';
+  upgradeBonusStatus.hidden = true;
+  currentBonusChance = 0;
   if (!betData || !targetData) {
     currentChance = 0;
     chanceValue.textContent = '—';
@@ -3540,7 +3619,7 @@ function updateChance() {
     warningEl.classList.remove('show');
     warningEl.textContent = '';
     updateTargetShortcuts();
-    drawWheel(0);
+    drawWheel(0, true, 0);
     return;
   }
 
@@ -3551,7 +3630,7 @@ function updateChance() {
     warningEl.textContent = '⚠ Нельзя выбрать тот же скин и для ставки, и для цели';
     warningEl.classList.add('show');
     updateTargetShortcuts();
-    drawWheel(0);
+    drawWheel(0, true, 0);
     return;
   }
 
@@ -3562,7 +3641,7 @@ function updateChance() {
     warningEl.textContent = '⚠ Ставка дороже цели — выберите другой скин';
     warningEl.classList.add('show');
     updateTargetShortcuts();
-    drawWheel(0);
+    drawWheel(0, true, 0);
     return;
   }
 
@@ -3577,13 +3656,16 @@ function updateChance() {
     warningEl.textContent = 'Шанс ниже минимального значения 0.01%.';
     warningEl.classList.add('show');
     updateTargetShortcuts();
-    drawWheel(0);
+    drawWheel(0, true, 0);
     return;
   }
   chanceValue.textContent = formatChance(currentChance);
+  currentBonusChance = betData.price > 50000 && currentChance <= 95 ? 5 : 0;
+  upgradeBonusStatus.hidden = currentBonusChance === 0;
+  if (currentBonusChance) upgradeBonusStatus.textContent = 'Золотой бонус · 5%';
   upgradeBtn.disabled = false;
   updateTargetShortcuts();
-  drawWheel(currentChance);
+  drawWheel(currentChance, true, currentBonusChance);
 }
 
 function updateTargetShortcuts() {
@@ -5186,100 +5268,319 @@ targetCategory.addEventListener('change', () => {
 // ============================================================
 // КРУЧЕНИЕ
 // ============================================================
-upgradeBtn.addEventListener('click', () => {
-  if (spinning || !betData || !targetData || currentChance === 0) return;
+function paintUpgradeRun(run) {
+  activeUpgradeRun = run;
+  const currentItem = run.current_item || run.initial_item || null;
+  const isBaseSpin = run.status === 'base_pending';
+  const isBonusSpin = run.status === 'bonus_pending';
+  betData = currentItem;
+  targetData = run.target_item || null;
+  renderSlot(betSlot, betData);
+  renderSlot(targetSlot, targetData);
 
-  const wagerItems = getSelectedBetItems();
-  if (!wagerItems.length || wagerItems.length !== betData.items.length) {
-    warningEl.textContent = '⚠ Проверь выбранные скины в инвентаре';
-    warningEl.classList.add('show');
-    setTimeout(() => warningEl.classList.remove('show'), 2000);
+  if (isBaseSpin) {
+    currentChance = Number(run.base_chance || 0);
+    currentBonusChance = Number(run.bonus_chance || 0);
+    chanceValue.textContent = formatChance(currentChance);
+    wheelSub.textContent = 'средний шанс';
+    upgradeBonusStatus.hidden = currentBonusChance <= 0;
+    if (currentBonusChance) upgradeBonusStatus.textContent = 'Золотой бонус · 5%';
+    drawWheel(currentChance, false, currentBonusChance);
+  } else if (isBonusSpin) {
+    currentChance = Number(run.bonus_chance || 0);
+    currentBonusChance = 0;
+    chanceValue.textContent = formatChance(currentChance);
+    wheelSub.textContent = `бонус · x${2 ** Number(run.stage || 1)}`;
+    upgradeBonusStatus.hidden = false;
+    upgradeBonusStatus.textContent = `Бонусный прокрут ${run.stage}/5 · цель x${2 ** Number(run.stage || 1)}`;
+    drawWheel(currentChance, false, 0);
+  } else {
+    currentChance = 0;
+    currentBonusChance = 0;
+    chanceValue.textContent = '—';
+    wheelSub.textContent = 'бонус готовится';
+    upgradeBonusStatus.hidden = false;
+    upgradeBonusStatus.textContent = `Подготовка бонусного этапа ${run.stage}/5 · x${2 ** Number(run.stage || 1)}`;
+    drawWheel(0, false, 0);
+  }
+  upgradeBtn.disabled = true;
+  upgradeBtnText.textContent = 'ПРОКРУТКА';
+  updateTargetShortcuts();
+  updateUpgradeSelectionCards();
+}
+
+function buildBonusCandidatePool(currentItem) {
+  const currentPrice = Number(currentItem?.price || 0);
+  const currentCatalogId = String(currentItem?.catalogId ?? currentItem?.id ?? '');
+  const expectedPrice = currentPrice * 2;
+  const nearDouble = SKINS_CATALOG.filter(item => item.catalogType === 'skin'
+    && String(item.id) !== currentCatalogId
+    && Number(item.price || 0) > currentPrice
+    && Number(item.price || 0) >= expectedPrice * 0.75
+    && Number(item.price || 0) <= expectedPrice * 1.25)
+    .sort((left, right) => Math.abs(Math.log(Number(left.price) / expectedPrice)) - Math.abs(Math.log(Number(right.price) / expectedPrice)));
+  const tightDouble = nearDouble.filter(item => Number(item.price || 0) >= expectedPrice * 0.9
+    && Number(item.price || 0) <= expectedPrice * 1.1);
+  return (tightDouble.length ? tightDouble : nearDouble).slice(0, 200).map(caseSkinSnapshot);
+}
+
+function animateSavedUpgradeRun(run) {
+  const start = Number(run.visual_start_angle || 0);
+  const end = Number(run.visual_end_angle || start);
+  const duration = Math.max(0, Number(run.spin_duration_ms || 0));
+  const startedAt = Date.parse(run.spin_started_at || '') || Date.now();
+  const elapsed = Math.max(0, Date.now() - startedAt);
+  const progress = duration > 0 ? Math.min(1, elapsed / duration) : 1;
+  const easedProgress = 1 - (1 - progress) ** 3;
+  const currentAngle = start + (end - start) * easedProgress;
+
+  rotor.style.transition = 'none';
+  rotor.style.transform = `rotate(${currentAngle}deg)`;
+  void rotor.offsetWidth;
+  rotorAngle = end;
+  const remaining = Math.max(0, duration - elapsed);
+  if (!remaining) return Promise.resolve();
+  rotor.style.transition = `transform ${remaining}ms cubic-bezier(0.15, 0.65, 0.15, 1)`;
+  rotor.style.transform = `rotate(${end}deg)`;
+  return new Promise(resolve => window.setTimeout(resolve, remaining + 80));
+}
+
+function pauseUpgradeRun(message) {
+  spinning = true;
+  upgradeBtn.disabled = false;
+  upgradeBtnText.textContent = 'ПОВТОРИТЬ';
+  warningEl.textContent = message;
+  warningEl.classList.add('show');
+}
+
+async function settleSavedUpgradeRun(run) {
+  const expectedStage = run.status === 'base_pending' ? 0 : Number(run.stage || 0);
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data, error } = await supabaseClient.rpc('settle_skin_upgrade', {
+      p_run_id: run.id,
+      p_expected_stage: expectedStage
+    });
+    if (!error && data) return data;
+    lastError = error;
+    await new Promise(resolve => window.setTimeout(resolve, 450 * (attempt + 1)));
+  }
+  throw lastError || new Error('The upgrade result could not be saved.');
+}
+
+async function finishSavedUpgradeRun(run) {
+  const signedInUserId = currentUser?.id;
+  try {
+    await loadUserState();
+  } catch (error) {
+    activeUpgradeRun = run;
+    pauseUpgradeRun('Апгрейд уже завершён, но не удалось обновить инвентарь. Нажми «Повторить» или обнови страницу.');
+    console.error('Could not refresh state after a completed upgrade:', error);
     return;
   }
-  const wagerData = betData;
-  const prizeData = targetData;
+  if (currentUser?.id !== signedInUserId) return;
+  activeUpgradeRun = null;
+  spinning = false;
+  rotor.style.transition = '';
+  warningEl.classList.remove('show');
+  warningEl.textContent = '';
+  upgradeBonusStatus.hidden = true;
+  upgradeBtnText.textContent = 'КРУТИТЬ';
+  betData = null;
+  targetData = null;
+  state.betId = null;
+  state.betItemIds = [];
+  state.targetName = null;
+  updateBalanceUI();
+  renderInventory();
+  renderTargets();
+  renderMyInventory();
+  restoreSlotsFromState();
+  renderProfile();
+  if (run.award_kind === 'win' && run.awarded_item?.instanceId) {
+    void publishUpgradeWin(run.awarded_item.instanceId);
+  }
+}
 
-  playSpinSound();
+async function processSavedUpgradeRun(initialRun) {
+  const signedInUserId = currentUser?.id;
+  let run = initialRun;
+  activeUpgradeRun = run;
+  spinning = true;
+  if (run.status === 'complete') {
+    await finishSavedUpgradeRun(run);
+    return;
+  }
+  while (run && run.status !== 'complete') {
+    if (currentUser?.id !== signedInUserId) return;
+    if (run.status === 'bonus_ready') {
+      await catalogLoadPromise.catch(() => {});
+      if (currentUser?.id !== signedInUserId) return;
+      const currentItem = run.current_item || run.initial_item;
+      const candidates = buildBonusCandidatePool(currentItem);
+      const { data, error } = await supabaseClient.rpc('prepare_skin_upgrade_bonus', {
+        p_run_id: run.id,
+        p_candidates: candidates,
+        p_spin_strength: spinStrength,
+        p_spin_mode: spinMode
+      });
+      if (currentUser?.id !== signedInUserId) return;
+      if (error || !data) {
+        activeUpgradeRun = run;
+        paintUpgradeRun(run);
+        pauseUpgradeRun('Не удалось подготовить бонусный прокрут. Нажми «Повторить».');
+        console.error('Could not prepare bonus upgrade:', error);
+        return;
+      }
+      run = data;
+      activeUpgradeRun = run;
+      if (run.status === 'complete') {
+        await finishSavedUpgradeRun(run);
+        return;
+      }
+    }
+
+    paintUpgradeRun(run);
+    wheelWrap.classList.remove('upgrade-wheel-win', 'upgrade-wheel-lose', 'upgrade-wheel-bonus');
+    playSpinSound();
+    await animateSavedUpgradeRun(run);
+    if (currentUser?.id !== signedInUserId) return;
+
+    const hit = run.outcome === 'win' || run.outcome === 'hit';
+    wheelWrap.classList.add(run.outcome === 'bonus' ? 'upgrade-wheel-bonus' : hit ? 'upgrade-wheel-win' : 'upgrade-wheel-lose');
+    let settled;
+    try {
+      settled = await settleSavedUpgradeRun(run);
+    } catch (error) {
+      console.error('Could not settle saved upgrade:', error);
+      pauseUpgradeRun('Результат сохранён на сервере, но не получен. Нажми «Повторить» или обнови страницу.');
+      return;
+    }
+    if (currentUser?.id !== signedInUserId) return;
+    run = settled;
+    activeUpgradeRun = run.status === 'complete' ? null : run;
+    if (run.status === 'complete') {
+      await finishSavedUpgradeRun(run);
+      return;
+    }
+  }
+}
+
+async function resumeActiveUpgrade() {
+  if (!currentUser || !supabaseClient || upgradeResumePromise) return;
+  const signedInUserId = currentUser.id;
+  const sequence = ++upgradeResumeSequence;
+  let trackedPromise;
+  const task = (async () => {
+    try {
+      let run = activeUpgradeRun;
+      if (!run) {
+        const { data, error } = await supabaseClient.rpc('get_active_skin_upgrade');
+        if (currentUser?.id !== signedInUserId || upgradeResumeSequence !== sequence) return;
+        if (error) {
+          console.error('Could not restore active upgrade:', error);
+          if (/get_active_skin_upgrade|function|schema cache|does not exist/i.test(String(error.message || ''))) {
+            warningEl.textContent = 'Для апгрейдера примени supabase/upgrade-bonus.sql в SQL Editor.';
+            warningEl.classList.add('show');
+          }
+          return;
+        }
+        run = data;
+      }
+      if (run) await processSavedUpgradeRun(run);
+    } catch (error) {
+      console.error('Could not resume saved upgrade:', error);
+      if (currentUser?.id === signedInUserId && upgradeResumeSequence === sequence && activeUpgradeRun) {
+        pauseUpgradeRun('Не удалось продолжить сохранённый апгрейд. Нажми «Повторить» или обнови страницу.');
+      }
+    }
+  })();
+  trackedPromise = task.finally(() => {
+    if (upgradeResumePromise === trackedPromise) upgradeResumePromise = null;
+  });
+  upgradeResumePromise = trackedPromise;
+  return upgradeResumePromise;
+}
+
+async function startSavedUpgrade() {
+  if (spinning || activeUpgradeRun || !betData || !targetData || currentChance <= 0) return;
+  const wagerItems = getSelectedBetItems();
+  if (wagerItems.length !== 1 || !betData.items || wagerItems[0].instanceId !== betData.items[0]?.instanceId) {
+    warningEl.textContent = '⚠ Выбери один скин в инвентаре';
+    warningEl.classList.add('show');
+    return;
+  }
+  const signedInUserId = currentUser?.id;
+  const wagerItemId = wagerItems[0].instanceId;
   spinning = true;
   upgradeBtn.disabled = true;
   updateTargetShortcuts();
   resultEl.classList.remove('show', 'win', 'lose');
   resultEl.textContent = '';
-  wheelWrap.classList.remove('upgrade-wheel-win', 'upgrade-wheel-lose');
+  wheelWrap.classList.remove('upgrade-wheel-win', 'upgrade-wheel-lose', 'upgrade-wheel-bonus');
+  warningEl.classList.remove('show');
 
-  const win = Math.random() * 100 < currentChance;
-  const winArcDeg = currentChance * 3.6;
-  const edgePadding = Math.min(0.0001, winArcDeg / 4, (360 - winArcDeg) / 4);
-  const finalAngle = win
-    ? (360 - winArcDeg / 2 + Math.random() * winArcDeg + 360) % 360
-    : winArcDeg / 2 + edgePadding + Math.random() * Math.max(0, 360 - winArcDeg - edgePadding * 2);
-
-  const fullSpins = 2 + Number(spinStrength) + Math.floor(Math.random() * 3);
-  const startAngle = rotorAngle % 360;
-  const delta = ((finalAngle - startAngle + 360) % 360) + fullSpins * 360;
-  const newAngle = rotorAngle + delta;
-  const duration = spinMode === 'slow' ? 9000 : 4200;
-
-  rotor.style.transition = spinMode === 'slow'
-    ? `transform ${duration}ms cubic-bezier(0.08, 0.72, 0.12, 1)`
-    : `transform ${duration}ms cubic-bezier(0.15, 0.65, 0.15, 1)`;
-  rotor.style.transform = `rotate(${newAngle}deg)`;
-  rotorAngle = newAngle;
-
-  setTimeout(() => {
-    spinning = false;
-
-    const wagerIds = new Set(wagerItems.map(item => item.instanceId));
-    state.inventory = state.inventory.filter(item => !wagerIds.has(item.instanceId));
-
-    let wonInstanceId = null;
-    if (win) {
-      wonInstanceId = makeInstanceId();
-      state.inventory.push({
-        instanceId: wonInstanceId,
-        catalogId: prizeData.id,
-        name: prizeData.name,
-        price: prizeData.price,
-        img: prizeData.img,
-        rarity: prizeData.rarity,
-        catalogType: prizeData.catalogType,
-        wear: prizeData.wear,
-        floatMin: prizeData.floatMin,
-        floatMax: prizeData.floatMax,
-        stattrak: prizeData.stattrak,
-        souvenir: prizeData.souvenir,
-        effect: prizeData.effect,
-        pattern: prizeData.pattern
-      });
-
-      if (!state.bestDrop || prizeData.price > state.bestDrop.price) {
-        state.bestDrop = {
-          name: prizeData.name,
-          price: prizeData.price,
-          img: prizeData.img
-        };
-      }
-
-    }
-    wheelWrap.classList.add(win ? 'upgrade-wheel-win' : 'upgrade-wheel-lose');
-
-    betData = null;
-    targetData = null;
-    state.betId = null;
-    state.betItemIds = [];
-    state.targetName = null;
-    betSelectionStatus.textContent = 'Выбери скин в инвентаре';
-    const savedState = saveState();
-
-    renderSlot(betSlot, null);
-    renderSlot(targetSlot, null);
-    updateChance();
-    renderMyInventory();
+  try {
+    await stateSaveQueue;
+    const { data, error } = await supabaseClient.rpc('begin_skin_upgrade', {
+      p_inventory_item_id: wagerItemId,
+      p_target_item: caseSkinSnapshot(targetData),
+      p_spin_strength: spinStrength,
+      p_spin_mode: spinMode
+    });
+    if (currentUser?.id !== signedInUserId) return;
+    if (error || !data) throw error || new Error('Не удалось начать апгрейд.');
+    activeUpgradeRun = data;
+    await loadUserState();
+    if (currentUser?.id !== signedInUserId) return;
+    updateBalanceUI();
     renderInventory();
-    renderTargets();
-    if ($('page-profile').classList.contains('active')) renderProfile();
-    if (wonInstanceId) void savedState.then(() => publishUpgradeWin(wonInstanceId));
-  }, duration + 100);
+    renderMyInventory();
+    renderProfile();
+    await resumeActiveUpgrade();
+  } catch (error) {
+    if (currentUser?.id !== signedInUserId) return;
+    if (!activeUpgradeRun && supabaseClient) {
+      try {
+        const { data: recoveredRun } = await supabaseClient.rpc('get_active_skin_upgrade');
+        if (currentUser?.id !== signedInUserId) return;
+        if (recoveredRun) {
+          activeUpgradeRun = recoveredRun;
+          await loadUserState();
+          if (currentUser?.id !== signedInUserId) return;
+          updateBalanceUI();
+          renderInventory();
+          renderMyInventory();
+          await resumeActiveUpgrade();
+          return;
+        }
+      } catch (recoveryError) {
+        console.warn('Could not check for an upgrade that may have started:', recoveryError);
+      }
+    }
+    if (activeUpgradeRun) {
+      console.error('Upgrade started but local state could not refresh:', error);
+      paintUpgradeRun(activeUpgradeRun);
+      pauseUpgradeRun('Апгрейд сохранён. Не удалось обновить экран; нажми «Повторить» или обнови страницу.');
+      return;
+    }
+    spinning = false;
+    updateChance();
+    const needsMigration = /begin_skin_upgrade|function|schema cache|does not exist/i.test(String(error?.message || ''));
+    warningEl.textContent = needsMigration
+      ? 'Для апгрейдера примени supabase/upgrade-bonus.sql в SQL Editor.'
+      : 'Не удалось начать апгрейд. Обнови страницу или попробуй ещё раз.';
+    warningEl.classList.add('show');
+    console.error('Could not begin saved upgrade:', error);
+  }
+}
+
+upgradeBtn.addEventListener('click', () => {
+  if (activeUpgradeRun) {
+    if (upgradeBtnText.textContent === 'ПОВТОРИТЬ') void resumeActiveUpgrade();
+    return;
+  }
+  void startSavedUpgrade();
 });
 
 // ============================================================
@@ -5533,4 +5834,4 @@ setInterval(() => {
   if (currentUser) void pollCurrentUserGameState();
 }, 15000);
 
-loadSkins();
+catalogLoadPromise = loadSkins();

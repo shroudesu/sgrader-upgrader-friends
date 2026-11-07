@@ -1202,6 +1202,9 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .pointer-arrow { top: auto; bottom: 14px; transform: translateX(-50%); border-top: 0; border-bottom: 24px solid var(--white); filter: drop-shadow(0 0 6px rgba(255,255,255,.4)); }
 .upgrade-feed-card { transition: border-color .2s,transform .25s,opacity .25s; }
 .case-category-manager .case-category-list { min-height: 18px; }
+.upgrade-bonus-status { margin: 8px auto -5px; padding: 6px 12px; border: 1px solid rgba(242,184,35,.5); border-radius: 7px; background: linear-gradient(100deg,rgba(130,82,0,.12),rgba(242,184,35,.12),rgba(130,82,0,.12)); color: #f4c84b; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-align: center; }
+.upgrade-bonus-status[hidden] { display: none !important; }
+.wheel-wrap.upgrade-wheel-bonus::after { border-color: rgba(242,184,35,.96); box-shadow: 0 0 20px rgba(242,184,35,.6),0 0 48px rgba(242,184,35,.34); opacity: 1; transform: scale(1); }
 
 @media (max-width: 700px) {
   .user-info { margin-left: 0; }
