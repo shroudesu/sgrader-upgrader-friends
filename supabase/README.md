@@ -5,7 +5,7 @@
 ## Первичная настройка
 
 1. Создай проект Supabase.
-2. В **SQL Editor** запусти весь файл [`schema.sql`](schema.sql). Затем запусти [`skin-battles.sql`](skin-battles.sql), [`community-features.sql`](community-features.sql) и [`admin-inventory.sql`](admin-inventory.sql). Они добавят батлы, ленту апгрейдов, просмотр профилей и безопасное управление инвентарём игроков администратором.
+2. В **SQL Editor** запусти весь файл [`schema.sql`](schema.sql). Затем запусти [`skin-battles.sql`](skin-battles.sql), [`community-features.sql`](community-features.sql) и [`admin-inventory.sql`](admin-inventory.sql). Они добавят батлы, ленту апгрейдов, просмотр профилей и безопасное управление инвентарём игроков администратором. Актуальная версия `admin-inventory.sql` также устанавливает пакетную продажу всего своего инвентаря; после обновления этого файла его нужно повторно выполнить в SQL Editor.
 3. В **Authentication → Sign In / Providers → Email** отключи **Confirm email**. Приложение не собирает email: ник преобразуется в технический адрес вида `u-…@players.sgrader.invalid`. Поэтому восстановить забытый пароль нельзя; игрокам нужно использовать отдельный пароль для этой демо-игры.
 4. В настройках Auth укажи Site URL `https://shroudesu.github.io/sgrader-upgrader-friends/`.
 5. В **Project Settings → API** скопируй Project URL и публичный **publishable/anon key** в `supabase-config.js`. Не вставляй `service_role` key: он даёт полный доступ к базе.

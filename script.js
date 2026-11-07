@@ -225,11 +225,15 @@ const SELL_COMMISSION = 0.10;
 // КЛЮЧИ ХРАНИЛИЩА
 // ============================================================
 const VOLUME_KEY = 'cs2up_volume';
+const MUSIC_ENABLED_KEY = 'cs2up_music_enabled';
+const MUSIC_VOLUME_KEY = 'cs2up_music_volume';
 const SPIN_STRENGTH_KEY = 'cs2up_spin_strength';
 const SPIN_MODE_KEY = 'cs2up_spin_mode';
 const CURRENCY_KEY = 'cs2up_currency';
 const TELEGRAM_URL = 'https://t.me/perkasanya';
 const RUB_PER_USD = 90;
+const MUSIC_TRACKS = ['sounds/1.mp3', 'sounds/2.mp3', 'sounds/3.mp3', 'sounds/4.mp3', 'sounds/5.mp3'];
+const PROFILE_INVENTORY_PAGE_SIZE = 150;
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
 const supabaseUrl = String(window.SUPABASE_URL || '');
@@ -397,6 +401,10 @@ const winSound = $('winSound');
 const volumeSlider = $('volumeSlider');
 const volumeValue = $('volumeValue');
 const volumeIcon = $('volumeIcon');
+const musicEnabledToggle = $('musicEnabled');
+const musicVolumeSlider = $('musicVolumeSlider');
+const musicVolumeValue = $('musicVolumeValue');
+const profileInventoryStatus = $('profileInventoryStatus');
 
 // ============================================================
 // СОСТОЯНИЕ
@@ -431,6 +439,12 @@ let pendingConfirm = null;
 let activeAdminInventoryPlayerId = null;
 let adminInventoryOperationInFlight = false;
 let winVolume = 0.7;
+let musicVolume = 0.3;
+let musicEnabled = false;
+let musicTrackIndex = 0;
+let musicPlayer = null;
+let preloadedMusicPlayer = null;
+let preloadedMusicTrackIndex = -1;
 let spinStrength = 5;
 let spinMode = 'fast';
 let battleWheelAngle = 0;
@@ -933,12 +947,16 @@ function updateVolumeIcon(v) {
   else volumeIcon.textContent = '🔊';
 }
 
+function updateRangeProgress(slider, value, min = 0, max = 100) {
+  const progress = max > min ? Math.max(0, Math.min(100, ((Number(value) - min) / (max - min)) * 100)) : 0;
+  slider.style.setProperty('--range-progress', progress + '%');
+}
+
 function applyVolume(percent) {
   winVolume = Math.max(0, Math.min(1, percent / 100));
   volumeValue.textContent = Math.round(percent) + '%';
   updateVolumeIcon(winVolume);
-  volumeSlider.style.background =
-    `linear-gradient(90deg, #fff 0%, #fff ${percent}%, #444 ${percent}%, #444 100%)`;
+  updateRangeProgress(volumeSlider, percent);
   if (winSound) winSound.volume = winVolume;
   try { localStorage.setItem(VOLUME_KEY, String(percent)); } catch (e) {}
 }
@@ -952,6 +970,90 @@ function loadVolume() {
 }
 volumeSlider.addEventListener('input', (e) => applyVolume(parseFloat(e.target.value)));
 loadVolume();
+
+function applyMusicVolume(percent) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  musicVolume = safePercent / 100;
+  musicVolumeSlider.value = String(safePercent);
+  musicVolumeValue.textContent = Math.round(safePercent) + '%';
+  updateRangeProgress(musicVolumeSlider, safePercent);
+  if (musicPlayer) musicPlayer.volume = musicVolume;
+  if (preloadedMusicPlayer) preloadedMusicPlayer.volume = musicVolume;
+  try { localStorage.setItem(MUSIC_VOLUME_KEY, String(safePercent)); } catch (e) {}
+}
+
+function preloadNextMusicTrack() {
+  if (!musicEnabled || !MUSIC_TRACKS.length) return;
+  const nextIndex = (musicTrackIndex + 1) % MUSIC_TRACKS.length;
+  if (preloadedMusicPlayer && preloadedMusicTrackIndex === nextIndex) return;
+  if (preloadedMusicPlayer) preloadedMusicPlayer.pause();
+  preloadedMusicTrackIndex = nextIndex;
+  preloadedMusicPlayer = new Audio(MUSIC_TRACKS[nextIndex]);
+  preloadedMusicPlayer.preload = 'auto';
+  preloadedMusicPlayer.volume = musicVolume;
+  preloadedMusicPlayer.load();
+}
+
+function startMusicTrack(index, player = null) {
+  if (!musicEnabled || !MUSIC_TRACKS.length) return;
+  musicTrackIndex = index % MUSIC_TRACKS.length;
+  musicPlayer = player || new Audio(MUSIC_TRACKS[musicTrackIndex]);
+  musicPlayer.preload = 'auto';
+  musicPlayer.volume = musicVolume;
+  musicPlayer.addEventListener('ended', advanceMusicTrack, { once: true });
+  const playback = musicPlayer.play();
+  if (playback && playback.catch) playback.catch(error => console.warn('Background music could not start:', error));
+  preloadNextMusicTrack();
+}
+
+function advanceMusicTrack() {
+  if (!musicEnabled) return;
+  const nextIndex = (musicTrackIndex + 1) % MUSIC_TRACKS.length;
+  const nextPlayer = preloadedMusicTrackIndex === nextIndex ? preloadedMusicPlayer : null;
+  preloadedMusicPlayer = null;
+  preloadedMusicTrackIndex = -1;
+  startMusicTrack(nextIndex, nextPlayer);
+}
+
+function setBackgroundMusicEnabled(enabled) {
+  musicEnabled = Boolean(enabled);
+  musicEnabledToggle.checked = musicEnabled;
+  try { localStorage.setItem(MUSIC_ENABLED_KEY, String(musicEnabled)); } catch (e) {}
+  if (musicEnabled) {
+    if (!musicPlayer) startMusicTrack(musicTrackIndex);
+    return;
+  }
+  if (musicPlayer) musicPlayer.pause();
+  if (preloadedMusicPlayer) preloadedMusicPlayer.pause();
+  musicPlayer = null;
+  preloadedMusicPlayer = null;
+  preloadedMusicTrackIndex = -1;
+  musicTrackIndex = 0;
+}
+
+function loadMusicSettings() {
+  let enabled = false;
+  let savedVolume = 30;
+  try {
+    enabled = localStorage.getItem(MUSIC_ENABLED_KEY) === 'true';
+    const storedVolume = localStorage.getItem(MUSIC_VOLUME_KEY);
+    if (storedVolume !== null) savedVolume = Number(storedVolume);
+  } catch (e) {}
+  applyMusicVolume(Number.isFinite(savedVolume) ? savedVolume : 30);
+  musicEnabled = enabled;
+  musicEnabledToggle.checked = enabled;
+  if (enabled) {
+    const startAfterGesture = () => {
+      if (musicEnabled && !musicPlayer) startMusicTrack(musicTrackIndex);
+    };
+    document.addEventListener('pointerdown', startAfterGesture, { once: true });
+    document.addEventListener('keydown', startAfterGesture, { once: true });
+  }
+}
+
+musicVolumeSlider.addEventListener('input', event => applyMusicVolume(parseFloat(event.target.value)));
+musicEnabledToggle.addEventListener('change', () => setBackgroundMusicEnabled(musicEnabledToggle.checked));
+loadMusicSettings();
 
 function applySpinMode(mode) {
   spinMode = mode === 'slow' ? 'slow' : 'fast';
@@ -968,6 +1070,7 @@ function loadSpinSettings() {
   } catch (e) {}
   spinStrength = Math.max(1, Math.min(10, Number.isFinite(savedStrength) ? savedStrength : 5));
   spinStrengthSlider.value = String(spinStrength);
+  updateRangeProgress(spinStrengthSlider, spinStrength, 1, 10);
   spinStrengthValue.textContent = String(spinStrength);
   applySpinMode(savedMode);
 }
@@ -975,6 +1078,7 @@ function loadSpinSettings() {
 spinStrengthSlider.addEventListener('input', event => {
   spinStrength = Number(event.target.value);
   spinStrengthValue.textContent = String(spinStrength);
+  updateRangeProgress(spinStrengthSlider, spinStrength, 1, 10);
   try { localStorage.setItem(SPIN_STRENGTH_KEY, String(spinStrength)); } catch (e) {}
 });
 spinModeButtons.forEach(button => button.addEventListener('click', () => applySpinMode(button.dataset.spinMode)));
@@ -1504,9 +1608,7 @@ function updateBetSelection({ persist = true } = {}) {
     : 'Выбери скин в инвентаре';
   renderSlot(betSlot, betData);
   updateChance();
-  renderMyInventory();
-  renderTargets();
-  renderInventory();
+  updateUpgradeSelectionCards();
   if (persist) void saveState();
 }
 
@@ -1645,6 +1747,7 @@ function restoreSlotsFromState() {
   }
 
   updateChance();
+  updateUpgradeSelectionCards();
 }
 
 // ============================================================
@@ -1653,7 +1756,10 @@ function restoreSlotsFromState() {
 function buildCatalogCard(item, { disabled, source, onClick }) {
   const card = document.createElement('div');
   card.className = 'inv-card' + (disabled ? ' disabled' : '');
-  if (source === 'catalog') card.dataset.catalogId = String(item.id);
+  card.setAttribute('aria-disabled', String(Boolean(disabled)));
+  if (item.id != null) card.dataset.catalogId = String(item.id);
+  card.dataset.cardSource = source;
+  card.dataset.price = String(Number(item.price || 0));
   const rarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
   if (rarityColor) card.style.setProperty('--item-rarity-color', rarityColor);
   const isCurrentYearItem = item.releaseYear === catalogReleaseYear;
@@ -1677,7 +1783,24 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
     <div class="item-rarity">${escapeHtml(item.rarity?.name || item.category || 'Предмет')}</div>
   `;
 
-  if (!disabled) card.addEventListener('click', onClick);
+  const marketCancelBadge = card.querySelector('.market-quantity-badge');
+  if (marketCancelBadge) {
+    marketCancelBadge.setAttribute('role', 'button');
+    marketCancelBadge.setAttribute('tabindex', '0');
+    marketCancelBadge.setAttribute('aria-label', 'Отменить выбор всех копий этого скина');
+    marketCancelBadge.title = 'Нажми, чтобы отменить выбор этого скина';
+    marketCancelBadge.addEventListener('click', event => {
+      event.stopPropagation();
+      cancelMarketSelection(item.id);
+    });
+    marketCancelBadge.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelMarketSelection(item.id);
+    });
+  }
+  if (onClick) card.addEventListener('click', onClick);
   return card;
 }
 
@@ -1704,9 +1827,30 @@ function updateMarketCard(itemId) {
   if (!badge) {
     badge = document.createElement('span');
     badge.className = 'market-quantity-badge';
+    badge.setAttribute('role', 'button');
+    badge.setAttribute('tabindex', '0');
+    badge.setAttribute('aria-label', 'Отменить выбор всех копий этого скина');
+    badge.title = 'Нажми, чтобы отменить выбор этого скина';
+    badge.addEventListener('click', event => {
+      event.stopPropagation();
+      cancelMarketSelection(itemId);
+    });
+    badge.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelMarketSelection(itemId);
+    });
     image.appendChild(badge);
   }
   badge.textContent = '×' + quantity;
+}
+
+function cancelMarketSelection(itemId) {
+  marketSelection.delete(String(itemId));
+  warningEl.classList.remove('show');
+  updateMarketCard(itemId);
+  updateBuySelectedButton();
 }
 
 function updateBuySelectedButton() {
@@ -1819,35 +1963,124 @@ function renderTargets() {
   }
 }
 
+function updateUpgradeSelectionCards() {
+  const selectedItems = getSelectedBetItems();
+  const selectedInstanceIds = new Set(selectedItems.map(item => String(item.instanceId)));
+  const selectedCatalogIds = new Set(selectedItems.map(item => String(item.catalogId)));
+
+  myInventory.querySelectorAll('.inv-card[data-instance-id]').forEach(card => {
+    const selected = selectedInstanceIds.has(card.dataset.instanceId);
+    card.classList.toggle('active', selected);
+    card.classList.toggle('selected-bet', selected);
+    let badge = card.querySelector('.card-badge.owned');
+    if (selected && !badge) {
+      badge = document.createElement('div');
+      badge.className = 'card-badge owned';
+      badge.textContent = 'Ставка';
+      card.prepend(badge);
+    } else if (!selected && badge) {
+      badge.remove();
+    }
+  });
+
+  inventoryGrid.querySelectorAll('.inv-card[data-catalog-id]').forEach(card => {
+    card.classList.toggle('active', selectedCatalogIds.has(card.dataset.catalogId));
+  });
+
+  targetGrid.querySelectorAll('.inv-card[data-catalog-id]').forEach(card => {
+    const price = Number(card.dataset.price || 0);
+    const disabled = (betData && (price < betData.price || calculateChance(betData.price, price) < 0.01))
+      || selectedCatalogIds.has(card.dataset.catalogId);
+    card.classList.toggle('disabled', Boolean(disabled));
+    card.setAttribute('aria-disabled', String(Boolean(disabled)));
+    card.classList.toggle('active', String(targetData?.id) === card.dataset.catalogId);
+  });
+}
+
 // ============================================================
 // МОЙ ИНВЕНТАРЬ
 // ============================================================
+function appendMyInventoryCard(idx) {
+  const inv = state.inventory[idx];
+  if (!inv) return;
+  const selected = state.betItemIds.includes(inv.instanceId);
+  const card = document.createElement('div');
+  card.className = 'inv-card' + (selected ? ' active selected-bet' : '');
+  card.dataset.instanceId = String(inv.instanceId);
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-label', `${inv.name || 'Предмет'}, ${fmt(inv.price)}`);
+  if (selected) {
+    const badge = document.createElement('div');
+    badge.className = 'card-badge owned';
+    badge.textContent = 'Ставка';
+    card.appendChild(badge);
+  }
+  const imageWrap = document.createElement('div');
+  imageWrap.className = 'item-img';
+  const image = document.createElement('img');
+  image.src = inv.img || '';
+  image.alt = '';
+  image.loading = 'lazy';
+  imageWrap.appendChild(image);
+  const name = document.createElement('div');
+  name.className = 'item-name';
+  name.textContent = inv.name || 'Предмет';
+  name.title = inv.name || 'Предмет';
+  const price = document.createElement('div');
+  price.className = 'item-price';
+  price.textContent = fmt(inv.price);
+  const qualities = [inv.wear, inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
+  card.append(imageWrap, name, price);
+  if (qualities.length) {
+    const quality = document.createElement('div');
+    quality.className = 'item-quality';
+    quality.textContent = qualities.join(' · ');
+    card.appendChild(quality);
+  }
+  card.addEventListener('click', () => selectBet(inv));
+  card.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    selectBet(inv);
+  });
+  myInventory.appendChild(card);
+}
+
+function appendMyInventoryPage() {
+  const start = Number(myInventory.dataset.visibleCount || 0);
+  const end = Math.min(start + PROFILE_INVENTORY_PAGE_SIZE, state.inventory.length);
+  for (let idx = start; idx < end; idx += 1) appendMyInventoryCard(idx);
+  myInventory.dataset.visibleCount = String(end);
+  updateMyInventoryLoadMoreButton();
+}
+
+function updateMyInventoryLoadMoreButton() {
+  const visibleCount = Number(myInventory.dataset.visibleCount || 0);
+  myInventory.querySelector('.inventory-load-more')?.remove();
+  if (visibleCount < state.inventory.length) {
+    const remaining = state.inventory.length - visibleCount;
+    const loadMore = document.createElement('button');
+    loadMore.type = 'button';
+    loadMore.className = 'btn-small inventory-load-more';
+    loadMore.textContent = 'Показать ещё ' + Math.min(PROFILE_INVENTORY_PAGE_SIZE, remaining) + ' из ' + remaining;
+    loadMore.addEventListener('click', appendMyInventoryPage);
+    myInventory.appendChild(loadMore);
+  }
+}
+
 function renderMyInventory() {
   if (!currentUser) return;
   updateBalanceUI();
   myInvCount.textContent = state.inventory.length;
   myInventory.innerHTML = '';
+  myInventory.dataset.visibleCount = '0';
 
   if (state.inventory.length === 0) {
     myInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#555;font-size:11px;padding:16px">Пусто. Добавь предмет из каталога слева.</div>';
     return;
   }
-
-  state.inventory.forEach((inv, i) => {
-    const card = document.createElement('div');
-    const selected = state.betItemIds.includes(inv.instanceId);
-    card.className = 'inv-card' + (selected ? ' active selected-bet' : '');
-    const qualities = [inv.wear, inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
-    card.innerHTML = `
-      ${selected ? '<div class="card-badge owned">Ставка</div>' : ''}
-      <div class="item-img"><img src="${inv.img}" alt=""></div>
-      <div class="item-name" title="${inv.name}">${inv.name}</div>
-      <div class="item-price">${fmt(inv.price)}</div>
-      ${qualities.length ? `<div class="item-quality">${qualities.map(value => escapeHtml(value)).join(' · ')}</div>` : ''}
-    `;
-    card.addEventListener('click', () => selectBet(inv));
-    myInventory.appendChild(card);
-  });
+  appendMyInventoryPage();
 }
 
 function openBattlePicker(mode, battleId = null) {
@@ -2407,8 +2640,7 @@ function selectTarget(item) {
   saveState();
   renderSlot(targetSlot, targetData);
   updateChance();
-  renderInventory();
-  renderTargets();
+  updateUpgradeSelectionCards();
 }
 
 // ============================================================
@@ -2458,6 +2690,7 @@ modalConfirm.addEventListener('click', async () => {
     return;
   }
 
+  const oldInventoryCount = state.inventory.length;
   const purchasedCatalogIds = entries.map(entry => String(entry.item.id));
   entries.forEach(({ item, quantity }) => {
     for (let copy = 0; copy < quantity; copy += 1) {
@@ -2485,7 +2718,15 @@ modalConfirm.addEventListener('click', async () => {
   updateBalanceUI();
   myInvCount.textContent = state.inventory.length;
   updateBuySelectedButton();
-  if (!catalogMode) renderMyInventory();
+  if (!catalogMode) {
+    if (oldInventoryCount === 0) {
+      renderMyInventory();
+    } else if (Number(myInventory.dataset.visibleCount || 0) >= oldInventoryCount) {
+      appendMyInventoryPage();
+    } else {
+      updateMyInventoryLoadMoreButton();
+    }
+  }
   closeBuyModal();
   if ($('page-profile').classList.contains('active')) renderProfile();
 });
@@ -2594,22 +2835,39 @@ sellAllBtn.addEventListener('click', () => {
     'Обменять всё на баланс?',
     `Вы обменяете ${state.inventory.length} скин(ов) на ${fmt(total)} (комиссия ${Math.round(SELL_COMMISSION*100)}% уже учтена).`,
     async () => {
-      if (!await addBalance(total)) {
-        warningEl.textContent = '⚠ Не удалось зачислить сумму. Инвентарь сохранён.';
-        warningEl.classList.add('show');
-        return;
+      sellAllBtn.disabled = true;
+      profileInventoryStatus.textContent = 'Продаю весь инвентарь…';
+      try {
+        await stateSaveQueue;
+        const { data, error } = await supabaseClient.rpc('sell_all_inventory');
+        if (error) {
+          const message = String(error.message || '').toLowerCase();
+          profileInventoryStatus.textContent = message.includes('sell_all_inventory')
+            ? 'Запусти обновлённый файл supabase/admin-inventory.sql в SQL Editor Supabase.'
+            : 'Продажа не выполнена. Инвентарь сохранён; попробуй ещё раз.';
+          console.error('Could not sell all inventory:', error);
+          return;
+        }
+        state.balance = Number(data.balance);
+        state.inventory = [];
+        state.betId = null;
+        state.betItemIds = [];
+        betData = null;
+        betSelectionStatus.textContent = 'Выбери скин в инвентаре';
+        inventoryGrid.querySelectorAll('.inv-card.active').forEach(card => card.classList.remove('active'));
+        renderSlot(betSlot, null);
+        updateBalanceUI(true);
+        renderProfile();
+        renderMyInventory();
+        restoreSlotsFromState();
+        updateChance();
+        profileInventoryStatus.textContent = 'Обменяно ' + Number(data.sold_count || 0) + ' скинов на ' + fmt(Number(data.amount || 0)) + '.';
+      } catch (error) {
+        profileInventoryStatus.textContent = 'Продажа не выполнена. Инвентарь сохранён; попробуй ещё раз.';
+        console.error('Could not sell all inventory:', error);
+      } finally {
+        sellAllBtn.disabled = false;
       }
-      state.inventory = [];
-      state.betId = null;
-      state.betItemIds = [];
-      betData = null;
-      betSelectionStatus.textContent = 'Выбери скин в инвентаре';
-      renderSlot(betSlot, null);
-      saveState();
-      renderProfile();
-      renderMyInventory();
-      renderInventory();
-      updateChance();
     }
   );
 });
@@ -2639,8 +2897,58 @@ resetBtn.addEventListener('click', () => {
 // ============================================================
 // ПРОФИЛЬ
 // ============================================================
+function appendProfileInventoryCard(idx) {
+  const item = state.inventory[idx];
+  if (!item) return;
+  const card = document.createElement('article');
+  card.className = 'sell-card';
+  const imageWrap = document.createElement('div');
+  imageWrap.className = 'item-img';
+  const image = document.createElement('img');
+  image.src = item.img || '';
+  image.alt = '';
+  image.loading = 'lazy';
+  imageWrap.appendChild(image);
+  const name = document.createElement('div');
+  name.className = 'item-name';
+  name.textContent = item.name || 'Предмет';
+  name.title = item.name || 'Предмет';
+  const quality = document.createElement('div');
+  quality.className = 'item-quality';
+  quality.textContent = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect, item.pattern].filter(Boolean).join(' · ');
+  const price = document.createElement('div');
+  price.className = 'item-price';
+  price.textContent = fmt(item.price);
+  const receive = Math.round(Number(item.price || 0) * (1 - SELL_COMMISSION) * 100) / 100;
+  const sellButton = document.createElement('button');
+  sellButton.className = 'btn-sell';
+  sellButton.type = 'button';
+  sellButton.textContent = 'Обменять за ' + fmt(receive);
+  sellButton.addEventListener('click', () => openSellModal(idx));
+  card.append(imageWrap, name, quality, price, sellButton);
+  profileInventory.appendChild(card);
+}
+
+function appendProfileInventoryPage() {
+  const start = Number(profileInventory.dataset.visibleCount || 0);
+  const end = Math.min(start + PROFILE_INVENTORY_PAGE_SIZE, state.inventory.length);
+  for (let idx = start; idx < end; idx += 1) appendProfileInventoryCard(idx);
+  profileInventory.dataset.visibleCount = String(end);
+  profileInventory.querySelector('.profile-load-more')?.remove();
+  if (end < state.inventory.length) {
+    const remaining = state.inventory.length - end;
+    const loadMore = document.createElement('button');
+    loadMore.type = 'button';
+    loadMore.className = 'btn-small profile-load-more';
+    loadMore.textContent = 'Показать ещё ' + Math.min(PROFILE_INVENTORY_PAGE_SIZE, remaining) + ' из ' + remaining;
+    loadMore.addEventListener('click', appendProfileInventoryPage);
+    profileInventory.appendChild(loadMore);
+  }
+}
+
 function renderProfile() {
   if (!currentUser) return;
+  profileInventoryStatus.textContent = '';
   profBalance.textContent = fmt(state.balance);
   profCount.textContent = state.inventory.length;
 
@@ -2660,26 +2968,12 @@ function renderProfile() {
   }
 
   profileInventory.innerHTML = '';
+  profileInventory.dataset.visibleCount = '0';
   if (state.inventory.length === 0) {
     profileInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#555;font-size:12px;padding:30px">Инвентарь пуст</div>';
     return;
   }
-
-  state.inventory.forEach((item, idx) => {
-    const card = document.createElement('div');
-    card.className = 'sell-card';
-    const receive = Math.round(item.price * (1 - SELL_COMMISSION) * 100) / 100;
-    card.innerHTML = `
-      <div class="item-img"><img src="${item.img}" alt=""></div>
-      <div class="item-name" title="${item.name}">${item.name}</div>
-      <div class="item-quality">${[item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect, item.pattern].filter(Boolean).map(escapeHtml).join(' · ')}</div>
-      <div class="item-price">${fmt(item.price)}</div>
-      <button class="btn-sell">Обменять за ${fmt(receive)}</button>
-    `;
-    card.querySelector('.btn-sell').addEventListener('click', () => openSellModal(idx));
-    card.style.animationDelay = (idx * 0.02) + 's';
-    profileInventory.appendChild(card);
-  });
+  appendProfileInventoryPage();
 }
 
 async function publishUpgradeWin(instanceId) {

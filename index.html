@@ -281,6 +281,7 @@
           <button class="btn-small danger" id="resetBtn" title="Сбросить прогресс">Сброс</button>
         </div>
       </div>
+      <p class="profile-inventory-status" id="profileInventoryStatus" role="status" aria-live="polite"></p>
       <div class="grid profile-grid" id="profileInventory"></div>
     </div>
 
@@ -403,6 +404,17 @@
       <label class="settings-label" for="currencySelectCustomTrigger">Валюта сайта</label>
       <select id="currencySelect" class="settings-select"><option value="RUB">RUB · ₽</option><option value="USD">USD · $</option></select>
       <div class="settings-rate">Курс отображения: 1 USD = 90 RUB</div>
+      <div class="settings-audio">
+        <label class="settings-switch-row" for="musicEnabled">
+          <span><strong>Фоновая музыка</strong><small>Треки 1–5 будут играть по кругу</small></span>
+          <input type="checkbox" id="musicEnabled">
+          <span class="settings-switch" aria-hidden="true"></span>
+        </label>
+        <label class="settings-audio-volume" for="musicVolumeSlider">
+          <span>Громкость музыки <strong id="musicVolumeValue">30%</strong></span>
+          <input type="range" id="musicVolumeSlider" min="0" max="100" value="30" aria-label="Громкость фоновой музыки">
+        </label>
+      </div>
       <div class="settings-avatar-row"><img id="settingsAvatarPreview" alt="Аватар"><div><strong>Аватар</strong><p>Выбери изображение с устройства</p><label class="btn-small avatar-file-label" for="avatarFile">Изменить аватар</label><input type="file" id="avatarFile" accept="image/png,image/jpeg,image/webp" hidden></div></div>
       <form class="password-change-form" id="passwordChangeForm">
         <h4>Смена пароля</h4>

@@ -164,4 +164,84 @@ $$;
 revoke all on function public.admin_manage_player_inventory(bigint, text, text) from public, anon;
 grant execute on function public.admin_manage_player_inventory(bigint, text, text) to authenticated;
 
+create or replace function public.sell_all_inventory()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_state jsonb;
+  v_new_state jsonb;
+  v_inventory jsonb;
+  v_item_count integer;
+  v_balance numeric(14, 2);
+  v_amount numeric(14, 2);
+begin
+  if v_user_id is null then raise exception 'Sign in required'; end if;
+
+  select gs.state into v_state
+    from public.game_states gs
+   where gs.user_id = v_user_id
+   for update;
+  if v_state is null then raise exception 'Game state not found'; end if;
+  v_inventory := coalesce(v_state -> 'inventory', '[]'::jsonb);
+  if jsonb_typeof(v_inventory) <> 'array' then
+    raise exception 'Player inventory is invalid';
+  end if;
+
+  select w.balance into v_balance
+    from public.wallets w
+   where w.user_id = v_user_id
+   for update;
+  if v_balance is null then raise exception 'Wallet not found'; end if;
+
+  select count(*) into v_item_count
+    from jsonb_array_elements(v_inventory) as entry(item);
+  if v_item_count = 0 then
+    return jsonb_build_object('sold_count', 0, 'amount', 0, 'balance', v_balance);
+  end if;
+
+  if exists (
+    select 1 from jsonb_array_elements(v_inventory) as entry(item)
+     where coalesce(entry.item ->> 'price', '') !~ '^[0-9]+(\.[0-9]{1,2})?$'
+  ) then
+    raise exception 'Inventory contains an invalid item price';
+  end if;
+
+  select round(sum((entry.item ->> 'price')::numeric) * 0.90, 2)::numeric(14, 2)
+    into v_amount
+    from jsonb_array_elements(v_inventory) as entry(item);
+  if v_amount <= 0 then raise exception 'Inventory sale value must be positive'; end if;
+  if v_balance + v_amount > 999999999999.99 then
+    raise exception 'Wallet balance limit would be exceeded';
+  end if;
+
+  v_new_state := jsonb_set(v_state, '{inventory}', '[]'::jsonb, true);
+  v_new_state := jsonb_set(v_new_state, '{betId}', 'null'::jsonb, true);
+  v_new_state := jsonb_set(v_new_state, '{betItemIds}', '[]'::jsonb, true);
+  update public.game_states
+     set state = v_new_state, updated_at = now()
+   where user_id = v_user_id;
+
+  update public.wallets w
+     set balance = w.balance + v_amount, updated_at = now()
+   where w.user_id = v_user_id
+   returning w.balance into v_balance;
+
+  insert into public.wallet_transactions (user_id, actor_user_id, amount, bonus, reason)
+  values (v_user_id, v_user_id, v_amount, 0, 'game_sale');
+
+  return jsonb_build_object(
+    'sold_count', v_item_count,
+    'amount', v_amount,
+    'balance', v_balance
+  );
+end;
+$$;
+
+revoke all on function public.sell_all_inventory() from public, anon;
+grant execute on function public.sell_all_inventory() to authenticated;
+
 notify pgrst, 'reload schema';
