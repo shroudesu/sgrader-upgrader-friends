@@ -610,6 +610,30 @@ function formatChance(percent) {
   return `${Number(percent).toFixed(2)}%`;
 }
 
+function skinDisplayName(name) {
+  return String(name || 'Предмет').replace(/\s*(?:\(|\[)\s*(?:factory\s+new|minimal\s+wear|field[ -]?tested|well[ -]?worn|battle[ -]?(?:scarred|scared))\s*(?:\)|\])\s*$/i, '').trim();
+}
+
+function chanceColor(percent) {
+  const stops = [
+    [0, [239, 48, 58]], [9, [239, 48, 58]], [10, [255, 104, 38]],
+    [24, [255, 124, 32]], [25, [255, 153, 35]], [44, [255, 169, 38]],
+    [45, [255, 210, 48]], [74, [210, 222, 60]], [75, [145, 222, 90]],
+    [100, [74, 222, 128]]
+  ];
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  for (let index = 1; index < stops.length; index += 1) {
+    const [upper, upperRgb] = stops[index];
+    const [lower, lowerRgb] = stops[index - 1];
+    if (value <= upper) {
+      const ratio = upper === lower ? 1 : (value - lower) / (upper - lower);
+      const rgb = lowerRgb.map((channel, i) => Math.round(channel + (upperRgb[i] - channel) * ratio));
+      return `rgb(${rgb.join(', ')})`;
+    }
+  }
+  return 'rgb(74, 222, 128)';
+}
+
 function catalogEffect(item) {
   const directEffect = typeof item.effect === 'string' ? item.effect : item.effect?.name;
   if (directEffect) return directEffect;
@@ -1657,7 +1681,7 @@ async function saveAdminSuspension(durationMinutes, reason) {
 function caseSkinSnapshot(item) {
   return {
     id: item.id,
-    name: item.name,
+    name: skinDisplayName(item.name),
     price: Number(item.price || 0),
     img: item.img || '',
     rarity: item.rarity || null,
@@ -1675,11 +1699,23 @@ function caseSkinSnapshot(item) {
 
 function sortGameCases(items) {
   const result = [...items];
-  const sort = caseSort?.value || 'price-asc';
+  const sort = caseSort?.value || 'manual';
   return result.sort((left, right) => {
+    if (sort === 'manual') return Number(left.sort_order || 0) - Number(right.sort_order || 0)
+      || String(left.name || '').localeCompare(String(right.name || ''), 'ru');
     const priceOrder = Number(left.price || 0) - Number(right.price || 0);
     return sort === 'price-desc' ? -priceOrder : priceOrder;
   });
+}
+
+function sortGameCasesByOrder(items) {
+  return [...items].sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0)
+    || String(left.name || '').localeCompare(String(right.name || ''), 'ru'));
+}
+
+function sortGameCaseCategories(categories = gameCaseCategories) {
+  return [...categories].sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0)
+    || String(left.name || '').localeCompare(String(right.name || ''), 'ru'));
 }
 
 function renderCaseCards() {
@@ -1694,10 +1730,11 @@ function renderCaseCards() {
     if (!groups.has(id)) groups.set(id, []);
     groups.get(id).push(gameCase);
   });
+  const categoryOrder = new Map(sortGameCaseCategories().map((category, index) => [String(category.id), index]));
   const orderedGroups = [...groups.entries()].sort(([leftId], [rightId]) => {
     if (!leftId) return 1;
     if (!rightId) return -1;
-    return String(categoryNames.get(leftId) || '').localeCompare(String(categoryNames.get(rightId) || ''), 'ru');
+    return (categoryOrder.get(leftId) ?? Number.MAX_SAFE_INTEGER) - (categoryOrder.get(rightId) ?? Number.MAX_SAFE_INTEGER);
   });
   casesGrid.innerHTML = orderedGroups.map(([categoryId, items]) => {
     const categoryName = categoryId ? categoryNames.get(categoryId) : 'Без категории';
@@ -1728,13 +1765,13 @@ function renderCaseDetails(gameCase) {
   caseOpenContentsCount.textContent = `${contents.length} предметов`;
   caseOpenContents.innerHTML = contents.map(entry => {
     const item = entry.item || {};
-    const qualifiers = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : ''].filter(Boolean).join(' · ');
+    const qualifiers = [item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : ''].filter(Boolean).join(' · ');
     const rarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
     const rarityName = typeof item.rarity === 'object' ? item.rarity?.name : item.rarity;
     return `<article class="case-detail-item"${rarityColor ? ` style="--item-rarity-color:${escapeHtml(rarityColor)}"` : ''}>
       <div class="case-detail-image">${item.img ? `<img src="${escapeHtml(item.img)}" alt="" loading="lazy">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}</div>
-      <div class="case-detail-name"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong>${qualifiers ? `<small>${escapeHtml(qualifiers)}</small>` : ''}${rarityName ? `<small class="case-detail-rarity">${escapeHtml(rarityName)}</small>` : ''}</div>
-      <div class="case-detail-stats"><span>Цена</span><strong>${fmt(Number(item.price || 0))}</strong><span>Шанс</span><strong class="case-detail-chance">${Number(entry.chance || 0).toFixed(1)}%</strong></div>
+      <div class="case-detail-name"><strong title="${escapeHtml(skinDisplayName(item.name))}">${escapeHtml(skinDisplayName(item.name))}</strong>${qualifiers ? `<small>${escapeHtml(qualifiers)}</small>` : ''}${rarityName ? `<small class="case-detail-rarity">${escapeHtml(rarityName)}</small>` : ''}</div>
+      <div class="case-detail-stats"><span>Цена</span><strong>${fmt(Number(item.price || 0))}</strong><span>Шанс</span><strong class="case-detail-chance" style="--chance-color:${chanceColor(entry.chance)}">${Number(entry.chance || 0).toFixed(1)}%</strong></div>
     </article>`;
   }).join('') || '<div class="case-empty">В кейсе пока нет предметов.</div>';
   caseOpenQuantityInput.value = '1';
@@ -1783,28 +1820,41 @@ function renderAdminCaseList() {
     adminCaseList.innerHTML = '<div class="case-empty">Созданных кейсов пока нет.</div>';
     return;
   }
-  const categoryNames = new Map(gameCaseCategories.map(category => [String(category.id), category.name]));
-  adminCaseList.innerHTML = sortGameCases(gameCases).map(gameCase => `<article class="case-admin-row">
-    ${gameCase.image_url ? `<img src="${escapeHtml(gameCase.image_url)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}
-    <div class="case-admin-info"><strong title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</strong><span>${fmt(Number(gameCase.price))} · ${escapeHtml(categoryNames.get(String(gameCase.category_id)) || 'Без категории')} · ${(gameCase.contents || []).length} скинов</span></div>
-    <button type="button" class="btn-small" data-case-edit="${escapeHtml(gameCase.id)}">Изменить</button>
-  </article>`).join('');
+  const groups = [
+    ...sortGameCaseCategories().map(category => ({ id: String(category.id), name: category.name })),
+    { id: '', name: 'Без категории' }
+  ];
+  adminCaseList.innerHTML = groups.map(group => {
+    const items = sortGameCasesByOrder(gameCases.filter(gameCase => String(gameCase.category_id || '') === group.id));
+    if (!items.length) return '';
+    return `<div class="case-admin-group-title">${escapeHtml(group.name)}</div>` + items.map((gameCase, index) => `<article class="case-admin-row">
+      ${gameCase.image_url ? `<img src="${escapeHtml(gameCase.image_url)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}
+      <div class="case-admin-info"><strong title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</strong><span>${fmt(Number(gameCase.price))} · ${(gameCase.contents || []).length} скинов</span></div>
+      <div class="case-admin-order"><button type="button" class="btn-small" data-case-reorder="up" data-case-id="${escapeHtml(gameCase.id)}" aria-label="Поднять кейс выше" title="Поднять выше" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" class="btn-small" data-case-reorder="down" data-case-id="${escapeHtml(gameCase.id)}" aria-label="Опустить кейс ниже" title="Опустить ниже" ${index === items.length - 1 ? 'disabled' : ''}>↓</button></div>
+      <button type="button" class="btn-small" data-case-edit="${escapeHtml(gameCase.id)}">Изменить</button>
+    </article>`).join('');
+  }).join('') || '<div class="case-empty">Созданных кейсов пока нет.</div>';
 }
 
 function renderAdminCaseCategories() {
   if (!adminCaseCategories) return;
-  adminCaseCategories.innerHTML = gameCaseCategories.length
-    ? gameCaseCategories.map(category => `<span class="case-category-chip">${escapeHtml(category.name)}<button type="button" data-case-category-delete="${escapeHtml(category.id)}" aria-label="Удалить категорию ${escapeHtml(category.name)}" title="Удалить">×</button></span>`).join('')
+  const orderedCategories = sortGameCaseCategories();
+  adminCaseCategories.innerHTML = orderedCategories.length
+    ? orderedCategories.map((category, index) => `<span class="case-category-chip"><span>${escapeHtml(category.name)}</span><span class="case-category-order"><button type="button" data-case-category-order="up" data-category-id="${escapeHtml(category.id)}" aria-label="Поднять категорию ${escapeHtml(category.name)}" title="Поднять выше" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-case-category-order="down" data-category-id="${escapeHtml(category.id)}" aria-label="Опустить категорию ${escapeHtml(category.name)}" title="Опустить ниже" ${index === orderedCategories.length - 1 ? 'disabled' : ''}>↓</button></span><button type="button" data-case-category-delete="${escapeHtml(category.id)}" aria-label="Удалить категорию ${escapeHtml(category.name)}" title="Удалить">×</button></span>`).join('')
     : '<small>Категорий пока нет.</small>';
   const selected = adminCaseCategory.value;
-  adminCaseCategory.innerHTML = '<option value="">Без категории</option>' + gameCaseCategories.map(category => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join('');
+  adminCaseCategory.innerHTML = '<option value="">Без категории</option>' + orderedCategories.map(category => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join('');
   if (gameCaseCategories.some(category => String(category.id) === selected)) adminCaseCategory.value = selected;
   syncCustomSelect(adminCaseCategory);
 }
 
 async function loadCaseCategories() {
   if (!supabaseClient) return;
-  const { data, error } = await supabaseClient.from('game_case_categories').select('id,name').order('name');
+  let { data, error } = await supabaseClient.from('game_case_categories').select('id,name,sort_order').order('sort_order').order('name');
+  if (error && /sort_order|column/i.test(String(error.message || ''))) {
+    ({ data, error } = await supabaseClient.from('game_case_categories').select('id,name').order('name'));
+    if (!error && Array.isArray(data)) data = data.map((category, index) => ({ ...category, sort_order: index + 1 }));
+  }
   if (error) {
     gameCaseCategories = [];
     renderAdminCaseCategories();
@@ -1823,8 +1873,13 @@ async function loadCases() {
   }
   await loadCaseCategories();
   let { data, error } = await supabaseClient.from('game_cases')
-    .select('id,name,price,image_url,contents,category_id,created_at,updated_at')
+    .select('id,name,price,image_url,contents,category_id,sort_order,created_at,updated_at')
     .order('created_at', { ascending: false });
+  if (error && /sort_order|category_id|column/i.test(String(error.message || ''))) {
+    ({ data, error } = await supabaseClient.from('game_cases')
+      .select('id,name,price,image_url,contents,category_id,created_at,updated_at')
+      .order('created_at', { ascending: false }));
+  }
   if (error && /category_id|column/i.test(String(error.message || ''))) {
     ({ data, error } = await supabaseClient.from('game_cases')
       .select('id,name,price,image_url,contents,created_at,updated_at')
@@ -1837,6 +1892,10 @@ async function loadCases() {
     return;
   }
   gameCases = Array.isArray(data) ? data : [];
+  if (gameCases.length && gameCases.some(gameCase => gameCase.sort_order == null)) {
+    gameCases = [...gameCases].sort((left, right) => Number(left.price || 0) - Number(right.price || 0))
+      .map((gameCase, index) => ({ ...gameCase, sort_order: index + 1 }));
+  }
   renderCaseCards();
   renderAdminCaseList();
 }
@@ -1855,7 +1914,7 @@ function renderCaseDraftContents() {
   }
   adminCaseContents.innerHTML = caseDraftContents.map((entry, index) => `<div class="case-content-row" data-index="${index}">
     <img src="${escapeHtml(entry.item.img || '')}" alt="">
-    <span title="${escapeHtml(entry.item.name)}">${escapeHtml(entry.item.name)}</span>
+    <span title="${escapeHtml(skinDisplayName(entry.item.name))}">${escapeHtml(skinDisplayName(entry.item.name))}</span>
     <label>Шанс <input type="number" min="0.1" max="100" step="0.1" value="${Number(entry.chance).toFixed(1)}" data-case-chance="${index}" aria-label="Шанс для ${escapeHtml(entry.item.name)}">%</label>
     <button type="button" data-case-remove="${index}" aria-label="Убрать скин из кейса" title="Убрать"><iconify-icon icon="mdi:trash-can-outline"></iconify-icon></button>
   </div>`).join('');
@@ -1877,7 +1936,7 @@ function renderCaseSkinResults() {
     const id = String(item.id);
     const alreadyAdded = caseDraftContents.some(entry => String(entry.item.id) === id);
     return `<button type="button" class="case-skin-result" data-case-add="${escapeHtml(id)}" ${alreadyAdded ? 'disabled' : ''}>
-      <img src="${escapeHtml(item.img || '')}" alt=""><span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span><strong>${alreadyAdded ? 'Добавлен' : fmt(Number(item.price || 0))}</strong>
+      <img src="${escapeHtml(item.img || '')}" alt=""><span title="${escapeHtml(skinDisplayName(item.name))}">${escapeHtml(skinDisplayName(item.name))}</span><strong>${alreadyAdded ? 'Добавлен' : fmt(Number(item.price || 0))}</strong>
     </button>`;
   }).join('');
 }
@@ -2239,7 +2298,7 @@ function makeCaseReelMarkup(item, caseContents, reward) {
   const actionDisabled = caseOpeningInProgress || caseSettlementInProgress || caseAnimationInProgress ? ' disabled' : '';
   const revealCard = revealed ? `<div class="case-reveal-card"${winnerRarityStyle}>
       <img src="${escapeHtml(item.img || '')}" alt="">
-      <div class="case-reveal-copy"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong><span>${fmt(Number(item.price || 0))}</span></div>
+      <div class="case-reveal-copy"><strong title="${escapeHtml(skinDisplayName(item.name))}">${escapeHtml(skinDisplayName(item.name))}</strong><span>${fmt(Number(item.price || 0))}</span></div>
       <div class="case-reveal-actions">
         <button type="button" class="case-reveal-claim" data-reward-action="claim" data-reward-id="${escapeHtml(reward.id)}"${actionDisabled}>Забрать</button>
         <button type="button" class="case-reveal-sell" data-reward-action="sell" data-reward-id="${escapeHtml(reward.id)}"${actionDisabled}>Продать · ${fmt(caseSellValue(item))}</button>
@@ -2694,6 +2753,23 @@ adminCaseCategoryForm.addEventListener('submit', async event => {
   renderCaseCards();
 });
 adminCaseCategories.addEventListener('click', event => {
+  const orderButton = event.target.closest('[data-case-category-order]');
+  if (orderButton && currentUser?.role === 'admin') {
+    orderButton.disabled = true;
+    void (async () => {
+      const { error } = await supabaseClient.rpc('admin_reorder_game_case_category', {
+        p_category_id: orderButton.dataset.categoryId,
+        p_direction: orderButton.dataset.caseCategoryOrder
+      });
+      if (error) {
+        adminCaseCategories.innerHTML = '<small>Порядок категорий недоступен. Примени обновлённую supabase/case-categories.sql.</small>';
+        console.error('Could not reorder case category:', error);
+        return;
+      }
+      await loadCases();
+    })();
+    return;
+  }
   const button = event.target.closest('[data-case-category-delete]');
   if (!button || !currentUser || currentUser.role !== 'admin') return;
   const category = gameCaseCategories.find(item => String(item.id) === button.dataset.caseCategoryDelete);
@@ -2735,6 +2811,24 @@ adminCaseContents.addEventListener('click', event => {
   renderCaseSkinResults();
 });
 adminCaseList.addEventListener('click', event => {
+  const orderButton = event.target.closest('[data-case-reorder]');
+  if (orderButton && currentUser?.role === 'admin') {
+    orderButton.disabled = true;
+    void (async () => {
+      const { error } = await supabaseClient.rpc('admin_reorder_game_case', {
+        p_case_id: orderButton.dataset.caseId,
+        p_direction: orderButton.dataset.caseReorder
+      });
+      if (error) {
+        adminCaseFeedback.textContent = 'Изменение порядка недоступно. Примени обновлённую supabase/case-categories.sql.';
+        adminCaseFeedback.classList.add('show');
+        console.error('Could not reorder game case:', error);
+        return;
+      }
+      await loadCases();
+    })();
+    return;
+  }
   const button = event.target.closest('[data-case-edit]');
   if (!button || currentUser?.role !== 'admin') return;
   const gameCase = gameCases.find(item => String(item.id) === button.dataset.caseEdit);
@@ -2907,10 +3001,10 @@ async function loadAdminPlayerInventory(playerId, username = '') {
       const saleValue = Math.round(Number(item.price || 0) * 100) / 100;
       return '<article class="admin-inventory-card">' +
         '<img src="' + escapeHtml(item.img || '') + '" alt="">' +
-        '<div class="admin-inventory-item-info"><strong title="' + escapeHtml(item.name || 'Предмет') + '">' + escapeHtml(item.name || 'Предмет') + '</strong><span>' + fmt(Number(item.price || 0)) + '</span></div>' +
+        '<div class="admin-inventory-item-info"><strong title="' + escapeHtml(skinDisplayName(item.name)) + '">' + escapeHtml(skinDisplayName(item.name)) + '</strong><span>' + fmt(Number(item.price || 0)) + '</span></div>' +
         '<div class="admin-inventory-actions">' +
-        '<button type="button" class="btn-small admin-inventory-action" data-action="sell" data-item-id="' + escapeHtml(item.instanceId || '') + '" data-item-name="' + escapeHtml(item.name || 'Предмет') + '" data-sale-value="' + saleValue + '">Продать · ' + fmt(saleValue) + '</button>' +
-        '<button type="button" class="btn-small danger admin-inventory-action" data-action="delete" data-item-id="' + escapeHtml(item.instanceId || '') + '" data-item-name="' + escapeHtml(item.name || 'Предмет') + '">Удалить</button>' +
+        '<button type="button" class="btn-small admin-inventory-action" data-action="sell" data-item-id="' + escapeHtml(item.instanceId || '') + '" data-item-name="' + escapeHtml(skinDisplayName(item.name)) + '" data-sale-value="' + saleValue + '">Продать · ' + fmt(saleValue) + '</button>' +
+        '<button type="button" class="btn-small danger admin-inventory-action" data-action="delete" data-item-id="' + escapeHtml(item.instanceId || '') + '" data-item-name="' + escapeHtml(skinDisplayName(item.name)) + '">Удалить</button>' +
         '</div></article>';
     }).join('')
     : '<div class="admin-inventory-empty">Инвентарь пуст.</div>';
@@ -3114,6 +3208,8 @@ function paintWheel(chancePercent) {
   const chance = Math.max(0, Math.min(100, Number(chancePercent) || 0));
   const ringRadius = r - 36;
   const tickRadius = r - 10;
+  const color = chanceColor(chance);
+  wheelWrap.style.setProperty('--chance-color', color);
   ctx.lineCap = 'butt';
   for (let degree = 0; degree < 360; degree += 5) {
     const angle = degree * Math.PI / 180;
@@ -3133,14 +3229,27 @@ function paintWheel(chancePercent) {
   ctx.lineWidth = 28;
   ctx.stroke();
 
+  ctx.fillStyle = color;
+  ctx.font = '700 8px Segoe UI, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('100%', cx, cy - ringRadius);
+  ctx.fillText('50%', cx - ringRadius, cy);
+  ctx.fillText('50%', cx + ringRadius, cy);
+
   const winAngle = Math.PI * 2 * chance / 100;
   if (chance > 0) {
     const start = Math.PI / 2 - winAngle / 2;
     const end = Math.PI / 2 + winAngle / 2;
+    const rgb = color.match(/\d+/g).map(Number);
+    const shade = (amount, mixWithWhite = false) => {
+      const adjusted = rgb.map(channel => Math.round(mixWithWhite ? channel + (255 - channel) * amount : channel * amount));
+      return `rgb(${adjusted.join(', ')})`;
+    };
     const gradient = ctx.createLinearGradient(0, cy + ringRadius, size, cy - ringRadius);
-    gradient.addColorStop(0, '#777');
-    gradient.addColorStop(.48, '#c9c9c9');
-    gradient.addColorStop(1, '#f4f4f4');
+    gradient.addColorStop(0, shade(.72));
+    gradient.addColorStop(.45, color);
+    gradient.addColorStop(1, shade(.2, true));
     ctx.beginPath();
     if (chance >= 99.999) ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
     else ctx.arc(cx, cy, ringRadius, start, end);
@@ -3154,14 +3263,6 @@ function paintWheel(chancePercent) {
   ctx.strokeStyle = 'rgba(255,255,255,.045)';
   ctx.lineWidth = 1;
   ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,.42)';
-  ctx.font = '600 11px Segoe UI, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('100%', cx, 34);
-  ctx.textAlign = 'left';
-  ctx.fillText('50%', 18, cy + 4);
-  ctx.textAlign = 'right';
-  ctx.fillText('50%', size - 18, cy + 4);
 }
 
 function drawWheel(chancePercent, animate = true) {
@@ -3227,7 +3328,7 @@ async function loadSkins() {
 
     SKINS_CATALOG = catalogFiles.flatMap((entry, dataIndex) => datasets[dataIndex].map((item, idx) => ({
       id: `${entry.type}_${item.id || idx}`,
-      name: item.name,
+      name: skinDisplayName(item.name),
       price: calcPrice(item, entry.type),
       img: item.image || item.image_inventory || item.image_url,
       rarity: item.rarity,
@@ -3524,8 +3625,8 @@ function renderSlot(slotEl, item) {
   }
   slotEl.classList.add('has-item');
   const title = item.items?.length > 1
-    ? `${item.items.length} скина: ${item.items.slice(0, 2).map(skin => escapeHtml(skin.name)).join(' + ')}${item.items.length > 2 ? ' …' : ''}`
-    : escapeHtml(item.name);
+    ? `${item.items.length} скина: ${item.items.slice(0, 2).map(skin => escapeHtml(skinDisplayName(skin.name))).join(' + ')}${item.items.length > 2 ? ' …' : ''}`
+    : escapeHtml(skinDisplayName(item.name));
   slotEl.innerHTML = `
     <button type="button" class="slot-remove" data-slot-remove="${slotEl === betSlot ? 'bet' : 'target'}" aria-label="Убрать выбранный скин" title="Убрать скин"><iconify-icon icon="mdi:close"></iconify-icon></button>
     <img src="${item.img}" alt="">
@@ -3626,7 +3727,7 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   const marketQuantity = source === 'catalog' ? Number(marketSelection.get(String(item.id)) || 0) : 0;
   const selectedForPurchase = marketQuantity > 0;
   if (selected) card.classList.add('active');
-  const qualityParts = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect].filter(Boolean);
+  const qualityParts = [item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect].filter(Boolean);
   const rarityName = typeof item.rarity === 'object' ? item.rarity?.name : item.rarity;
   if (item.floatMin != null && item.floatMax != null && item.floatMax > item.floatMin) {
     qualityParts.push(`${Number(item.floatMin).toFixed(2)}–${Number(item.floatMax).toFixed(2)}`);
@@ -3637,7 +3738,7 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
     ${source === 'catalog' ? '<div class="card-badge buy">$</div>' : ''}
     ${isCurrentYearItem ? `<div class="card-badge new">${escapeHtml(catalogReleaseYear)}</div>` : ''}
     <div class="item-img"><img src="${escapeHtml(item.img || '')}" alt="" loading="lazy">${wearCode(item.wear) ? `<span class="wear-badge">${wearCode(item.wear)}</span>` : ''}${selectedForPurchase ? `<span class="market-quantity-badge">×${marketQuantity}</span>` : ''}</div>
-    <div class="item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
+    <div class="item-name" title="${escapeHtml(skinDisplayName(item.name))}">${escapeHtml(skinDisplayName(item.name))}</div>
     <div class="item-price">${fmt(item.price)}</div>
     ${qualityParts.length ? `<div class="item-quality">${qualityParts.map(part => escapeHtml(part)).join(' · ')}</div>` : ''}
     <div class="item-rarity">${escapeHtml(rarityName || item.category || 'Предмет')}</div>
@@ -3892,13 +3993,13 @@ function appendMyInventoryCard(idx) {
   }
   const name = document.createElement('div');
   name.className = 'item-name';
-  name.textContent = inv.name || 'Предмет';
-  name.title = inv.name || 'Предмет';
+  name.textContent = skinDisplayName(inv.name);
+  name.title = skinDisplayName(inv.name);
   const price = document.createElement('div');
   price.className = 'item-price';
   price.classList.add('item-price-green');
   price.textContent = fmt(inv.price);
-  const qualities = [inv.wear, inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
+  const qualities = [inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
   card.append(imageWrap, name, price);
   if (qualities.length) {
     const quality = document.createElement('div');
@@ -4020,7 +4121,7 @@ function renderBattlePicker() {
       const selected = selectedBattleSkinIds.has(item.instanceId);
       card.className = `battle-inventory-item${selected ? ' selected' : ''}`;
       card.setAttribute('aria-pressed', String(selected));
-      card.innerHTML = `<img src="${escapeHtml(item.img || '')}" alt=""><span class="battle-inventory-name">${escapeHtml(item.name)}</span><span class="battle-inventory-price">${fmt(Number(item.price || 0))}</span>`;
+      card.innerHTML = `<img src="${escapeHtml(item.img || '')}" alt=""><span class="battle-inventory-name">${escapeHtml(skinDisplayName(item.name))}</span><span class="battle-inventory-price">${fmt(Number(item.price || 0))}</span>`;
       card.addEventListener('click', () => {
         if (selectedBattleSkinIds.has(item.instanceId)) {
           selectedBattleSkinIds.delete(item.instanceId);
@@ -4063,7 +4164,7 @@ function getBattleStakeTotal(stake) {
 function renderBattleStakeItems(stake, emptyText = 'Ожидает входа') {
   const items = getBattleStakeItems(stake);
   if (!items.length) return `<span>${escapeHtml(emptyText)}</span>`;
-  return `<div class="battle-stake-items">${items.map(item => `<div class="battle-stake-item"><img src="${escapeHtml(item.img || '')}" alt=""><span title="${escapeHtml(item.name || 'Скин')}">${escapeHtml(item.name || 'Скин')}</span><small>${fmt(Number(item.price || 0))}</small></div>`).join('')}</div>`;
+  return `<div class="battle-stake-items">${items.map(item => `<div class="battle-stake-item"><img src="${escapeHtml(item.img || '')}" alt=""><span title="${escapeHtml(skinDisplayName(item.name))}">${escapeHtml(skinDisplayName(item.name))}</span><small>${fmt(Number(item.price || 0))}</small></div>`).join('')}</div>`;
 }
 
 function drawBattleWheel() {
@@ -4497,10 +4598,6 @@ setInterval(() => {
   if ($('page-battles').classList.contains('active')) void loadBattles();
 }, 4000);
 
-setInterval(() => {
-  if (currentUser) void loadUpgradeFeed();
-}, 5000);
-
 // ============================================================
 // ВЫБОР
 // ============================================================
@@ -4552,9 +4649,9 @@ function renderPurchaseReview() {
   modalItem.innerHTML = entries.length
     ? `<div class="purchase-batch-list">${entries.map(({ item, quantity: count }) => `<div class="purchase-batch-item">
         <img src="${escapeHtml(item.img || '')}" alt="">
-        <span>${escapeHtml(item.name)} <small>×${count}</small></span>
+        <span>${escapeHtml(skinDisplayName(item.name))} <small>×${count}</small></span>
         <strong>${fmt(Number(item.price || 0) * count)}</strong>
-        <button type="button" class="purchase-remove" data-item-id="${escapeHtml(item.id)}" aria-label="Убрать ${escapeHtml(item.name)} из корзины" title="Убрать из корзины"><iconify-icon icon="mdi:trash-can-outline"></iconify-icon></button>
+        <button type="button" class="purchase-remove" data-item-id="${escapeHtml(item.id)}" aria-label="Убрать ${escapeHtml(skinDisplayName(item.name))} из корзины" title="Убрать из корзины"><iconify-icon icon="mdi:trash-can-outline"></iconify-icon></button>
       </div>`).join('')}</div>`
     : '<div class="purchase-cart-empty">Корзина пуста. Вернись в каталог и выбери скины.</div>';
   modalPrice.textContent = fmt(total);
@@ -4661,7 +4758,7 @@ function openSellModal(invIndex) {
 
   const receive = Math.round(Number(item.price || 0) * 100) / 100;
 
-  sellModalItem.innerHTML = `<img src="${item.img}" alt=""><div class="item-name">${item.name}</div>`;
+  sellModalItem.innerHTML = `<img src="${escapeHtml(item.img || '')}" alt=""><div class="item-name">${escapeHtml(skinDisplayName(item.name))}</div>`;
   sellReceive.textContent = fmt(receive);
 
   sellModal.classList.add('show');
@@ -4826,8 +4923,8 @@ function appendProfileInventoryCard(idx) {
   imageWrap.appendChild(image);
   const name = document.createElement('div');
   name.className = 'item-name';
-  name.textContent = item.name || 'Предмет';
-  name.title = item.name || 'Предмет';
+  name.textContent = skinDisplayName(item.name);
+  name.title = skinDisplayName(item.name);
   const quality = document.createElement('div');
   quality.className = 'item-quality';
   quality.textContent = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect, item.pattern].filter(Boolean).join(' · ');
@@ -4910,46 +5007,38 @@ function renderUpgradeFeed(items) {
     const key = String(entry.id || `${entry.user_id || 'player'}:${entry.created_at || index}:${item.name || ''}`);
     return { key, html: `<span class="feed-user"><img src="${escapeHtml(entry.avatar || '')}" alt=""><strong>${escapeHtml(entry.username || 'Игрок')}</strong></span>
       <img class="feed-item-image" src="${escapeHtml(item.img || '')}" alt="">
-      <span class="feed-item-name">${escapeHtml(item.name || 'Скин')}</span>
+      <span class="feed-item-name">${escapeHtml(skinDisplayName(item.name))}</span>
       <span class="feed-item-price">${fmt(Number(item.price || 0))}</span>
       ${item.case_name ? `<small class="feed-item-source">Кейс: ${escapeHtml(item.case_name)}</small>` : ''}
       <small class="feed-item-date">${date}</small>`, userId: entry.user_id || '' };
   });
   feeds.forEach(feed => {
-    const oldPositions = new Map([...feed.querySelectorAll('.upgrade-feed-card[data-feed-id]')]
-      .map(card => [card.dataset.feedId, card.getBoundingClientRect()]));
     const existing = new Map([...feed.querySelectorAll('.upgrade-feed-card[data-feed-id]')]
       .map(card => [card.dataset.feedId, card]));
+    const initialLoad = feed.dataset.feedInitialized !== 'true';
     feed.querySelector('.feed-empty')?.remove();
-    entries.forEach(entry => {
+    [...entries].reverse().forEach(entry => {
       let card = existing.get(entry.key);
-      const isNew = !card;
-      if (!card) {
-        card = document.createElement('button');
-        card.type = 'button';
-        card.className = 'upgrade-feed-card';
-        card.dataset.feedId = entry.key;
+      if (card) {
+        card.disabled = !currentUser;
         card.dataset.userId = entry.userId;
-        if (!currentUser) card.disabled = true;
+        return;
       }
+      card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'upgrade-feed-card';
+      card.dataset.feedId = entry.key;
+      card.dataset.userId = entry.userId;
+      if (!currentUser) card.disabled = true;
       card.innerHTML = entry.html;
-      feed.appendChild(card);
-      const old = oldPositions.get(entry.key);
-      if (old && typeof card.animate === 'function') {
-        const next = card.getBoundingClientRect();
-        const dx = old.left - next.left;
-        const dy = old.top - next.top;
-        if (Math.abs(dx) + Math.abs(dy) > 1) {
-          card.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'translate(0,0)' }], {
-            duration: 300, easing: 'cubic-bezier(.2,.75,.25,1)'
-          });
-        }
-      } else if (isNew && typeof card.animate === 'function') {
+      feed.insertBefore(card, feed.firstElementChild);
+      if (!initialLoad && typeof card.animate === 'function') {
         card.animate([{ opacity: 0, transform: 'translateY(-12px)' }, { opacity: 1, transform: 'translateY(0)' }], {
           duration: 360, easing: 'cubic-bezier(.2,.75,.25,1)'
         });
       }
     });
+    feed.dataset.feedInitialized = 'true';
     const visibleKeys = new Set(entries.map(entry => entry.key));
     feed.querySelectorAll('.upgrade-feed-card[data-feed-id]').forEach(card => {
       if (!visibleKeys.has(card.dataset.feedId)) card.remove();
@@ -5030,11 +5119,11 @@ async function viewPublicProfile(userId) {
     <div><span>Баланс инвентаря</span><strong>${fmt(Number(data.inventory_value || 0))}</strong></div>`;
   const best = data.best_drop;
   publicProfileBestDrop.innerHTML = best?.name
-    ? `<div class="public-best-label">Лучший дроп</div><div class="public-best-item"><img src="${escapeHtml(best.img || '')}" alt=""><span>${escapeHtml(best.name)}</span><strong>${fmt(Number(best.price || 0))}</strong></div>`
+    ? `<div class="public-best-label">Лучший дроп</div><div class="public-best-item"><img src="${escapeHtml(best.img || '')}" alt=""><span>${escapeHtml(skinDisplayName(best.name))}</span><strong>${fmt(Number(best.price || 0))}</strong></div>`
     : '<div class="public-best-label">Лучший дроп · пока нет</div>';
   const inventory = Array.isArray(data.inventory) ? data.inventory : [];
   publicProfileInventory.innerHTML = inventory.length
-    ? inventory.map(item => `<article class="public-inventory-card"><img src="${escapeHtml(item.img || '')}" alt=""><strong>${escapeHtml(item.name || 'Предмет')}</strong><span>${fmt(Number(item.price || 0))}</span><small>${escapeHtml([item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : ''].filter(Boolean).join(' · '))}</small></article>`).join('')
+    ? inventory.map(item => `<article class="public-inventory-card"><img src="${escapeHtml(item.img || '')}" alt=""><strong>${escapeHtml(skinDisplayName(item.name))}</strong><span>${fmt(Number(item.price || 0))}</span><small>${escapeHtml([item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : ''].filter(Boolean).join(' · '))}</small></article>`).join('')
     : '<div class="feed-empty">Инвентарь пуст.</div>';
 }
 
@@ -5437,10 +5526,6 @@ async function initSession() {
 initCustomSelects();
 void loadUpgradeFeed();
 void initSession();
-
-setInterval(() => {
-  if (!currentUser && !authScreen.classList.contains('hide')) void loadUpgradeFeed();
-}, 60000);
 
 setInterval(() => { void refreshWallet(); }, 10000);
 setInterval(() => { void refreshCurrentUserSuspension(); }, 5000);
