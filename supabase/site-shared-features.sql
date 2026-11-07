@@ -20,6 +20,7 @@ create index if not exists custom_catalog_skins_created_at_idx
 alter table public.custom_catalog_skins enable row level security;
 revoke all on table public.custom_catalog_skins from public, anon, authenticated;
 grant select on table public.custom_catalog_skins to anon, authenticated;
+grant insert, update, delete on table public.custom_catalog_skins to authenticated;
 
 drop policy if exists custom_catalog_skins_read on public.custom_catalog_skins;
 create policy custom_catalog_skins_read on public.custom_catalog_skins

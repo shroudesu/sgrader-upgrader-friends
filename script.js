@@ -3304,9 +3304,16 @@ adminCustomSkinForm.addEventListener('submit', async event => {
     if (!adminCaseForm.hidden) renderCaseSkinResults();
   } catch (error) {
     if (uploadedPath) await supabaseClient.storage.from(CUSTOM_SKIN_IMAGE_BUCKET).remove([uploadedPath]).catch(() => {});
-    adminCustomSkinFeedback.textContent = /custom_catalog_skins|schema cache|does not exist|bucket/i.test(String(error.message || ''))
-      ? 'Проверь миграцию supabase/site-shared-features.sql и права Storage.'
-      : 'Не удалось сохранить скин. Проверь поля и подключение.';
+    const errorMessage = String(error.message || 'Неизвестная ошибка').replace(/\s+/g, ' ').slice(0, 180);
+    if (/permission denied for table custom_catalog_skins/i.test(errorMessage)) {
+      adminCustomSkinFeedback.textContent = 'Выполни обновлённую supabase/site-shared-features.sql: она выдаёт право INSERT, а RLS оставляет добавление только администратору.';
+    } else if (/bucket|storage|row-level security/i.test(errorMessage)) {
+      adminCustomSkinFeedback.textContent = `Ошибка загрузки изображения. Проверь bucket custom-skin-images и политику администратора: ${errorMessage}`;
+    } else if (/custom_catalog_skins|schema cache|does not exist/i.test(errorMessage)) {
+      adminCustomSkinFeedback.textContent = `Проверь миграцию supabase/site-shared-features.sql: ${errorMessage}`;
+    } else {
+      adminCustomSkinFeedback.textContent = `Не удалось сохранить скин: ${errorMessage}`;
+    }
     console.error('Could not save custom catalog skin:', error);
   } finally {
     adminCustomSkinSave.disabled = false;

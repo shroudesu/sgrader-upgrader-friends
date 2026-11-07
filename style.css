@@ -1091,7 +1091,7 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .public-inventory-card img { width: 100%; height: 48px; object-fit: contain; }
 
 .custom-skin-form { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); align-items: end; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-3); }
-.custom-skin-form label { min-width: 0; display: grid; gap: 6px; color: var(--text-dim); font-size: 10px; }
+.custom-skin-form label { min-width: 0; display: grid; gap: 6px; color: var(--text-dim); font-size: 10px; white-space: nowrap; }
 .custom-skin-form input:not([type="file"]):not([type="color"]) { width: 100%; min-height: 37px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; outline: none; background: var(--bg-2); color: var(--text); font: inherit; }
 .custom-skin-form input:focus { border-color: var(--success); }
 .custom-skin-form input[type="color"] { width: 100%; height: 37px; padding: 4px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-2); cursor: pointer; }
@@ -1115,6 +1115,9 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
   .custom-skin-preview { grid-column: 1; }
   .custom-skin-form > button { grid-column: 2; }
   .battle-room-wheel-wrap { width: 210px; height: 210px; }
+}
+@media (min-width: 641px) and (max-width: 920px) {
+  .custom-skin-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 .public-inventory-card strong { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
 .public-inventory-card span { color: var(--success); font-size: 9px; font-weight: 700; }
