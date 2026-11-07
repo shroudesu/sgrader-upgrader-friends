@@ -312,43 +312,12 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.quick-filters {
-  display: flex;
-  gap: 5px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
 .catalog-source-note {
   margin: -4px 0 9px;
   color: var(--text-dim);
   font-size: 9px;
   letter-spacing: 0.02em;
 }
-.qf-btn {
-  flex: 1;
-  min-width: 60px;
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  padding: 6px 8px;
-  border-radius: 6px;
-  font-size: 10px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: 0.2s;
-  white-space: nowrap;
-}
-.qf-btn:hover {
-  border-color: rgba(255,255,255,0.3);
-  color: var(--white);
-}
-.qf-btn.active {
-  background: var(--white);
-  color: var(--black);
-  border-color: var(--white);
-  box-shadow: 0 0 10px var(--neon-soft);
-}
-
 .loading { font-size: 11px; color: var(--text-dim); text-align: center; padding: 10px; }
 .loading.hide { display: none; }
 
@@ -716,10 +685,7 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .inventory-balance-summary .balance-value { color: var(--success); }
 .buy-selected-btn { white-space: nowrap; }
 .inv-card.market-selected { border-color: var(--success); box-shadow: 0 0 14px rgba(74,222,128,.2); }
-.upgrade-page-layout { display: grid; grid-template-columns: minmax(205px,230px) minmax(0,1fr); align-items: start; gap: 16px; }
-.upgrade-main { min-width: 0; }
-.app.upgrade-view .container { max-width: none; margin: 0; padding: 24px 18px 24px 260px; }
-.upgrade-page-layout { display: block; }
+.app > .container { max-width: none; margin: 0; padding: 24px 18px 24px 260px; }
 .upgrade-feed-panel { position: fixed; z-index: 20; top: 0; bottom: 0; left: 0; width: 244px; min-width: 0; max-height: none; display: flex; flex-direction: column; margin: 0; padding: 92px 11px 12px; overflow: hidden; border-top: 0; border-bottom: 0; border-left: 0; border-radius: 0; }
 .upgrade-feed-panel .panel-title-row { gap: 6px; margin-bottom: 4px; }
 .upgrade-feed-panel .panel-title { font-size: 13px; }
@@ -813,9 +779,8 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 
 @media (max-width: 700px) {
   .inventory-balance-summary { padding-left: 0; border-left: 0; }
-  .app.upgrade-view .container { max-width: 1500px; margin: 0 auto; padding: 24px 18px; }
-  .upgrade-page-layout { display: grid; grid-template-columns: minmax(0,1fr); }
-  .upgrade-feed-panel { position: static; width: auto; max-height: 250px; padding: 14px 11px 12px; border: 1px solid var(--border); border-radius: 14px; }
+  .app > .container { max-width: 1500px; margin: 0 auto; padding: 24px 18px; }
+  .upgrade-feed-panel { position: static; width: auto; max-height: 250px; margin: 12px 14px 0; padding: 14px 11px 12px; border: 1px solid var(--border); border-radius: 14px; }
   .upgrade-feed { flex: 0 0 auto; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .upgrade-feed-card { flex: 0 0 170px; }
   .battle-toolbar { align-items: center; }
@@ -836,3 +801,47 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
   .battle-room-player > span { font-size: 8px; }
   .public-profile-stats { grid-template-columns: 1fr; }
 }
+
+/* ===== ЕДИНЫЙ СТИЛЬ ВЫПАДАЮЩИХ СПИСКОВ И ФИЛЬТРОВ ===== */
+select {
+  min-height: 36px;
+  padding: 8px 34px 8px 10px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background-color: var(--bg-3);
+  background-image:
+    linear-gradient(45deg, transparent 50%, #999 50%),
+    linear-gradient(135deg, #999 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+  color: var(--text);
+  color-scheme: dark;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color .18s, box-shadow .18s;
+}
+select:hover { border-color: rgba(255,255,255,.28); }
+select:focus-visible { outline: none; border-color: var(--success); box-shadow: 0 0 0 2px rgba(74,222,128,.14); }
+select:disabled { opacity: .55; cursor: not-allowed; }
+select option, select optgroup { background: var(--bg-2); color: var(--text); }
+.sort-select, .settings-select, .topup-form select, .category-select {
+  padding-right: 34px;
+  border-radius: 8px;
+  background-color: var(--bg-3);
+  background-image:
+    linear-gradient(45deg, transparent 50%, #999 50%),
+    linear-gradient(135deg, #999 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+}
+.category-filter { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.category-filter label { color: var(--text-dim); font-size: 10px; }
+.category-select { width: 100%; flex: 0 0 auto; font-size: 11px; }

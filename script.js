@@ -324,6 +324,7 @@ const invSearch = $('invSearch');
 const invPriceFrom = $('invPriceFrom');
 const invPriceTo = $('invPriceTo');
 const invSort = $('invSort');
+const invCategory = $('invCategory');
 const invCount = $('invCount');
 const invLoading = $('invLoading');
 const catalogSourceNote = $('catalogSourceNote');
@@ -332,6 +333,7 @@ const targetSearch = $('targetSearch');
 const targetPriceFrom = $('targetPriceFrom');
 const targetPriceTo = $('targetPriceTo');
 const targetSort = $('targetSort');
+const targetCategory = $('targetCategory');
 const targetCount = $('targetCount');
 const targetLoading = $('targetLoading');
 const chanceValue = $('chanceValue');
@@ -627,7 +629,6 @@ async function loginAs(authUser) {
 
   authScreen.classList.add('hide');
   appEl.style.display = 'block';
-  appEl.classList.add('upgrade-view');
   userNameEl.textContent = currentUser.username;
   playerIdEl.textContent = `ID игрока: ${currentUser.playerId}`;
   renderHeaderAvatar();
@@ -1005,7 +1006,6 @@ function activateTab(page) {
   document.querySelectorAll('.tab-page').forEach(element => element.classList.remove('active'));
   tab.classList.add('active');
   panel.classList.add('active');
-  appEl.classList.toggle('upgrade-view', page === 'upgrade');
   if (page === 'profile') renderProfile();
   if (page === 'admin') void renderAdminUsers();
   if (page === 'battles') { drawBattleWheel(); void loadBattles(); renderBattleList(); renderBattleArchive(); }
@@ -1220,8 +1220,8 @@ async function loadSkins() {
         const totalItems = Object.values(itemCounts).reduce((sum, count) => sum + Number(count || 0), 0);
         const baseDesigns = Number(metadata.skinDesigns || 0);
         catalogReleaseYear = String(metadata.currentYear || new Date().getFullYear());
-        document.querySelectorAll('[data-qf="new"], [data-tqf="new"]').forEach(button => {
-          button.textContent = `Новинки ${catalogReleaseYear}`;
+        document.querySelectorAll('[data-new-items-option]').forEach(option => {
+          option.textContent = `Новинки ${catalogReleaseYear}`;
         });
         const currentYearItems = Number(metadata.releaseYearCounts?.[catalogReleaseYear] || 0);
         catalogSourceNote.textContent = `CS2 · ${totalItems.toLocaleString('ru-RU')} вариантов · ${baseDesigns.toLocaleString('ru-RU')} моделей · ${catalogReleaseYear}: ${currentYearItems.toLocaleString('ru-RU')} · ${fetchedDate}`;
@@ -2196,7 +2196,7 @@ setInterval(() => {
 }, 4000);
 
 setInterval(() => {
-  if (currentUser && $('page-upgrade').classList.contains('active')) void loadUpgradeFeed();
+  if (currentUser) void loadUpgradeFeed();
 }, 5000);
 
 // ============================================================
@@ -2612,25 +2612,16 @@ targetPriceTo.addEventListener('input', scheduleTargetRender);
 targetSort.addEventListener('change', renderTargets);
 
 // ============================================================
-// БЫСТРЫЕ ФИЛЬТРЫ
+// ФИЛЬТРЫ КАТЕГОРИЙ
 // ============================================================
-document.querySelectorAll('.quick-filters .qf-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const isLeft = btn.hasAttribute('data-qf');
-    const val = isLeft ? btn.dataset.qf : btn.dataset.tqf;
-    const group = isLeft ? 'data-qf' : 'data-tqf';
+invCategory.addEventListener('change', () => {
+  invQuickFilter = invCategory.value;
+  renderInventory();
+});
 
-    document.querySelectorAll(`[${group}]`).forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-
-    if (isLeft) {
-      invQuickFilter = val;
-      renderInventory();
-    } else {
-      targetQuickFilter = val;
-      renderTargets();
-    }
-  });
+targetCategory.addEventListener('change', () => {
+  targetQuickFilter = targetCategory.value;
+  renderTargets();
 });
 
 // ============================================================

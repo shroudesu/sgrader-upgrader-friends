@@ -79,18 +79,17 @@
   </div>
 </header>
 
+<aside class="panel upgrade-feed-panel" aria-label="Лента выигрышей">
+  <div class="panel-title-row"><div><h2 class="panel-title" style="margin-bottom:4px">Лента выигрышей</h2><div class="feed-subtitle">Новые сверху · обновляется онлайн</div></div><button type="button" class="btn-small" id="refreshUpgradeFeedBtn" aria-label="Обновить ленту">↻</button></div>
+  <div class="upgrade-feed" id="upgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
+</aside>
+
 <main class="container">
 
   <!-- АПГРЕЙД -->
   <section class="tab-page active" id="page-upgrade">
     <h1 class="title">Апгрейд скинов</h1>
 
-    <div class="upgrade-page-layout">
-      <aside class="panel upgrade-feed-panel">
-        <div class="panel-title-row"><div><h2 class="panel-title" style="margin-bottom:4px">Лента выигрышей</h2><div class="feed-subtitle">Новые сверху · обновляется онлайн</div></div><button type="button" class="btn-small" id="refreshUpgradeFeedBtn" aria-label="Обновить ленту">↻</button></div>
-        <div class="upgrade-feed" id="upgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
-      </aside>
-      <div class="upgrade-main">
     <div class="layout">
       <aside class="col">
         <div class="panel upgrade-inventory-panel" id="upgradeInventoryPanel">
@@ -115,17 +114,20 @@
               </select>
               <span class="filter-count" id="invCount">—</span>
             </div>
-            <div class="quick-filters">
-              <button class="qf-btn active" data-qf="all">Все</button>
-              <button class="qf-btn" data-qf="weapons">Оружие</button>
-              <button class="qf-btn" data-qf="knives">Ножи</button>
-              <button class="qf-btn" data-qf="gloves">Перчатки</button>
-              <button class="qf-btn" data-qf="stickers">Стикеры</button>
-              <button class="qf-btn" data-qf="agents">Агенты</button>
-              <button class="qf-btn" data-qf="graffiti">Граффити</button>
-              <button class="qf-btn" data-qf="music">Киты музыки</button>
-              <button class="qf-btn" data-qf="new">Новинки 2026</button>
-              <button class="qf-btn" data-qf="top">Топ-дорогие</button>
+            <div class="category-filter">
+              <label for="invCategory">Категория предмета</label>
+              <select id="invCategory" class="category-select">
+                <option value="all">Все категории</option>
+                <option value="weapons">Оружие</option>
+                <option value="knives">Ножи</option>
+                <option value="gloves">Перчатки</option>
+                <option value="stickers">Стикеры</option>
+                <option value="agents">Агенты</option>
+                <option value="graffiti">Граффити</option>
+                <option value="music">Киты музыки</option>
+                <option value="new" data-new-items-option>Новинки 2026</option>
+                <option value="top">Топ-дорогие</option>
+              </select>
             </div>
           </div>
           <div class="loading" id="invLoading">Загрузка каталога...</div>
@@ -208,25 +210,26 @@
             </select>
             <span class="filter-count" id="targetCount">—</span>
           </div>
-          <div class="quick-filters">
-            <button class="qf-btn active" data-tqf="all">Все</button>
-            <button class="qf-btn" data-tqf="weapons">Оружие</button>
-            <button class="qf-btn" data-tqf="knives">Ножи</button>
-            <button class="qf-btn" data-tqf="gloves">Перчатки</button>
-            <button class="qf-btn" data-tqf="stickers">Стикеры</button>
-            <button class="qf-btn" data-tqf="agents">Агенты</button>
-            <button class="qf-btn" data-tqf="graffiti">Граффити</button>
-            <button class="qf-btn" data-tqf="music">Киты музыки</button>
-            <button class="qf-btn" data-tqf="new">Новинки 2026</button>
-            <button class="qf-btn" data-tqf="top">Топ-дорогие</button>
+          <div class="category-filter">
+            <label for="targetCategory">Категория цели</label>
+            <select id="targetCategory" class="category-select">
+              <option value="all">Все категории</option>
+              <option value="weapons">Оружие</option>
+              <option value="knives">Ножи</option>
+              <option value="gloves">Перчатки</option>
+              <option value="stickers">Стикеры</option>
+              <option value="agents">Агенты</option>
+              <option value="graffiti">Граффити</option>
+              <option value="music">Киты музыки</option>
+              <option value="new" data-new-items-option>Новинки 2026</option>
+              <option value="top">Топ-дорогие</option>
+            </select>
           </div>
           <div class="loading" id="targetLoading">Загрузка каталога...</div>
           <div class="grid small" id="targetGrid"></div>
         </div>
 
       </aside>
-    </div>
-      </div>
     </div>
   </section>
 
