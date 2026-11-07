@@ -257,7 +257,48 @@
   <!-- КЕЙСЫ -->
   <section class="tab-page" id="page-cases">
     <h1 class="title">Кейсы</h1>
-    <div class="cases-grid" id="casesGrid"><div class="case-empty">Загружаю кейсы…</div></div>
+    <div class="case-list-view" id="caseListView">
+      <div class="cases-grid" id="casesGrid"><div class="case-empty">Загружаю кейсы…</div></div>
+    </div>
+    <section class="case-detail-view" id="caseDetailView" hidden>
+      <button type="button" class="case-back-button" id="caseBackButton"><iconify-icon icon="mdi:arrow-left"></iconify-icon> Все кейсы</button>
+      <div class="case-detail-banner">
+        <div class="case-detail-banner-image"><img id="caseResultCaseImage" alt=""></div>
+        <div class="case-detail-banner-copy">
+          <span>КЕЙС</span>
+          <h2 id="caseResultCaseName">Выбери кейс</h2>
+          <strong id="caseDetailPrice"></strong>
+        </div>
+      </div>
+      <div class="case-detail-controls">
+        <label class="case-quantity-control" for="caseOpenQuantity">Количество кейсов
+          <input type="number" id="caseOpenQuantity" min="1" max="10" step="1" value="1" inputmode="numeric">
+        </label>
+        <label class="settings-switch-row case-skip-toggle" for="caseSkipAnimation">
+          <span><strong>Пропустить анимацию</strong><small>Включи, чтобы сразу показать выигрыш</small></span>
+          <input type="checkbox" id="caseSkipAnimation">
+          <span class="settings-switch" aria-hidden="true"></span>
+        </label>
+        <button type="button" class="btn-confirm case-open-submit" id="caseOpenButton">Открыть кейс</button>
+      </div>
+      <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
+      <section class="case-open-results" id="caseOpenResults" hidden>
+        <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
+        <div class="case-result-rewards" id="caseRewardList"></div>
+        <div class="case-result-bulk-actions">
+          <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
+          <button type="button" class="btn-modal btn-case-sell" id="caseSellAllBtn">Продать все</button>
+        </div>
+      </section>
+      <section class="case-open-contents">
+        <div class="case-open-contents-heading"><h3>Содержимое кейса</h3><span id="caseOpenContentsCount"></span></div>
+        <div class="case-open-contents-list" id="caseOpenContents"></div>
+      </section>
+      <div class="pending-case-rewards" id="pendingCaseRewards" hidden>
+        <div class="pending-case-heading"><div><h3>Незабранные предметы</h3><span id="pendingCaseRewardsCount">0 предметов</span></div></div>
+        <div class="pending-case-list" id="pendingCaseRewardsList"></div>
+      </div>
+    </section>
   </section>
 
   <!-- ПРОФИЛЬ -->
@@ -362,48 +403,6 @@
       <p class="admin-inventory-summary" id="adminInventorySummary"></p>
       <div class="admin-inventory-feedback" id="adminInventoryFeedback" role="status" aria-live="polite"></div>
       <div class="admin-inventory-grid" id="adminInventoryGrid"></div>
-    </div>
-  </div>
-
-  <div class="modal-overlay" id="caseResultModal" aria-hidden="true">
-    <div class="modal case-result-modal case-open-modal" role="dialog" aria-modal="true" aria-labelledby="caseResultTitle">
-      <div class="case-open-heading">
-        <div class="case-open-identity">
-          <img class="case-result-case-image" id="caseResultCaseImage" alt="">
-          <div><span>КЕЙС</span><h3 class="modal-title" id="caseResultCaseName">Выбери кейс</h3></div>
-        </div>
-        <button type="button" class="settings-close" id="caseResultClose" aria-label="Закрыть кейс">×</button>
-      </div>
-      <section class="case-open-setup" id="caseOpenSetup">
-        <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
-        <div class="case-open-options">
-          <label class="case-quantity-control" for="caseOpenQuantity">Количество кейсов
-            <input type="number" id="caseOpenQuantity" min="1" max="10" step="1" value="1" inputmode="numeric">
-          </label>
-          <label class="settings-switch-row case-skip-toggle" for="caseSkipAnimation">
-            <span><strong>Пропустить анимацию</strong><small>Показывать результат сразу</small></span>
-            <input type="checkbox" id="caseSkipAnimation">
-            <span class="settings-switch" aria-hidden="true"></span>
-          </label>
-          <button type="button" class="btn-confirm case-open-submit" id="caseOpenButton">Открыть кейс</button>
-        </div>
-        <section class="case-open-contents">
-          <div class="case-open-contents-heading"><h4>Содержимое кейса</h4><span id="caseOpenContentsCount"></span></div>
-          <div class="case-open-contents-list" id="caseOpenContents"></div>
-        </section>
-        <div class="pending-case-rewards" id="pendingCaseRewards" hidden>
-          <div class="pending-case-heading"><div><h2>Незабранные предметы</h2><span id="pendingCaseRewardsCount">0 предметов</span></div></div>
-          <div class="pending-case-list" id="pendingCaseRewardsList"></div>
-        </div>
-      </section>
-      <section class="case-open-results" id="caseOpenResults" hidden>
-        <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
-        <div class="case-result-rewards" id="caseRewardList"></div>
-        <div class="case-result-bulk-actions">
-          <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
-          <button type="button" class="btn-modal btn-case-sell" id="caseSellAllBtn">Продать все</button>
-        </div>
-      </section>
     </div>
   </div>
 

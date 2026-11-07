@@ -236,7 +236,7 @@ const MUSIC_TRACKS = ['sounds/1.mp3', 'sounds/2.mp3', 'sounds/3.mp3', 'sounds/4.
 const PROFILE_INVENTORY_PAGE_SIZE = 150;
 const CASE_IMAGE_BUCKET = 'case-designs';
 const CASE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-const CASE_SKIP_ANIMATION_KEY = 'cs2up_case_skip_animation';
+const CASE_SKIP_ANIMATION_KEY = 'cs2up_case_skip_animation_v2';
 const PROMO_CODE = 'SGRADER';
 const PROMO_BONUS_RATE = 0.10;
 const supabaseUrl = String(window.SUPABASE_URL || '');
@@ -281,9 +281,11 @@ const catalogTools = document.getElementById('catalogTools');
 const upgradeInventoryPanel = document.getElementById('upgradeInventoryPanel');
 const upgradeInventoryTitle = document.getElementById('upgradeInventoryTitle');
 const adminNav = document.getElementById('adminNav');
+const caseListView = document.getElementById('caseListView');
+const caseDetailView = document.getElementById('caseDetailView');
+const caseBackButton = document.getElementById('caseBackButton');
 const casesGrid = document.getElementById('casesGrid');
 const caseFeedback = document.getElementById('caseFeedback');
-const caseOpenSetup = document.getElementById('caseOpenSetup');
 const caseOpenResults = document.getElementById('caseOpenResults');
 const caseOpenQuantityInput = document.getElementById('caseOpenQuantity');
 const caseOpenButton = document.getElementById('caseOpenButton');
@@ -310,14 +312,13 @@ const caseSkipAnimationToggle = document.getElementById('caseSkipAnimation');
 const pendingCaseRewardsPanel = document.getElementById('pendingCaseRewards');
 const pendingCaseRewardsCount = document.getElementById('pendingCaseRewardsCount');
 const pendingCaseRewardsList = document.getElementById('pendingCaseRewardsList');
-const caseResultModal = document.getElementById('caseResultModal');
 const caseResultCaseImage = document.getElementById('caseResultCaseImage');
 const caseResultCaseName = document.getElementById('caseResultCaseName');
+const caseDetailPrice = document.getElementById('caseDetailPrice');
 const caseResultStatus = document.getElementById('caseResultStatus');
 const caseRewardList = document.getElementById('caseRewardList');
 const caseClaimAllBtn = document.getElementById('caseClaimAllBtn');
 const caseSellAllBtn = document.getElementById('caseSellAllBtn');
-const caseResultClose = document.getElementById('caseResultClose');
 const onlineUsersCount = document.getElementById('onlineUsersCount');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
@@ -814,7 +815,7 @@ settingsModal.addEventListener('click', event => { if (event.target === settings
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
   if (settingsModal.classList.contains('show')) closeSettings();
-  if (caseResultModal.classList.contains('show') && !caseAnimationInProgress && !caseSettlementInProgress) caseResultClose.click();
+  if (!caseDetailView.hidden && !caseOpeningInProgress && !caseAnimationInProgress && !caseSettlementInProgress) caseBackButton.click();
 });
 
 currencySelect.addEventListener('change', () => {
@@ -832,6 +833,10 @@ currencySelect.addEventListener('change', () => {
   if ($('page-admin').classList.contains('active')) void renderAdminUsers();
   renderCaseCards();
   renderAdminCaseList();
+  if (selectedGameCase) {
+    caseDetailPrice.textContent = `${fmt(Number(selectedGameCase.price))} за кейс`;
+    updateCaseOpenButton();
+  }
   renderInventory(); renderTargets(); renderMyInventory();
   updateChance();
 });
@@ -1331,23 +1336,24 @@ function renderCaseDetails(gameCase) {
   caseResultCaseName.textContent = gameCase.name;
   caseResultCaseImage.src = gameCase.image_url || '';
   caseResultCaseImage.hidden = !gameCase.image_url;
+  caseDetailPrice.textContent = `${fmt(Number(gameCase.price))} за кейс`;
   caseOpenContentsCount.textContent = `${contents.length} предметов`;
   caseOpenContents.innerHTML = contents.map(entry => {
     const item = entry.item || {};
     const qualifiers = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : ''].filter(Boolean).join(' · ');
-    return `<article class="case-detail-item">
-      <div class="case-detail-image">${item.img ? `<img src="${escapeHtml(item.img)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}</div>
-      <div class="case-detail-name"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong>${qualifiers ? `<small>${escapeHtml(qualifiers)}</small>` : ''}</div>
-      <div class="case-detail-stat"><span>Цена</span><strong>${fmt(Number(item.price || 0))}</strong></div>
-      <div class="case-detail-stat case-detail-chance"><span>Шанс</span><strong>${Number(entry.chance || 0).toFixed(1)}%</strong></div>
+    const rarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
+    const rarityName = typeof item.rarity === 'object' ? item.rarity?.name : item.rarity;
+    return `<article class="case-detail-item"${rarityColor ? ` style="--item-rarity-color:${escapeHtml(rarityColor)}"` : ''}>
+      <div class="case-detail-image">${item.img ? `<img src="${escapeHtml(item.img)}" alt="" loading="lazy">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}</div>
+      <div class="case-detail-name"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong>${qualifiers ? `<small>${escapeHtml(qualifiers)}</small>` : ''}${rarityName ? `<small class="case-detail-rarity">${escapeHtml(rarityName)}</small>` : ''}</div>
+      <div class="case-detail-stats"><span>Цена</span><strong>${fmt(Number(item.price || 0))}</strong><span>Шанс</span><strong class="case-detail-chance">${Number(entry.chance || 0).toFixed(1)}%</strong></div>
     </article>`;
   }).join('') || '<div class="case-empty">В кейсе пока нет предметов.</div>';
   caseOpenQuantityInput.value = '1';
   caseSkipAnimationToggle.checked = caseSkipAnimation;
   caseFeedback.textContent = '';
-  caseOpenSetup.hidden = false;
   caseOpenResults.hidden = true;
-  caseResultClose.disabled = false;
+  caseBackButton.disabled = false;
   updateCaseOpenButton();
 }
 
@@ -1361,10 +1367,12 @@ function updateCaseOpenButton() {
 function openCaseDetails(caseId) {
   selectedGameCase = gameCases.find(item => String(item.id) === String(caseId)) || null;
   if (!selectedGameCase) return;
+  activeCaseOpening = null;
   renderCaseDetails(selectedGameCase);
   renderPendingCaseRewards();
-  caseResultModal.classList.add('show');
-  caseResultModal.setAttribute('aria-hidden', 'false');
+  caseListView.hidden = true;
+  caseDetailView.hidden = false;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
   void loadPendingCaseRewards();
 }
 
@@ -1617,8 +1625,8 @@ function pickCaseContentsItem(contents, fallbackItem) {
 }
 
 function makeCaseReelMarkup(item, caseContents, rewardIndex) {
-  const winnerIndex = 24;
-  const reel = Array.from({ length: 28 }, (_, index) => {
+  const winnerIndex = 16;
+  const reel = Array.from({ length: 20 }, (_, index) => {
     const isWinner = index === winnerIndex;
     const shownItem = isWinner
       ? item
@@ -1668,7 +1676,7 @@ function renderCaseOpeningView(animate = false) {
   caseSellAllBtn.textContent = `Продать все · ${fmt(sellTotal)}`;
   caseClaimAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
   caseSellAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
-  caseResultClose.disabled = caseAnimationInProgress || caseSettlementInProgress;
+  caseBackButton.disabled = caseAnimationInProgress || caseSettlementInProgress;
 }
 
 async function playCaseReels() {
@@ -1679,16 +1687,20 @@ async function playCaseReels() {
     const viewport = track.parentElement;
     const winner = track.querySelector('[data-reel-winner="true"]');
     if (!viewport || !winner) { resolve(); return; }
-    const winnerIndex = Number(track.dataset.winnerIndex || 0);
-    const cardWidth = winner.getBoundingClientRect().width;
-    const gap = parseFloat(getComputedStyle(track).gap) || 6;
-    const targetX = viewport.clientWidth / 2 - (5 + winnerIndex * (cardWidth + gap) + cardWidth / 2);
-    const delay = index * 65;
-    const duration = 2150 + Math.min(index, 8) * 55;
+    track.style.transition = 'none';
+    track.style.transform = 'translate3d(0,0,0)';
+    const trackRect = track.getBoundingClientRect();
+    const winnerRect = winner.getBoundingClientRect();
+    const winnerCenter = winnerRect.left - trackRect.left + winnerRect.width / 2;
+    const targetX = viewport.clientWidth / 2 - winnerCenter;
+    const delay = index * 90;
+    const duration = 4300 + Math.min(index, 6) * 220;
     setTimeout(() => {
       if (animationId !== caseAnimationSequence) { resolve(); return; }
-      track.style.transition = `transform ${duration}ms cubic-bezier(.12,.76,.12,1)`;
-      requestAnimationFrame(() => { track.style.transform = `translateX(${targetX}px)`; });
+      track.style.transition = `transform ${duration}ms cubic-bezier(.10,.75,.08,1)`;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        track.style.transform = `translate3d(${targetX}px,0,0)`;
+      }));
       setTimeout(() => {
         if (animationId === caseAnimationSequence) winner.classList.add('landed');
         resolve();
@@ -1699,12 +1711,10 @@ async function playCaseReels() {
 
 async function showCaseOpeningReview(opening, animate = false) {
   activeCaseOpening = opening;
-  caseOpenSetup.hidden = true;
   caseOpenResults.hidden = false;
   caseAnimationInProgress = Boolean(animate && opening.rewards?.some(reward => reward.status === 'pending'));
   renderCaseOpeningView(caseAnimationInProgress);
-  caseResultModal.classList.add('show');
-  caseResultModal.setAttribute('aria-hidden', 'false');
+  caseOpenResults.scrollIntoView({ behavior: 'smooth', block: 'center' });
   if (caseAnimationInProgress) {
     await playCaseReels();
     caseAnimationInProgress = false;
@@ -1810,6 +1820,7 @@ async function openGameCase(caseId, quantity) {
   const gameCase = gameCases.find(item => String(item.id) === String(caseId));
   if (!gameCase) return;
   caseOpeningInProgress = true;
+  caseBackButton.disabled = true;
   caseOpenButton.disabled = true;
   caseOpenQuantityInput.disabled = true;
   caseSkipAnimationToggle.disabled = true;
@@ -1849,6 +1860,7 @@ async function openGameCase(caseId, quantity) {
     console.error('Could not open game cases:', error);
   } finally {
     caseOpeningInProgress = false;
+    caseBackButton.disabled = caseAnimationInProgress || caseSettlementInProgress;
     caseOpenButton.disabled = false;
     caseOpenQuantityInput.disabled = false;
     caseSkipAnimationToggle.disabled = false;
@@ -1987,14 +1999,13 @@ try {
   caseSkipAnimation = localStorage.getItem(CASE_SKIP_ANIMATION_KEY) === 'true';
 } catch (e) { caseSkipAnimation = false; }
 caseSkipAnimationToggle.checked = caseSkipAnimation;
-caseResultClose.addEventListener('click', () => {
-  if (caseAnimationInProgress || caseSettlementInProgress) return;
-  caseResultModal.classList.remove('show');
-  caseResultModal.setAttribute('aria-hidden', 'true');
-});
-caseResultModal.addEventListener('click', event => {
-  if (event.target !== caseResultModal || caseAnimationInProgress || caseSettlementInProgress) return;
-  caseResultClose.click();
+caseBackButton.addEventListener('click', () => {
+  if (caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress) return;
+  selectedGameCase = null;
+  activeCaseOpening = null;
+  caseDetailView.hidden = true;
+  caseListView.hidden = false;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
 function closeAdminInventoryModal() {
