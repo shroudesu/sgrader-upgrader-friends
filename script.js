@@ -276,6 +276,12 @@ const upgradeInventoryTitle = document.getElementById('upgradeInventoryTitle');
 const adminNav = document.getElementById('adminNav');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
+const adminInventoryModal = document.getElementById('adminInventoryModal');
+const adminInventoryTitle = document.getElementById('adminInventoryTitle');
+const adminInventorySummary = document.getElementById('adminInventorySummary');
+const adminInventoryFeedback = document.getElementById('adminInventoryFeedback');
+const adminInventoryGrid = document.getElementById('adminInventoryGrid');
+const adminInventoryClose = document.getElementById('adminInventoryClose');
 const telegramLink = document.getElementById('telegramLink');
 const promoStatus = document.getElementById('promoStatus');
 const topupRequestForm = document.getElementById('topupRequestForm');
@@ -422,6 +428,8 @@ let rotorAngle = 0;
 let pendingBuy = null;
 let pendingSell = null;
 let pendingConfirm = null;
+let activeAdminInventoryPlayerId = null;
+let adminInventoryOperationInFlight = false;
 let winVolume = 0.7;
 let spinStrength = 5;
 let spinMode = 'fast';
@@ -1075,7 +1083,7 @@ async function renderAdminUsers() {
   if (!currentUser || currentUser.role !== 'admin') return;
   const { data, error } = await supabaseClient.rpc('admin_list_players');
   if (error) {
-    adminUsersEl.innerHTML = '<tr><td colspan="6">Не удалось загрузить список игроков.</td></tr>';
+    adminUsersEl.innerHTML = '<tr><td colspan="7">Не удалось загрузить список игроков.</td></tr>';
     console.error('Could not load admin player list:', error);
     return;
   }
@@ -1094,9 +1102,121 @@ async function renderAdminUsers() {
         <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сумма списания">
         <button class="btn-small danger" type="submit">Снять</button>
       </form></td>
+      <td><button class="btn-small admin-inventory-open" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}">Открыть</button></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6">Пользователей пока нет.</td></tr>';
+  }).join('') || '<tr><td colspan="7">Пользователей пока нет.</td></tr>';
 }
+
+function closeAdminInventoryModal() {
+  adminInventoryModal.classList.remove('show');
+  adminInventoryModal.setAttribute('aria-hidden', 'true');
+  activeAdminInventoryPlayerId = null;
+}
+
+async function loadAdminPlayerInventory(playerId, username = '') {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  const requestedPlayerId = Number(playerId);
+  activeAdminInventoryPlayerId = requestedPlayerId;
+  adminInventoryTitle.textContent = username ? 'Инвентарь · ' + username + ' (#' + playerId + ')' : 'Инвентарь игрока #' + playerId;
+  adminInventorySummary.textContent = '';
+  adminInventoryFeedback.textContent = '';
+  adminInventoryGrid.innerHTML = '<div class="admin-inventory-empty">Загружаю инвентарь…</div>';
+  adminInventoryModal.classList.add('show');
+  adminInventoryModal.setAttribute('aria-hidden', 'false');
+
+  const { data, error } = await supabaseClient.rpc('admin_get_player_inventory', { p_player_id: requestedPlayerId });
+  if (activeAdminInventoryPlayerId !== requestedPlayerId) return;
+  if (error) {
+    adminInventoryGrid.innerHTML = '<div class="admin-inventory-empty">Не удалось загрузить инвентарь. Примените SQL-миграцию админ-инвентаря.</div>';
+    console.error('Could not load admin player inventory:', error);
+    return;
+  }
+
+  activeAdminInventoryPlayerId = Number(data.player_id);
+  const inventory = Array.isArray(data.inventory) ? data.inventory : [];
+  const totalValue = inventory.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  adminInventoryTitle.textContent = 'Инвентарь · ' + data.username + ' (#' + data.player_id + ')';
+  adminInventorySummary.textContent = inventory.length + ' предметов · стоимость ' + fmt(totalValue) + ' · продажа с комиссией ' + Math.round(SELL_COMMISSION * 100) + '%';
+  adminInventoryGrid.innerHTML = inventory.length
+    ? inventory.map(item => {
+      const saleValue = Math.round(Number(item.price || 0) * (1 - SELL_COMMISSION) * 100) / 100;
+      return '<article class="admin-inventory-card">' +
+        '<img src="' + escapeHtml(item.img || '') + '" alt="">' +
+        '<div class="admin-inventory-item-info"><strong title="' + escapeHtml(item.name || 'Предмет') + '">' + escapeHtml(item.name || 'Предмет') + '</strong><span>' + fmt(Number(item.price || 0)) + '</span></div>' +
+        '<div class="admin-inventory-actions">' +
+        '<button type="button" class="btn-small admin-inventory-action" data-action="sell" data-item-id="' + escapeHtml(item.instanceId || '') + '" data-item-name="' + escapeHtml(item.name || 'Предмет') + '" data-sale-value="' + saleValue + '">Продать · ' + fmt(saleValue) + '</button>' +
+        '<button type="button" class="btn-small danger admin-inventory-action" data-action="delete" data-item-id="' + escapeHtml(item.instanceId || '') + '" data-item-name="' + escapeHtml(item.name || 'Предмет') + '">Удалить</button>' +
+        '</div></article>';
+    }).join('')
+    : '<div class="admin-inventory-empty">Инвентарь пуст.</div>';
+}
+
+async function performAdminInventoryAction(action, itemId) {
+  if (!currentUser || currentUser.role !== 'admin' || !activeAdminInventoryPlayerId || adminInventoryOperationInFlight) return;
+  const playerId = activeAdminInventoryPlayerId;
+  adminInventoryOperationInFlight = true;
+  adminInventoryGrid.querySelectorAll('.admin-inventory-action').forEach(button => { button.disabled = true; });
+  adminInventoryFeedback.textContent = action === 'sell' ? 'Продаю предмет…' : 'Удаляю предмет…';
+
+  const { data, error } = await supabaseClient.rpc('admin_manage_player_inventory', {
+    p_player_id: playerId,
+    p_inventory_item_id: itemId,
+    p_action: action
+  });
+  if (error) {
+    adminInventoryFeedback.textContent = String(error.message || '').toLowerCase().includes('item not found')
+      ? 'Предмет уже отсутствует в инвентаре.'
+      : 'Операция не выполнена. Проверьте права администратора и соединение.';
+    console.error('Could not manage admin player inventory:', error);
+    adminInventoryOperationInFlight = false;
+    adminInventoryGrid.querySelectorAll('.admin-inventory-action').forEach(button => { button.disabled = false; });
+    return;
+  }
+
+  const notice = action === 'sell'
+    ? 'Предмет продан за ' + fmt(Number(data.amount || 0)) + '; баланс игрока: ' + fmt(Number(data.balance || 0)) + '.'
+    : 'Предмет «' + (data.item_name || 'Предмет') + '» удалён.';
+  const refreshOpenInventory = adminInventoryModal.classList.contains('show') && activeAdminInventoryPlayerId === playerId;
+  if (refreshOpenInventory) {
+    await loadAdminPlayerInventory(playerId, data.username);
+    adminInventoryFeedback.textContent = notice;
+  }
+  adminInventoryOperationInFlight = false;
+  await renderAdminUsers();
+
+  if (String(currentUser.playerId) === String(playerId)) {
+    await loadUserState();
+    updateBalanceUI();
+    renderMyInventory();
+    renderInventory();
+    renderProfile();
+    restoreSlotsFromState();
+  }
+}
+
+adminUsersEl.addEventListener('click', event => {
+  const button = event.target.closest('.admin-inventory-open');
+  if (button) void loadAdminPlayerInventory(button.dataset.playerId, button.dataset.username);
+});
+
+adminInventoryClose.addEventListener('click', closeAdminInventoryModal);
+adminInventoryModal.addEventListener('click', event => {
+  if (event.target === adminInventoryModal) closeAdminInventoryModal();
+});
+
+adminInventoryGrid.addEventListener('click', event => {
+  const button = event.target.closest('.admin-inventory-action');
+  if (!button || adminInventoryOperationInFlight) return;
+  const action = button.dataset.action;
+  const itemId = button.dataset.itemId;
+  const itemName = button.dataset.itemName || 'Предмет';
+  const text = action === 'sell'
+    ? 'Продать «' + itemName + '» и зачислить игроку ' + fmt(Number(button.dataset.saleValue || 0)) + '?'
+    : 'Удалить «' + itemName + '» из инвентаря без начисления баланса?';
+  openConfirm(action === 'sell' ? 'Продать предмет игрока?' : 'Удалить предмет игрока?', text, () => {
+    void performAdminInventoryAction(action, itemId);
+  });
+});
 
 adminUsersEl.addEventListener('submit', async event => {
   const form = event.target.closest('.admin-grant-form, .admin-debit-form');
@@ -1533,13 +1653,14 @@ function restoreSlotsFromState() {
 function buildCatalogCard(item, { disabled, source, onClick }) {
   const card = document.createElement('div');
   card.className = 'inv-card' + (disabled ? ' disabled' : '');
+  if (source === 'catalog') card.dataset.catalogId = String(item.id);
   const rarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
   if (rarityColor) card.style.setProperty('--item-rarity-color', rarityColor);
   const isCurrentYearItem = item.releaseYear === catalogReleaseYear;
   const selected = source === 'catalog' && state.inventory.some(inv => inv.catalogId === item.id && state.betItemIds.includes(inv.instanceId));
   const marketQuantity = source === 'catalog' ? Number(marketSelection.get(String(item.id)) || 0) : 0;
   const selectedForPurchase = marketQuantity > 0;
-  if (selected || selectedForPurchase) card.classList.add('active');
+  if (selected) card.classList.add('active');
   const qualityParts = [item.wear, item.stattrak ? 'StatTrak™' : '', item.souvenir ? 'Souvenir' : '', item.effect].filter(Boolean);
   if (item.floatMin != null && item.floatMax != null && item.floatMax > item.floatMin) {
     qualityParts.push(`${Number(item.floatMin).toFixed(2)}–${Number(item.floatMax).toFixed(2)}`);
@@ -1570,6 +1691,24 @@ function marketSelectionTotal() {
   return getMarketSelectionEntries().reduce((sum, entry) => sum + Number(entry.item.price || 0) * entry.quantity, 0);
 }
 
+function updateMarketCard(itemId) {
+  const card = [...inventoryGrid.querySelectorAll('.inv-card')].find(element => element.dataset.catalogId === String(itemId));
+  if (!card) return;
+  const quantity = Number(marketSelection.get(String(itemId)) || 0);
+  const image = card.querySelector('.item-img');
+  let badge = image.querySelector('.market-quantity-badge');
+  if (!quantity) {
+    badge?.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'market-quantity-badge';
+    image.appendChild(badge);
+  }
+  badge.textContent = '×' + quantity;
+}
+
 function updateBuySelectedButton() {
   const entries = getMarketSelectionEntries();
   const quantity = entries.reduce((sum, entry) => sum + entry.quantity, 0);
@@ -1590,7 +1729,8 @@ function toggleMarketSelection(item) {
   }
   marketSelection.set(id, Number(marketSelection.get(id) || 0) + 1);
   warningEl.classList.remove('show');
-  renderInventory();
+  updateMarketCard(id);
+  updateBuySelectedButton();
 }
 
 // ============================================================
@@ -1620,12 +1760,11 @@ function renderInventory() {
 
   const shown = items.slice(0, MAX_RENDER);
 
-  shown.forEach((item, i) => {
+  shown.forEach(item => {
     const card = buildCatalogCard(item, {
       disabled: false, source: 'catalog',
       onClick: () => toggleMarketSelection(item)
     });
-    card.style.animationDelay = (i * 0.005) + 's';
     inventoryGrid.appendChild(card);
   });
 
@@ -1669,7 +1808,6 @@ function renderTargets() {
       disabled, source: 'target',
       onClick: () => selectTarget(item)
     });
-    card.style.animationDelay = (i * 0.005) + 's';
     targetGrid.appendChild(card);
   });
 
@@ -1708,7 +1846,6 @@ function renderMyInventory() {
       ${qualities.length ? `<div class="item-quality">${qualities.map(value => escapeHtml(value)).join(' · ')}</div>` : ''}
     `;
     card.addEventListener('click', () => selectBet(inv));
-    card.style.animationDelay = (i * 0.01) + 's';
     myInventory.appendChild(card);
   });
 }
@@ -2321,6 +2458,7 @@ modalConfirm.addEventListener('click', async () => {
     return;
   }
 
+  const purchasedCatalogIds = entries.map(entry => String(entry.item.id));
   entries.forEach(({ item, quantity }) => {
     for (let copy = 0; copy < quantity; copy += 1) {
       state.inventory.push({
@@ -2343,8 +2481,11 @@ modalConfirm.addEventListener('click', async () => {
   });
   await saveState();
   marketSelection.clear();
-  renderMyInventory();
-  renderInventory();
+  purchasedCatalogIds.forEach(updateMarketCard);
+  updateBalanceUI();
+  myInvCount.textContent = state.inventory.length;
+  updateBuySelectedButton();
+  if (!catalogMode) renderMyInventory();
   closeBuyModal();
   if ($('page-profile').classList.contains('active')) renderProfile();
 });

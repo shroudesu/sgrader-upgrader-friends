@@ -311,13 +311,22 @@
       <p class="admin-notice">Игроки и начисления хранятся в общей базе.</p>
       <div class="admin-table-wrap">
         <table class="admin-table">
-          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th></tr></thead>
+          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th><th>Инвентарь</th></tr></thead>
           <tbody id="adminUsers"></tbody>
         </table>
       </div>
       <div class="auth-error admin-feedback" id="adminFeedback" role="status"></div>
     </div>
   </section>
+
+  <div class="modal-overlay" id="adminInventoryModal" aria-hidden="true">
+    <div class="modal admin-inventory-modal" role="dialog" aria-modal="true" aria-labelledby="adminInventoryTitle">
+      <div class="settings-heading"><h3 class="modal-title" id="adminInventoryTitle">Инвентарь игрока</h3><button type="button" class="settings-close" id="adminInventoryClose" aria-label="Закрыть инвентарь">×</button></div>
+      <p class="admin-inventory-summary" id="adminInventorySummary"></p>
+      <div class="admin-inventory-feedback" id="adminInventoryFeedback" role="status" aria-live="polite"></div>
+      <div class="admin-inventory-grid" id="adminInventoryGrid"></div>
+    </div>
+  </div>
 
   <!-- Модалки -->
   <div class="modal-overlay" id="buyModal">
