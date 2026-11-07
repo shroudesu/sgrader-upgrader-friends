@@ -3254,10 +3254,8 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
 
   const winAngle = Math.PI * 2 * chance / 100;
   if (chance > 0) {
-    const start = bonusChance > 0
-      ? Math.PI / 2 + (Math.PI * 2 * bonusChance / 100) / 2
-      : Math.PI / 2 - winAngle / 2;
-    const end = start + winAngle;
+    const start = Math.PI / 2 - winAngle / 2;
+    const end = Math.PI / 2 + winAngle / 2;
     const rgb = color.match(/\d+/g).map(Number);
     const shade = (amount, mixWithWhite = false) => {
       const adjusted = rgb.map(channel => Math.round(mixWithWhite ? channel + (255 - channel) * amount : channel * amount));
