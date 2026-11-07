@@ -627,6 +627,7 @@ async function loginAs(authUser) {
 
   authScreen.classList.add('hide');
   appEl.style.display = 'block';
+  appEl.classList.add('upgrade-view');
   userNameEl.textContent = currentUser.username;
   playerIdEl.textContent = `ID игрока: ${currentUser.playerId}`;
   renderHeaderAvatar();
@@ -1004,6 +1005,7 @@ function activateTab(page) {
   document.querySelectorAll('.tab-page').forEach(element => element.classList.remove('active'));
   tab.classList.add('active');
   panel.classList.add('active');
+  appEl.classList.toggle('upgrade-view', page === 'upgrade');
   if (page === 'profile') renderProfile();
   if (page === 'admin') void renderAdminUsers();
   if (page === 'battles') { drawBattleWheel(); void loadBattles(); renderBattleList(); renderBattleArchive(); }

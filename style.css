@@ -718,13 +718,15 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .inv-card.market-selected { border-color: var(--success); box-shadow: 0 0 14px rgba(74,222,128,.2); }
 .upgrade-page-layout { display: grid; grid-template-columns: minmax(205px,230px) minmax(0,1fr); align-items: start; gap: 16px; }
 .upgrade-main { min-width: 0; }
-.upgrade-feed-panel { position: sticky; top: 14px; min-width: 0; max-height: calc(100vh - 28px); display: flex; flex-direction: column; margin: 0; padding: 11px; overflow: hidden; }
+.app.upgrade-view .container { max-width: none; margin: 0; padding: 24px 18px 24px 260px; }
+.upgrade-page-layout { display: block; }
+.upgrade-feed-panel { position: fixed; z-index: 20; top: 78px; bottom: 0; left: 0; width: 244px; min-width: 0; max-height: none; display: flex; flex-direction: column; margin: 0; padding: 14px 11px 12px; overflow: hidden; border-top: 0; border-bottom: 0; border-left: 0; border-radius: 0 12px 0 0; }
 .upgrade-feed-panel .panel-title-row { gap: 6px; margin-bottom: 4px; }
 .upgrade-feed-panel .panel-title { font-size: 13px; }
 .upgrade-feed-panel .feed-subtitle { line-height: 1.3; }
 .upgrade-feed-panel #refreshUpgradeFeedBtn { flex: 0 0 28px; width: 28px; height: 28px; padding: 0; font-size: 17px; }
 .feed-subtitle { color: var(--text-dim); font-size: 10px; }
-.upgrade-feed { min-height: 0; display: flex; flex-direction: column; gap: 7px; margin-top: 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.upgrade-feed { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 7px; margin-top: 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .upgrade-feed-card {
   min-width: 0; display: grid; grid-template-columns: 42px minmax(0,1fr); grid-template-rows: auto auto auto;
   align-items: center; gap: 2px 7px; padding: 7px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-3);
@@ -811,9 +813,10 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 
 @media (max-width: 700px) {
   .inventory-balance-summary { padding-left: 0; border-left: 0; }
-  .upgrade-page-layout { grid-template-columns: minmax(0,1fr); }
-  .upgrade-feed-panel { position: static; max-height: 250px; }
-  .upgrade-feed { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .app.upgrade-view .container { max-width: 1500px; margin: 0 auto; padding: 24px 18px; }
+  .upgrade-page-layout { display: grid; grid-template-columns: minmax(0,1fr); }
+  .upgrade-feed-panel { position: static; width: auto; max-height: 250px; border: 1px solid var(--border); border-radius: 14px; }
+  .upgrade-feed { flex: 0 0 auto; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .upgrade-feed-card { flex: 0 0 170px; }
   .battle-toolbar { align-items: center; }
   .battle-picker-modal { padding: 18px; }
