@@ -276,6 +276,7 @@ const headerAvatarFallback = document.getElementById('headerAvatarFallback');
 const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
 const catalogToggle = document.getElementById('catalogToggle');
 const catalogTools = document.getElementById('catalogTools');
+const personalInventoryTools = document.getElementById('personalInventoryTools');
 const upgradeInventoryPanel = document.getElementById('upgradeInventoryPanel');
 const upgradeInventoryTitle = document.getElementById('upgradeInventoryTitle');
 const adminNav = document.getElementById('adminNav');
@@ -315,7 +316,6 @@ const caseResultCaseName = document.getElementById('caseResultCaseName');
 const caseDetailPrice = document.getElementById('caseDetailPrice');
 const caseResultStatus = document.getElementById('caseResultStatus');
 const caseRewardList = document.getElementById('caseRewardList');
-const caseSkipNowBtn = document.getElementById('caseSkipNowBtn');
 const caseResultBulkActions = document.getElementById('caseResultBulkActions');
 const caseClaimAllBtn = document.getElementById('caseClaimAllBtn');
 const caseSellAllBtn = document.getElementById('caseSellAllBtn');
@@ -326,11 +326,26 @@ const onlineUsersCount = document.getElementById('onlineUsersCount');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
 const adminInventoryModal = document.getElementById('adminInventoryModal');
+const adminInventoryClearBtn = document.getElementById('adminInventoryClearBtn');
 const adminInventoryTitle = document.getElementById('adminInventoryTitle');
 const adminInventorySummary = document.getElementById('adminInventorySummary');
 const adminInventoryFeedback = document.getElementById('adminInventoryFeedback');
 const adminInventoryGrid = document.getElementById('adminInventoryGrid');
 const adminInventoryClose = document.getElementById('adminInventoryClose');
+const adminModerationModal = document.getElementById('adminModerationModal');
+const adminModerationTitle = document.getElementById('adminModerationTitle');
+const adminModerationCurrent = document.getElementById('adminModerationCurrent');
+const adminModerationClose = document.getElementById('adminModerationClose');
+const adminSuspensionForm = document.getElementById('adminSuspensionForm');
+const adminSuspensionDuration = document.getElementById('adminSuspensionDuration');
+const adminSuspensionUnit = document.getElementById('adminSuspensionUnit');
+const adminSuspensionReason = document.getElementById('adminSuspensionReason');
+const adminModerationFeedback = document.getElementById('adminModerationFeedback');
+const adminSuspensionSubmit = document.getElementById('adminSuspensionSubmit');
+const adminSuspensionLiftBtn = document.getElementById('adminSuspensionLiftBtn');
+const suspensionScreen = document.getElementById('suspensionScreen');
+const suspensionCountdown = document.getElementById('suspensionCountdown');
+const suspensionReason = document.getElementById('suspensionReason');
 const telegramLink = document.getElementById('telegramLink');
 const promoStatus = document.getElementById('promoStatus');
 const topupRequestForm = document.getElementById('topupRequestForm');
@@ -380,6 +395,10 @@ const inventoryGrid = $('inventoryGrid');
 const invSearch = $('invSearch');
 const invPriceFrom = $('invPriceFrom');
 const invPriceTo = $('invPriceTo');
+const myInvPriceFrom = $('myInvPriceFrom');
+const myInvPriceTo = $('myInvPriceTo');
+const myInvFilterCount = $('myInvFilterCount');
+const clearMyInvPriceFilter = $('clearMyInvPriceFilter');
 const invSort = $('invSort');
 const invCategory = $('invCategory');
 const invCount = $('invCount');
@@ -482,6 +501,11 @@ let pendingSell = null;
 let pendingConfirm = null;
 let activeAdminInventoryPlayerId = null;
 let adminInventoryOperationInFlight = false;
+let activeAdminModerationPlayerId = null;
+let suspensionCountdownTimer = null;
+let presenceHeartbeatTimer = null;
+let lastUserActivityAt = Date.now();
+let lastPresenceTrackAt = 0;
 let gameCases = [];
 let caseDraftContents = [];
 let caseEditorId = null;
@@ -533,6 +557,8 @@ const customSelects = new Set();
 
 const SECTOR_COUNT = 40;
 const MAX_RENDER = 500;
+const MAX_DEMO_TRANSACTION_RUB = 1000000000;
+const MAX_SUSPENSION_MINUTES = 525600;
 
 // ============================================================
 // УТИЛИТЫ
@@ -552,12 +578,19 @@ function amountToRub(amount) {
   return Math.round((displayCurrency === 'USD' ? numeric * RUB_PER_USD : numeric) * 100) / 100;
 }
 
+function maxTransactionAmountForCurrency() {
+  return displayCurrency === 'USD'
+    ? (MAX_DEMO_TRANSACTION_RUB / RUB_PER_USD).toFixed(2)
+    : String(MAX_DEMO_TRANSACTION_RUB);
+}
+
 function renderCurrencyLabels() {
   const symbol = displayCurrency === 'USD' ? '$' : '₽';
   document.querySelectorAll('[data-currency-symbol]').forEach(element => { element.textContent = symbol; });
   document.querySelectorAll('[data-price-placeholder]').forEach(element => {
     element.placeholder = `${element.dataset.pricePlaceholder} ${symbol}`;
   });
+  if (topupAmountInput) topupAmountInput.max = maxTransactionAmountForCurrency();
 }
 
 function formatChance(percent) {
@@ -617,7 +650,61 @@ function usernameAuthEmail(username) {
 
 function showAuthScreen() {
   appEl.style.display = 'none';
+  suspensionScreen.hidden = true;
   authScreen.classList.remove('hide');
+}
+
+function formatSuspensionTime(milliseconds) {
+  const minutes = Math.max(0, Math.ceil(milliseconds / 60000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const remainingMinutes = minutes % 60;
+  return [days ? `${days} дн.` : '', hours ? `${hours} ч.` : '', remainingMinutes ? `${remainingMinutes} мин.` : '']
+    .filter(Boolean).join(' ') || 'меньше минуты';
+}
+
+function showSuspensionScreen(until, reason = '') {
+  const expiresAt = Date.parse(until || '');
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  appEl.style.display = 'none';
+  authScreen.classList.add('hide');
+  suspensionScreen.hidden = false;
+  suspensionReason.textContent = `Причина: ${String(reason || 'не указана')}`;
+  suspensionScreen.dataset.until = String(expiresAt);
+  const updateCountdown = () => {
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      if (suspensionCountdownTimer) clearInterval(suspensionCountdownTimer);
+      suspensionCountdownTimer = null;
+      window.location.reload();
+      return;
+    }
+    const endText = new Date(expiresAt).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
+    suspensionCountdown.textContent = `Осталось ${formatSuspensionTime(remaining)} · окончание ${endText}.`;
+  };
+  if (suspensionCountdownTimer) clearInterval(suspensionCountdownTimer);
+  updateCountdown();
+  suspensionCountdownTimer = setInterval(updateCountdown, 1000);
+  return true;
+}
+
+async function refreshCurrentUserSuspension() {
+  if (!currentUser || !supabaseClient) return;
+  const requestedUserId = currentUser.id;
+  const { data, error } = await supabaseClient
+    .from('profiles')
+    .select('suspended_until, suspension_reason')
+    .eq('user_id', requestedUserId)
+    .maybeSingle();
+  if (error || currentUser?.id !== requestedUserId) return;
+  const expiresAt = Date.parse(data?.suspended_until || '');
+  if (Number.isFinite(expiresAt) && expiresAt > Date.now()) {
+    if (suspensionScreen.hidden || suspensionScreen.dataset.until !== String(expiresAt)) {
+      showSuspensionScreen(data.suspended_until, data.suspension_reason);
+    }
+  } else if (!suspensionScreen.hidden) {
+    window.location.reload();
+  }
 }
 
 authForm.addEventListener('submit', async (e) => {
@@ -698,11 +785,18 @@ authForm.addEventListener('submit', async (e) => {
 });
 
 async function loginAs(authUser) {
-  const { data: profile, error: profileError } = await supabaseClient
+  let { data: profile, error: profileError } = await supabaseClient
     .from('profiles')
-    .select('user_id, player_id, username, role, promo_code')
+    .select('user_id, player_id, username, role, promo_code, suspended_until, suspension_reason')
     .eq('user_id', authUser.id)
     .single();
+  if (profileError && (profileError.code === '42703' || String(profileError.message || '').toLowerCase().includes('suspended_until'))) {
+    ({ data: profile, error: profileError } = await supabaseClient
+      .from('profiles')
+      .select('user_id, player_id, username, role, promo_code')
+      .eq('user_id', authUser.id)
+      .single());
+  }
   if (profileError) throw profileError;
 
   currentUser = {
@@ -713,6 +807,14 @@ async function loginAs(authUser) {
     promoCode: profile.promo_code
   };
   void updateOnlinePresenceIdentity();
+  const suspensionEnd = Date.parse(profile.suspended_until || '');
+  if (Number.isFinite(suspensionEnd) && suspensionEnd > Date.now()) {
+    showSuspensionScreen(profile.suspended_until, profile.suspension_reason);
+    return;
+  }
+  suspensionScreen.hidden = true;
+  if (suspensionCountdownTimer) clearInterval(suspensionCountdownTimer);
+  suspensionCountdownTimer = null;
   await loadUserState();
   marketSelection.clear();
   if (migrateCatalogIdsInInventory()) await saveState();
@@ -750,8 +852,8 @@ topupRequestForm.addEventListener('submit', event => {
 
   const enteredAmount = Number(topupAmountInput.value);
   const amount = amountToRub(enteredAmount);
-  if (!Number.isFinite(enteredAmount) || enteredAmount <= 0 || amount > 100000000) {
-    topupFeedback.textContent = 'Укажи допустимую сумму.';
+  if (!Number.isFinite(enteredAmount) || enteredAmount <= 0 || amount > MAX_DEMO_TRANSACTION_RUB) {
+    topupFeedback.textContent = 'Сумма заявки должна быть от 1 до 1 000 000 000 ₽.';
     return;
   }
 
@@ -917,6 +1019,7 @@ catalogToggle.addEventListener('click', () => {
   catalogMode = !catalogMode;
   upgradeInventoryPanel.classList.toggle('catalog-mode', catalogMode);
   catalogTools.hidden = !catalogMode;
+  personalInventoryTools.hidden = catalogMode;
   inventoryGrid.hidden = !catalogMode;
   myInventory.hidden = catalogMode;
   upgradeInventoryTitle.textContent = catalogMode ? 'Каталог предметов' : 'Мой инвентарь';
@@ -1283,28 +1386,117 @@ async function renderAdminUsers() {
   if (!currentUser || currentUser.role !== 'admin') return;
   const { data, error } = await supabaseClient.rpc('admin_list_players');
   if (error) {
-    adminUsersEl.innerHTML = '<tr><td colspan="7">Не удалось загрузить список игроков.</td></tr>';
+    adminUsersEl.innerHTML = '<tr><td colspan="9">Не удалось загрузить список игроков. Примените supabase/admin-moderation.sql.</td></tr>';
     console.error('Could not load admin player list:', error);
     return;
   }
+  const maxOperationAmount = maxTransactionAmountForCurrency();
   adminUsersEl.innerHTML = (data || []).map(user => {
     const promo = user.promo_code === PROMO_CODE ? `${PROMO_CODE} (+${Math.round(PROMO_BONUS_RATE * 100)}%)` : '—';
+    const suspendedUntil = Date.parse(user.suspended_until || '');
+    const activeSuspension = Number.isFinite(suspendedUntil) && suspendedUntil > Date.now();
     return `<tr>
       <td>${escapeHtml(user.player_id)}</td>
       <td>${escapeHtml(user.username)}${user.role === 'admin' ? ' <span class="admin-tag">админ</span>' : ''}</td>
+      <td><span class="admin-player-status status-offline" data-player-status-user-id="${escapeHtml(user.user_id || '')}">Офлайн</span></td>
       <td>${escapeHtml(promo)}</td>
       <td>${fmt(Number(user.balance))}</td>
       <td><form class="admin-grant-form" data-player-id="${escapeHtml(user.player_id)}">
-        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сумма начисления">
+        <input class="admin-amount" type="number" min="0.01" max="${maxOperationAmount}" step="0.01" placeholder="Сумма" aria-label="Сумма начисления">
         <button class="btn-small" type="submit">Начислить</button>
       </form></td>
       <td><form class="admin-debit-form" data-player-id="${escapeHtml(user.player_id)}">
-        <input class="admin-amount" type="number" min="0.01" max="100000000" step="0.01" placeholder="Сумма" aria-label="Сумма списания">
+        <input class="admin-amount" type="number" min="0.01" max="${maxOperationAmount}" step="0.01" placeholder="Сумма" aria-label="Сумма списания">
         <button class="btn-small danger" type="submit">Снять</button>
       </form></td>
+      <td><button class="btn-small admin-moderate-open ${activeSuspension ? 'danger' : ''}" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}" data-suspended-until="${escapeHtml(user.suspended_until || '')}" data-suspension-reason="${escapeHtml(user.suspension_reason || '')}">${activeSuspension ? 'Отстранён' : 'Управление'}</button></td>
       <td><button class="btn-small admin-inventory-open" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}">Открыть</button></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="7">Пользователей пока нет.</td></tr>';
+  }).join('') || '<tr><td colspan="9">Пользователей пока нет.</td></tr>';
+  updateAdminPresenceStatuses();
+}
+
+function getPlayerPresenceStatus(userId) {
+  if (!userId) return 'offline';
+  const presence = onlinePresenceChannel?.presenceState?.() || {};
+  const sessions = Object.values(presence).flat().filter(entry => String(entry?.user_id || '') === String(userId));
+  if (!sessions.length) return 'offline';
+  const cutoff = Date.now() - 20 * 60 * 1000;
+  return sessions.some(entry => {
+    const activityAt = Date.parse(entry.last_activity_at || entry.last_seen || '');
+    return Number.isFinite(activityAt) && activityAt >= cutoff;
+  }) ? 'online' : 'afk';
+}
+
+function updateAdminPresenceStatuses() {
+  adminUsersEl?.querySelectorAll('[data-player-status-user-id]').forEach(element => {
+    const status = getPlayerPresenceStatus(element.dataset.playerStatusUserId);
+    const labels = { online: 'Онлайн', afk: 'АФК', offline: 'Офлайн' };
+    element.classList.remove('status-online', 'status-afk', 'status-offline');
+    element.classList.add(`status-${status}`);
+    element.textContent = labels[status];
+  });
+}
+
+function openAdminModeration(playerId, username, suspendedUntil = '', reason = '') {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  activeAdminModerationPlayerId = Number(playerId);
+  const expiry = Date.parse(suspendedUntil || '');
+  const activeSuspension = Number.isFinite(expiry) && expiry > Date.now();
+  adminModerationTitle.textContent = `${username || 'Игрок'} · ID ${playerId}`;
+  adminModerationCurrent.textContent = activeSuspension
+    ? `Отстранён до ${new Date(expiry).toLocaleString('ru-RU')}. Причина: ${reason || 'не указана'}`
+    : 'Игрок не отстранён.';
+  adminModerationFeedback.textContent = '';
+  adminSuspensionDuration.value = '60';
+  adminSuspensionUnit.value = '60';
+  adminSuspensionReason.value = '';
+  syncCustomSelect(adminSuspensionUnit);
+  adminSuspensionSubmit.textContent = activeSuspension ? 'Продлить отстранение' : 'Отстранить';
+  adminSuspensionLiftBtn.hidden = !activeSuspension;
+  adminModerationModal.classList.add('show');
+  adminModerationModal.setAttribute('aria-hidden', 'false');
+}
+
+function closeAdminModeration() {
+  adminModerationModal.classList.remove('show');
+  adminModerationModal.setAttribute('aria-hidden', 'true');
+  activeAdminModerationPlayerId = null;
+}
+
+async function saveAdminSuspension(durationMinutes, reason) {
+  if (!currentUser || currentUser.role !== 'admin' || !activeAdminModerationPlayerId) return;
+  const playerId = activeAdminModerationPlayerId;
+  adminSuspensionSubmit.disabled = true;
+  adminSuspensionLiftBtn.disabled = true;
+  const { data, error } = await supabaseClient.rpc('admin_set_player_suspension', {
+    p_player_id: playerId,
+    p_duration_minutes: durationMinutes,
+    p_reason: reason
+  });
+  adminSuspensionSubmit.disabled = false;
+  adminSuspensionLiftBtn.disabled = false;
+  if (error) {
+    adminModerationFeedback.textContent = String(error.message || '').includes('admin_set_player_suspension')
+      ? 'Примените supabase/admin-moderation.sql в SQL Editor.'
+      : 'Не удалось сохранить отстранение. Проверьте права администратора и соединение.';
+    console.error('Could not update player suspension:', error);
+    return;
+  }
+  if (durationMinutes === 0) {
+    adminModerationFeedback.textContent = `Отстранение игрока ${data.username} снято.`;
+    adminModerationCurrent.textContent = 'Игрок не отстранён.';
+    adminSuspensionLiftBtn.hidden = true;
+    adminSuspensionSubmit.textContent = 'Отстранить';
+  } else {
+    const untilText = new Date(data.suspended_until).toLocaleString('ru-RU');
+    adminModerationFeedback.textContent = `Игрок ${data.username} отстранён до ${untilText}.`;
+    adminModerationCurrent.textContent = `Отстранён до ${untilText}. Причина: ${data.suspension_reason}`;
+    adminSuspensionLiftBtn.hidden = false;
+    adminSuspensionSubmit.textContent = 'Продлить отстранение';
+  }
+  await renderAdminUsers();
+  if (String(currentUser.playerId) === String(playerId)) void refreshCurrentUserSuspension();
 }
 
 function caseSkinSnapshot(item) {
@@ -1376,9 +1568,22 @@ function renderCaseDetails(gameCase) {
 
 function updateCaseOpenButton() {
   if (!selectedGameCase) return;
+  if (caseAnimationInProgress && cancelCaseAnimation) {
+    caseOpenButton.textContent = 'Пропустить анимацию';
+    caseOpenButton.classList.add('is-skip');
+    caseOpenButton.disabled = false;
+    return;
+  }
+  caseOpenButton.classList.remove('is-skip');
+  if (caseOpeningInProgress || caseSettlementInProgress) {
+    caseOpenButton.textContent = 'Открываю…';
+    caseOpenButton.disabled = true;
+    return;
+  }
   const quantity = Math.max(1, Math.min(10, Math.trunc(Number(caseOpenQuantityInput.value) || 1)));
   const total = Number(selectedGameCase.price) * quantity;
   caseOpenButton.textContent = `Открыть × ${quantity} · ${fmt(total)}`;
+  caseOpenButton.disabled = false;
 }
 
 function openCaseDetails(caseId) {
@@ -1847,8 +2052,7 @@ function renderCaseOpeningView(animate = false) {
     : pending.length
       ? `Выигрыш: ${pending.length} предметов. Продать все за ${fmt(sellTotal)}.`
       : 'Все награды уже обработаны.';
-  caseSkipNowBtn.hidden = !caseAnimationInProgress;
-  caseSkipNowBtn.disabled = !caseAnimationInProgress;
+  updateCaseOpenButton();
 
   const caseContents = selectedGameCase && selectedGameCase.name === activeCaseOpening.case_name
     ? selectedGameCase.contents || []
@@ -2004,7 +2208,7 @@ async function playCaseReels() {
       if (animationId === caseAnimationSequence) winner.classList.add('case-reel-winner', 'landed');
       finish();
     }, duration + 150);
-    track.style.transition = `transform ${duration}ms cubic-bezier(.25,.46,.45,.94)`;
+    track.style.transition = `transform ${duration}ms cubic-bezier(.1,.75,.3,1)`;
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (animationId !== caseAnimationSequence) { finish(); return; }
       track.style.transform = `translate3d(${targetX}px,0,0)`;
@@ -2021,7 +2225,7 @@ async function playCaseReels() {
     finishTracks.forEach(finish => finish());
   };
   cancelCaseAnimation = cancel;
-  caseSkipNowBtn.disabled = false;
+  updateCaseOpenButton();
   await Promise.all(trackAnimations);
   if (cancelCaseAnimation === cancel) cancelCaseAnimation = null;
 }
@@ -2192,6 +2396,7 @@ async function openGameCase(caseId, quantity) {
   const gameCase = gameCases.find(item => String(item.id) === String(caseId));
   if (!gameCase) return;
   caseOpeningInProgress = true;
+  updateCaseOpenButton();
   caseBackButton.disabled = true;
   caseOpenButton.disabled = true;
   caseOpenQuantityInput.disabled = true;
@@ -2243,6 +2448,7 @@ async function openGameCase(caseId, quantity) {
     if (caseQuantitySelect) caseQuantitySelect.trigger.disabled = false;
     caseSkipAnimationToggle.disabled = false;
     syncCaseOpeningActions();
+    updateCaseOpenButton();
     renderPendingCaseRewards();
   }
 }
@@ -2346,7 +2552,11 @@ caseOpenQuantityInput.addEventListener('change', () => {
   updateCaseOpenButton();
 });
 caseOpenButton.addEventListener('click', () => {
-  if (!selectedGameCase || caseOpeningInProgress) return;
+  if (caseAnimationInProgress && cancelCaseAnimation) {
+    cancelCaseAnimation();
+    return;
+  }
+  if (!selectedGameCase || caseOpeningInProgress || caseSettlementInProgress) return;
   const quantity = Number(caseOpenQuantityInput.value || 1);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
     caseFeedback.textContent = 'Можно открыть от 1 до 10 кейсов за раз.';
@@ -2375,10 +2585,6 @@ caseClaimAllBtn.addEventListener('click', () => void settleAllCaseRewards('claim
 caseSellAllBtn.addEventListener('click', () => void settleAllCaseRewards('sell'));
 pendingCaseClaimAllBtn.addEventListener('click', () => void settleAllPendingCaseRewards('claim'));
 pendingCaseSellAllBtn.addEventListener('click', () => void settleAllPendingCaseRewards('sell'));
-caseSkipNowBtn.addEventListener('click', () => {
-  if (!caseAnimationInProgress || !cancelCaseAnimation) return;
-  cancelCaseAnimation();
-});
 caseSkipAnimationToggle.addEventListener('change', () => {
   caseSkipAnimation = caseSkipAnimationToggle.checked;
   try { localStorage.setItem(CASE_SKIP_ANIMATION_KEY, String(caseSkipAnimation)); } catch (e) {}
@@ -2422,12 +2628,14 @@ async function loadAdminPlayerInventory(playerId, username = '') {
   if (activeAdminInventoryPlayerId !== requestedPlayerId) return;
   if (error) {
     adminInventoryGrid.innerHTML = '<div class="admin-inventory-empty">Не удалось загрузить инвентарь. Примените SQL-миграцию админ-инвентаря.</div>';
+    adminInventoryClearBtn.disabled = true;
     console.error('Could not load admin player inventory:', error);
     return;
   }
 
   activeAdminInventoryPlayerId = Number(data.player_id);
   const inventory = Array.isArray(data.inventory) ? data.inventory : [];
+  adminInventoryClearBtn.disabled = inventory.length === 0 || adminInventoryOperationInFlight;
   const totalValue = inventory.reduce((sum, item) => sum + Number(item.price || 0), 0);
   adminInventoryTitle.textContent = 'Инвентарь · ' + data.username + ' (#' + data.player_id + ')';
   adminInventorySummary.textContent = inventory.length + ' предметов · стоимость ' + fmt(totalValue) + ' · продажа без комиссии';
@@ -2488,7 +2696,47 @@ async function performAdminInventoryAction(action, itemId) {
   }
 }
 
+async function performAdminInventoryClear() {
+  if (!currentUser || currentUser.role !== 'admin' || !activeAdminInventoryPlayerId || adminInventoryOperationInFlight) return;
+  const playerId = activeAdminInventoryPlayerId;
+  adminInventoryOperationInFlight = true;
+  adminInventoryClearBtn.disabled = true;
+  adminInventoryGrid.querySelectorAll('.admin-inventory-action').forEach(button => { button.disabled = true; });
+  adminInventoryFeedback.textContent = 'Очищаю инвентарь…';
+  const { data, error } = await supabaseClient.rpc('admin_clear_player_inventory', { p_player_id: playerId });
+  if (error) {
+    adminInventoryFeedback.textContent = String(error.message || '').toLowerCase().includes('admin_clear_player_inventory')
+      ? 'Примените supabase/admin-moderation.sql в SQL Editor.'
+      : 'Не удалось очистить инвентарь. Проверьте права администратора и соединение.';
+    console.error('Could not clear player inventory:', error);
+    adminInventoryOperationInFlight = false;
+    adminInventoryClearBtn.disabled = false;
+    adminInventoryGrid.querySelectorAll('.admin-inventory-action').forEach(button => { button.disabled = false; });
+    return;
+  }
+  const playerName = data.username || 'игрока';
+  await loadAdminPlayerInventory(playerId, playerName);
+  adminInventoryFeedback.textContent = `Инвентарь ${playerName} очищен: удалено ${Number(data.deleted_count || 0)} предметов.`;
+  adminInventoryOperationInFlight = false;
+  adminInventoryClearBtn.disabled = Number(data.deleted_count || 0) === 0;
+  await renderAdminUsers();
+  if (String(currentUser.playerId) === String(playerId)) {
+    await loadUserState();
+    updateBalanceUI();
+    renderMyInventory();
+    renderInventory();
+    renderTargets();
+    renderProfile();
+    restoreSlotsFromState();
+  }
+}
+
 adminUsersEl.addEventListener('click', event => {
+  const moderationButton = event.target.closest('.admin-moderate-open');
+  if (moderationButton) {
+    openAdminModeration(moderationButton.dataset.playerId, moderationButton.dataset.username, moderationButton.dataset.suspendedUntil, moderationButton.dataset.suspensionReason);
+    return;
+  }
   const button = event.target.closest('.admin-inventory-open');
   if (button) void loadAdminPlayerInventory(button.dataset.playerId, button.dataset.username);
 });
@@ -2496,6 +2744,37 @@ adminUsersEl.addEventListener('click', event => {
 adminInventoryClose.addEventListener('click', closeAdminInventoryModal);
 adminInventoryModal.addEventListener('click', event => {
   if (event.target === adminInventoryModal) closeAdminInventoryModal();
+});
+adminInventoryClearBtn.addEventListener('click', () => {
+  if (!activeAdminInventoryPlayerId || adminInventoryOperationInFlight) return;
+  const playerId = activeAdminInventoryPlayerId;
+  openConfirm('Очистить инвентарь?', `Удалить все предметы игрока #${playerId}? Баланс игрока останется без изменений.`, () => {
+    void performAdminInventoryClear();
+  });
+});
+
+adminModerationClose.addEventListener('click', closeAdminModeration);
+adminModerationModal.addEventListener('click', event => {
+  if (event.target === adminModerationModal) closeAdminModeration();
+});
+adminSuspensionForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const duration = Number(adminSuspensionDuration.value);
+  const durationMinutes = Math.trunc(duration * Number(adminSuspensionUnit.value || 1));
+  const reason = adminSuspensionReason.value.trim();
+  if (!Number.isInteger(duration) || duration < 1 || durationMinutes > MAX_SUSPENSION_MINUTES) {
+    adminModerationFeedback.textContent = 'Срок должен быть от 1 минуты до 365 дней.';
+    return;
+  }
+  if (!reason || reason.length > 300) {
+    adminModerationFeedback.textContent = 'Укажите причину длиной до 300 символов.';
+    return;
+  }
+  void saveAdminSuspension(durationMinutes, reason);
+});
+adminSuspensionLiftBtn.addEventListener('click', () => {
+  adminSuspensionReason.value = '';
+  void saveAdminSuspension(0, '');
 });
 
 adminInventoryGrid.addEventListener('click', event => {
@@ -2520,8 +2799,8 @@ adminUsersEl.addEventListener('submit', async event => {
   const debit = form.matches('.admin-debit-form');
   const amountInput = form.querySelector('.admin-amount');
   const amount = amountToRub(amountInput.value);
-  if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) {
-    adminFeedback.textContent = `Укажите допустимую сумму для ${debit ? 'списания' : 'начисления'}.`;
+  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_DEMO_TRANSACTION_RUB) {
+    adminFeedback.textContent = `Сумма должна быть от 0,01 до 1 000 000 000 ₽ для ${debit ? 'списания' : 'начисления'}.`;
     adminFeedback.classList.add('show');
     return;
   }
@@ -2925,11 +3204,35 @@ function renderSlot(slotEl, item) {
     ? `${item.items.length} скина: ${item.items.slice(0, 2).map(skin => escapeHtml(skin.name)).join(' + ')}${item.items.length > 2 ? ' …' : ''}`
     : escapeHtml(item.name);
   slotEl.innerHTML = `
+    <button type="button" class="slot-remove" data-slot-remove="${slotEl === betSlot ? 'bet' : 'target'}" aria-label="Убрать выбранный скин" title="Убрать скин"><iconify-icon icon="mdi:close"></iconify-icon></button>
     <img src="${item.img}" alt="">
     <div class="item-name">${title}</div>
     <div class="item-price">${fmt(item.price)}</div>
   `;
 }
+
+function removeUpgradeSlot(kind) {
+  if (spinning) return;
+  warningEl.classList.remove('show');
+  warningEl.textContent = '';
+  if (kind === 'bet') {
+    state.betItemIds = [];
+    state.betId = null;
+    updateBetSelection();
+    return;
+  }
+  targetData = null;
+  state.targetName = null;
+  saveState();
+  renderSlot(targetSlot, null);
+  updateChance();
+  updateUpgradeSelectionCards();
+}
+
+[betSlot, targetSlot].forEach(slot => slot.addEventListener('click', event => {
+  const removeButton = event.target.closest('[data-slot-remove]');
+  if (removeButton) removeUpgradeSlot(removeButton.dataset.slotRemove);
+}));
 
 function restoreSlotsFromState() {
   if (!SKINS_CATALOG.length) return;
@@ -3258,17 +3561,32 @@ function appendMyInventoryCard(idx) {
 
 function appendMyInventoryPage() {
   const start = Number(myInventory.dataset.visibleCount || 0);
-  const end = Math.min(start + PROFILE_INVENTORY_PAGE_SIZE, state.inventory.length);
-  for (let idx = start; idx < end; idx += 1) appendMyInventoryCard(idx);
+  const indices = getMyInventoryFilteredIndices();
+  const end = Math.min(start + PROFILE_INVENTORY_PAGE_SIZE, indices.length);
+  indices.slice(start, end).forEach(idx => appendMyInventoryCard(idx));
   myInventory.dataset.visibleCount = String(end);
   updateMyInventoryLoadMoreButton();
 }
 
+function getMyInventoryFilteredIndices() {
+  let from = myInvPriceFrom.value === '' ? null : amountToRub(Number(myInvPriceFrom.value));
+  let to = myInvPriceTo.value === '' ? null : amountToRub(Number(myInvPriceTo.value));
+  if (from !== null && to !== null && from > to) [from, to] = [to, from];
+  return state.inventory.reduce((indices, item, index) => {
+    const price = Number(item.price || 0);
+    if (from !== null && price < from) return indices;
+    if (to !== null && price > to) return indices;
+    indices.push(index);
+    return indices;
+  }, []);
+}
+
 function updateMyInventoryLoadMoreButton() {
   const visibleCount = Number(myInventory.dataset.visibleCount || 0);
+  const filteredCount = getMyInventoryFilteredIndices().length;
   myInventory.querySelector('.inventory-load-more')?.remove();
-  if (visibleCount < state.inventory.length) {
-    const remaining = state.inventory.length - visibleCount;
+  if (visibleCount < filteredCount) {
+    const remaining = filteredCount - visibleCount;
     const loadMore = document.createElement('button');
     loadMore.type = 'button';
     loadMore.className = 'btn-small inventory-load-more';
@@ -3284,9 +3602,15 @@ function renderMyInventory() {
   myInvCount.textContent = state.inventory.length;
   myInventory.innerHTML = '';
   myInventory.dataset.visibleCount = '0';
+  const filteredCount = getMyInventoryFilteredIndices().length;
+  myInvFilterCount.textContent = `${filteredCount}/${state.inventory.length}`;
 
   if (state.inventory.length === 0) {
     myInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#555;font-size:11px;padding:16px">Пусто. Добавь предмет из каталога слева.</div>';
+    return;
+  }
+  if (!filteredCount) {
+    myInventory.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#777;font-size:11px;padding:16px">Нет скинов в этом диапазоне цены.</div>';
     return;
   }
   appendMyInventoryPage();
@@ -4341,6 +4665,13 @@ invSearch.addEventListener('input', scheduleInvRender);
 invPriceFrom.addEventListener('input', scheduleInvRender);
 invPriceTo.addEventListener('input', scheduleInvRender);
 invSort.addEventListener('change', renderInventory);
+myInvPriceFrom.addEventListener('input', renderMyInventory);
+myInvPriceTo.addEventListener('input', renderMyInventory);
+clearMyInvPriceFilter.addEventListener('click', () => {
+  myInvPriceFrom.value = '';
+  myInvPriceTo.value = '';
+  renderMyInventory();
+});
 
 targetSearch.addEventListener('input', scheduleTargetRender);
 targetPriceFrom.addEventListener('input', scheduleTargetRender);
@@ -4619,14 +4950,21 @@ function readUniqueOnlineUsers() {
   return identities.size;
 }
 
+function registerPresenceActivity() {
+  lastUserActivityAt = Date.now();
+  if (Date.now() - lastPresenceTrackAt >= 30000) void updateOnlinePresenceIdentity();
+}
+
 async function updateOnlinePresenceIdentity() {
   if (!onlinePresenceChannel || !onlinePresenceReady) return;
   try {
     await onlinePresenceChannel.track({
       session_id: onlinePresenceSessionId,
       user_id: currentUser?.id || null,
-      last_seen: new Date().toISOString()
+      last_seen: new Date().toISOString(),
+      last_activity_at: new Date(lastUserActivityAt).toISOString()
     });
+    lastPresenceTrackAt = Date.now();
   } catch (error) {
     console.warn('Could not update online presence:', error);
   }
@@ -4641,11 +4979,20 @@ function startOnlinePresence() {
       config: { presence: { key: onlinePresenceSessionId } }
     });
     onlinePresenceChannel
-      .on('presence', { event: 'sync' }, () => setOnlineUsersCount(readUniqueOnlineUsers()))
+      .on('presence', { event: 'sync' }, () => {
+        setOnlineUsersCount(readUniqueOnlineUsers());
+        updateAdminPresenceStatuses();
+      })
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
           onlinePresenceReady = true;
           void updateOnlinePresenceIdentity();
+          if (!presenceHeartbeatTimer) {
+            presenceHeartbeatTimer = setInterval(() => {
+              void updateOnlinePresenceIdentity();
+              updateAdminPresenceStatuses();
+            }, 60000);
+          }
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           onlinePresenceReady = false;
           setOnlineUsersCount(NaN, false);
@@ -4658,6 +5005,10 @@ function startOnlinePresence() {
     console.warn('Online counter unavailable; continuing site startup:', error);
   }
 }
+
+['pointerdown', 'keydown', 'touchstart', 'wheel', 'scroll'].forEach(eventName => {
+  document.addEventListener(eventName, registerPresenceActivity, { passive: true });
+});
 
 async function initSession() {
   if (!supabaseClient) {
@@ -4692,5 +5043,6 @@ setInterval(() => {
 }, 60000);
 
 setInterval(() => { void refreshWallet(); }, 10000);
+setInterval(() => { void refreshCurrentUserSuspension(); }, 60000);
 
 loadSkins();

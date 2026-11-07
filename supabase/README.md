@@ -5,7 +5,7 @@
 ## Первичная настройка
 
 1. Создай проект Supabase.
-2. В **SQL Editor** запусти весь файл [`schema.sql`](schema.sql). Затем запусти [`skin-battles.sql`](skin-battles.sql), [`community-features.sql`](community-features.sql), [`admin-inventory.sql`](admin-inventory.sql) и [`cases.sql`](cases.sql). Они добавят батлы, ленту апгрейдов, просмотр профилей, безопасное управление инвентарём и кейсы. Актуальная версия `admin-inventory.sql` также устанавливает пакетную продажу всего своего инвентаря; после обновления этого файла его нужно повторно выполнить в SQL Editor. `cases.sql` создаёт публичное хранилище PNG, но разрешает загружать туда картинки только администраторам.
+2. В **SQL Editor** запусти весь файл [`schema.sql`](schema.sql). Затем запусти [`skin-battles.sql`](skin-battles.sql), [`community-features.sql`](community-features.sql), [`admin-inventory.sql`](admin-inventory.sql), [`cases.sql`](cases.sql) и [`admin-moderation.sql`](admin-moderation.sql). Они добавят батлы, ленту апгрейдов, просмотр профилей, управление инвентарём, кейсы, статусы игроков и отстранения. `cases.sql` создаёт публичное хранилище PNG, но разрешает загружать туда картинки только администраторам.
 3. В **Authentication → Sign In / Providers → Email** отключи **Confirm email**. Приложение не собирает email: ник преобразуется в технический адрес вида `u-…@players.sgrader.invalid`. Поэтому восстановить забытый пароль нельзя; игрокам нужно использовать отдельный пароль для этой демо-игры.
 4. В настройках Auth укажи Site URL `https://shroudesu.github.io/sgrader-upgrader-friends/`.
 5. В **Project Settings → API** скопируй Project URL и публичный **publishable/anon key** в `supabase-config.js`. Не вставляй `service_role` key: он даёт полный доступ к базе.
@@ -27,11 +27,12 @@
 - Запусти [`registration-starting-balance.sql`](registration-starting-balance.sql), чтобы новые регистрации начинались с 500 ₽. Балансы уже созданных аккаунтов не меняются.
 - Запусти [`auth-upgrade-feed.sql`](auth-upgrade-feed.sql) после `community-features.sql`, чтобы гости видели ленту выигрышей до авторизации. Анонимный RPC выдаёт только карточки предметов, ник, аватар и ID игрока; UUID аккаунта не раскрывается.
 - Если серверная комиссия продаж ещё не отключена, отдельно запусти [`remove-sale-commission.sql`](remove-sale-commission.sql).
+- Для админских статусов онлайн/АФК/офлайн, очистки инвентаря, временного отстранения и лимита операций баланса до 1 млрд ₽ запусти [`admin-moderation.sql`](admin-moderation.sql). Отстранение сохраняется в профиле, показывается при каждом входе и блокирует игровые изменения до срока окончания.
 
 ## Что хранится централизованно
 
 - Supabase Auth хранит парольные хеши и сессии.
-- `profiles` хранит игровой ник, общий ID, роль и применённый промокод.
+- `profiles` хранит игровой ник, общий ID, роль, применённый промокод и срок/причину отстранения.
 - `wallets` хранит баланс демо-рублей; прямые изменения из браузера запрещены.
 - `game_states` хранит игровой инвентарь и прогресс.
 - `skin_battles` хранит открытые и завершённые батлы; список доступен авторизованным игрокам.

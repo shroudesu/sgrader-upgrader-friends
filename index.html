@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
-  <link rel="stylesheet" href="style.css?v=20261107-r4">
+  <link rel="stylesheet" href="style.css?v=20261107-r5">
 </head>
 <body>
 
@@ -135,6 +135,15 @@
                 <option value="top">Топ-дорогие</option>
               </select>
             </div>
+          </div>
+          <div class="personal-inventory-tools" id="personalInventoryTools">
+            <label for="myInvPriceFrom">Фильтр инвентаря по цене</label>
+            <div class="price-filter">
+              <input type="number" id="myInvPriceFrom" class="price-input" placeholder="от ₽" data-price-placeholder="от" min="0" step="any">
+              <span class="price-sep">—</span>
+              <input type="number" id="myInvPriceTo" class="price-input" placeholder="до ₽" data-price-placeholder="до" min="0" step="any">
+            </div>
+            <div class="personal-inventory-filter-footer"><span class="filter-count" id="myInvFilterCount">0</span><button type="button" class="btn-small" id="clearMyInvPriceFilter">Сбросить</button></div>
           </div>
           <div class="loading" id="invLoading">Загрузка каталога...</div>
           <div class="grid small upgrade-my-inventory" id="myInventory"></div>
@@ -295,7 +304,7 @@
       </div>
       <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
       <section class="case-open-results" id="caseOpenResults" hidden>
-        <div class="case-result-heading"><div class="case-result-status sr-only" id="caseResultStatus" role="status" aria-live="polite"></div><button type="button" class="btn-small case-skip-now" id="caseSkipNowBtn" hidden>Пропустить прокрутку</button></div>
+        <div class="case-result-heading"><div class="case-result-status sr-only" id="caseResultStatus" role="status" aria-live="polite"></div></div>
         <div class="case-result-rewards" id="caseRewardList"></div>
         <div class="case-result-bulk-actions" id="caseResultBulkActions">
           <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
@@ -356,7 +365,7 @@
       <p>Это заявка: платёж не проводится. Выбери способ и сумму — откроется Telegram с готовым сообщением. Начисление выполняется после подтверждения администратором.</p>
       <form class="topup-form" id="topupRequestForm">
         <label for="topupAmount">Сумма (<span data-currency-symbol>₽</span>)</label>
-        <input id="topupAmount" type="number" min="1" max="100000000" step="1" inputmode="numeric" placeholder="Введите сумму" required>
+        <input id="topupAmount" type="number" min="1" max="1000000000" step="0.01" inputmode="decimal" placeholder="Введите сумму" required>
         <label for="topupMethodCustomTrigger">Способ</label>
         <select id="topupMethod" required>
           <option value="Карта">Банковская карта</option>
@@ -378,7 +387,7 @@
       <p class="admin-notice">Игроки и начисления хранятся в общей базе.</p>
       <div class="admin-table-wrap">
         <table class="admin-table">
-          <thead><tr><th>ID игрока</th><th>Ник</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th><th>Инвентарь</th></tr></thead>
+          <thead><tr><th>ID игрока</th><th>Ник</th><th>Статус</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th><th>Управление</th><th>Инвентарь</th></tr></thead>
           <tbody id="adminUsers"></tbody>
         </table>
       </div>
@@ -412,12 +421,31 @@
 
   <div class="modal-overlay" id="adminInventoryModal" aria-hidden="true">
     <div class="modal admin-inventory-modal" role="dialog" aria-modal="true" aria-labelledby="adminInventoryTitle">
-      <div class="settings-heading"><h3 class="modal-title" id="adminInventoryTitle">Инвентарь игрока</h3><button type="button" class="settings-close" id="adminInventoryClose" aria-label="Закрыть инвентарь">×</button></div>
+      <div class="settings-heading"><h3 class="modal-title" id="adminInventoryTitle">Инвентарь игрока</h3><div class="admin-inventory-heading-actions"><button type="button" class="btn-small danger" id="adminInventoryClearBtn" disabled>Очистить инвентарь</button><button type="button" class="settings-close" id="adminInventoryClose" aria-label="Закрыть инвентарь">×</button></div></div>
       <p class="admin-inventory-summary" id="adminInventorySummary"></p>
       <div class="admin-inventory-feedback" id="adminInventoryFeedback" role="status" aria-live="polite"></div>
       <div class="admin-inventory-grid" id="adminInventoryGrid"></div>
     </div>
   </div>
+
+  <div class="modal-overlay" id="adminModerationModal" aria-hidden="true">
+    <div class="modal admin-moderation-modal" role="dialog" aria-modal="true" aria-labelledby="adminModerationTitle">
+      <div class="settings-heading"><h3 class="modal-title" id="adminModerationTitle">Управление игроком</h3><button type="button" class="settings-close" id="adminModerationClose" aria-label="Закрыть управление игроком">×</button></div>
+      <p class="admin-moderation-current" id="adminModerationCurrent"></p>
+      <form id="adminSuspensionForm" class="admin-suspension-form">
+        <label>Срок отстранения
+          <div class="admin-duration-row"><input type="number" id="adminSuspensionDuration" min="1" max="525600" value="60" required><select id="adminSuspensionUnit" aria-label="Единица срока"><option value="1">минут</option><option value="60" selected>часов</option><option value="1440">дней</option></select></div>
+        </label>
+        <label>Причина<textarea id="adminSuspensionReason" rows="3" maxlength="300" required placeholder="Укажи причину отстранения"></textarea></label>
+        <div class="admin-moderation-feedback" id="adminModerationFeedback" role="status" aria-live="polite"></div>
+        <div class="admin-moderation-actions"><button type="submit" class="btn-small danger" id="adminSuspensionSubmit">Отстранить</button><button type="button" class="btn-small" id="adminSuspensionLiftBtn" hidden>Снять отстранение</button></div>
+      </form>
+    </div>
+  </div>
+
+  <section class="suspension-screen" id="suspensionScreen" hidden role="alertdialog" aria-modal="true" aria-labelledby="suspensionTitle">
+    <div class="suspension-card"><iconify-icon icon="mdi:account-lock-outline" aria-hidden="true"></iconify-icon><h1 id="suspensionTitle">Вы отстранены от SGRADER</h1><p id="suspensionCountdown"></p><p class="suspension-reason" id="suspensionReason"></p></div>
+  </section>
 
   <!-- Модалки -->
   <div class="modal-overlay" id="buyModal">
@@ -544,6 +572,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
-<script src="script.js?v=20261107-r4"></script>
+<script src="script.js?v=20261107-r5"></script>
 </body>
 </html>
