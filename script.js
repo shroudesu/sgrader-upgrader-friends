@@ -4191,22 +4191,29 @@ async function updateOnlinePresenceIdentity() {
 
 function startOnlinePresence() {
   if (!supabaseClient || onlinePresenceChannel) return;
-  onlinePresenceSessionId = makeInstanceId();
-  setOnlineUsersCount(NaN, false);
-  onlinePresenceChannel = supabaseClient.channel('site-online-users', {
-    config: { presence: { key: onlinePresenceSessionId } }
-  });
-  onlinePresenceChannel
-    .on('presence', { event: 'sync' }, () => setOnlineUsersCount(readUniqueOnlineUsers()))
-    .subscribe(status => {
-      if (status === 'SUBSCRIBED') {
-        onlinePresenceReady = true;
-        void updateOnlinePresenceIdentity();
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        onlinePresenceReady = false;
-        setOnlineUsersCount(NaN, false);
-      }
+  try {
+    onlinePresenceSessionId = makeInstanceId();
+    setOnlineUsersCount(NaN, false);
+    onlinePresenceChannel = supabaseClient.channel('site-online-users', {
+      config: { presence: { key: onlinePresenceSessionId } }
     });
+    onlinePresenceChannel
+      .on('presence', { event: 'sync' }, () => setOnlineUsersCount(readUniqueOnlineUsers()))
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          onlinePresenceReady = true;
+          void updateOnlinePresenceIdentity();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          onlinePresenceReady = false;
+          setOnlineUsersCount(NaN, false);
+        }
+      });
+  } catch (error) {
+    onlinePresenceChannel = null;
+    onlinePresenceReady = false;
+    setOnlineUsersCount(NaN, false);
+    console.warn('Online counter unavailable; continuing site startup:', error);
+  }
 }
 
 async function initSession() {
