@@ -524,6 +524,9 @@ let pendingCaseLoadSequence = 0;
 let activeCaseOpening = null;
 let selectedGameCase = null;
 let upgradeFeedChannel = null;
+let currentUserUpdatesChannel = null;
+let currentUserStateRefreshTimer = null;
+let currentUserRealtimeReady = false;
 let onlinePresenceChannel = null;
 let onlinePresenceReady = false;
 let onlinePresenceSessionId = '';
@@ -707,6 +710,93 @@ async function refreshCurrentUserSuspension() {
   }
 }
 
+function queueCurrentUserStateRefresh() {
+  if (!currentUser || !supabaseClient) return;
+  if (currentUserStateRefreshTimer) clearTimeout(currentUserStateRefreshTimer);
+  const requestedUserId = currentUser.id;
+  const refresh = async () => {
+    currentUserStateRefreshTimer = null;
+    if (!currentUser || currentUser.id !== requestedUserId) return;
+    if (spinning || caseOpeningInProgress || caseSettlementInProgress) {
+      currentUserStateRefreshTimer = setTimeout(refresh, 350);
+      return;
+    }
+    try {
+      await stateSaveQueue;
+      if (currentUser?.id !== requestedUserId) return;
+      await loadUserState();
+      if (currentUser?.id !== requestedUserId) return;
+      updateBalanceUI();
+      renderInventory();
+      renderTargets();
+      renderMyInventory();
+      restoreSlotsFromState();
+      renderProfile();
+    } catch (error) {
+      console.warn('Could not refresh player state from realtime update:', error);
+    }
+  };
+  currentUserStateRefreshTimer = setTimeout(refresh, 250);
+}
+
+function handleCurrentUserProfileUpdate(profile, requestedUserId) {
+  if (!profile || currentUser?.id !== requestedUserId) return;
+  if (profile.username && profile.username !== currentUser.username) {
+    currentUser.username = profile.username;
+    userNameEl.textContent = profile.username;
+  }
+  if (profile.role && profile.role !== currentUser.role) {
+    currentUser.role = profile.role;
+    adminNav.style.display = profile.role === 'admin' ? '' : 'none';
+  }
+  const expiresAt = Date.parse(profile.suspended_until || '');
+  if (Number.isFinite(expiresAt) && expiresAt > Date.now()) {
+    showSuspensionScreen(profile.suspended_until, profile.suspension_reason);
+  } else if (!suspensionScreen.hidden) {
+    window.location.reload();
+  }
+}
+
+function stopCurrentUserRealtimeUpdates() {
+  if (currentUserUpdatesChannel && supabaseClient) {
+    void supabaseClient.removeChannel(currentUserUpdatesChannel);
+  }
+  currentUserUpdatesChannel = null;
+  currentUserRealtimeReady = false;
+  if (currentUserStateRefreshTimer) clearTimeout(currentUserStateRefreshTimer);
+  currentUserStateRefreshTimer = null;
+}
+
+function startCurrentUserRealtimeUpdates(userId) {
+  if (!currentUser || !supabaseClient || !userId) return;
+  stopCurrentUserRealtimeUpdates();
+  const requestedUserId = userId;
+  try {
+    currentUserUpdatesChannel = supabaseClient.channel(`player-updates:${requestedUserId}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'profiles', filter: `user_id=eq.${requestedUserId}`
+      }, payload => handleCurrentUserProfileUpdate(payload.new, requestedUserId))
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${requestedUserId}`
+      }, () => { void refreshWallet(); })
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'game_states', filter: `user_id=eq.${requestedUserId}`
+      }, () => queueCurrentUserStateRefresh())
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          currentUserRealtimeReady = true;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          currentUserRealtimeReady = false;
+          console.warn('Player updates realtime subscription unavailable; polling remains active:', status);
+        }
+      });
+  } catch (error) {
+    currentUserUpdatesChannel = null;
+    currentUserRealtimeReady = false;
+    console.warn('Player updates realtime subscription unavailable; polling remains active:', error);
+  }
+}
+
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   authError.textContent = '';
@@ -806,6 +896,7 @@ async function loginAs(authUser) {
     role: profile.role,
     promoCode: profile.promo_code
   };
+  startCurrentUserRealtimeUpdates(currentUser.id);
   void updateOnlinePresenceIdentity();
   const suspensionEnd = Date.parse(profile.suspended_until || '');
   if (Number.isFinite(suspensionEnd) && suspensionEnd > Date.now()) {
@@ -874,6 +965,7 @@ topupRequestForm.addEventListener('submit', event => {
 logoutBtn.addEventListener('click', async () => {
   await stateSaveQueue;
   if (supabaseClient) await supabaseClient.auth.signOut();
+  stopCurrentUserRealtimeUpdates();
   if (upgradeFeedChannel && supabaseClient) {
     void supabaseClient.removeChannel(upgradeFeedChannel);
     upgradeFeedChannel = null;
@@ -2062,6 +2154,9 @@ function renderCaseOpeningView(animate = false) {
     const reel = makeCaseReelMarkup(item, caseContents, reward);
     return `<article class="case-reward-row" data-reward-id="${escapeHtml(reward.id)}" aria-label="Предмет ${index + 1}">${reel}</article>`;
   }).join('') || '<div class="case-empty">В этом открытии нет ожидающих наград.</div>';
+  caseRewardList.dataset.rewardCount = String(pending.length);
+  caseRewardList.classList.toggle('has-single-reel', pending.length === 1);
+  caseRewardList.classList.toggle('has-odd-last-reel', pending.length > 1 && pending.length % 2 === 1);
   syncCaseOpeningActions();
 
   if (!caseAnimationInProgress) {
@@ -5043,6 +5138,9 @@ setInterval(() => {
 }, 60000);
 
 setInterval(() => { void refreshWallet(); }, 10000);
-setInterval(() => { void refreshCurrentUserSuspension(); }, 60000);
+setInterval(() => { void refreshCurrentUserSuspension(); }, 5000);
+setInterval(() => {
+  if (currentUser && !currentUserRealtimeReady) queueCurrentUserStateRefresh();
+}, 20000);
 
 loadSkins();

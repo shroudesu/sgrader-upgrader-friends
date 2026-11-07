@@ -1,6 +1,29 @@
 -- Player status, inventory clear, suspension controls, and transaction limits.
 -- Apply after schema.sql in Supabase SQL Editor. Safe to run again.
 
+-- Publish only the rows that authenticated players are allowed to read through RLS.
+do $$
+declare
+  v_table text;
+begin
+  if exists (
+    select 1 from pg_catalog.pg_publication
+     where pubname = 'supabase_realtime' and not puballtables
+  ) then
+    foreach v_table in array array['profiles', 'wallets', 'game_states'] loop
+      if not exists (
+        select 1 from pg_catalog.pg_publication_tables
+         where pubname = 'supabase_realtime'
+           and schemaname = 'public'
+           and tablename = v_table
+      ) then
+        execute format('alter publication supabase_realtime add table public.%I', v_table);
+      end if;
+    end loop;
+  end if;
+end;
+$$;
+
 alter table public.profiles
   add column if not exists suspended_until timestamptz,
   add column if not exists suspension_reason text;
