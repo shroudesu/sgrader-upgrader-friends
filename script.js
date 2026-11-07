@@ -495,6 +495,8 @@ let caseAnimationSequence = 0;
 let cancelCaseAnimation = null;
 let caseSettlementInProgress = false;
 let pendingCaseRewards = [];
+let pendingCaseLoadError = false;
+let pendingCaseLoadSequence = 0;
 let activeCaseOpening = null;
 let selectedGameCase = null;
 let upgradeFeedChannel = null;
@@ -778,6 +780,8 @@ logoutBtn.addEventListener('click', async () => {
   currentUser = null;
   void updateOnlinePresenceIdentity();
   pendingCaseRewards = [];
+  pendingCaseLoadError = false;
+  pendingCaseLoadSequence++;
   renderPendingCaseRewards();
   marketSelection.clear();
   state = { balance: 0, inventory: [], betId: null, betItemIds: [], targetName: null, bestDrop: null };
@@ -1386,7 +1390,6 @@ function openCaseDetails(caseId) {
   caseListView.hidden = true;
   caseDetailView.hidden = false;
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  void loadPendingCaseRewards();
 }
 
 function renderAdminCaseList() {
@@ -1591,6 +1594,32 @@ async function uploadCaseImage(file) {
   }
 }
 
+const CASE_REQUEST_TIMEOUT_MS = 15000;
+
+function withCaseTimeout(request, label, timeoutMs = CASE_REQUEST_TIMEOUT_MS, abortController = null) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      abortController?.abort();
+      const error = new Error(`${label} timed out`);
+      error.code = 'CASE_RPC_TIMEOUT';
+      reject(error);
+    }, timeoutMs);
+  });
+  return Promise.race([request, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
+function caseRpc(name, args, timeoutMs = CASE_REQUEST_TIMEOUT_MS) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let request = supabaseClient.rpc(name, args);
+  if (controller && typeof request.abortSignal === 'function') request = request.abortSignal(controller.signal);
+  return withCaseTimeout(request, name, timeoutMs, controller);
+}
+
+function waitForCaseStateSave() {
+  return withCaseTimeout(stateSaveQueue, 'Game state save');
+}
+
 function caseSellValue(item) {
   return Math.round(Number(item?.price || 0) * 100) / 100;
 }
@@ -1604,31 +1633,44 @@ function renderPendingCaseRewards() {
   });
   const pendingCount = pendingCaseRewards.length;
   const pendingSaleTotal = pendingCaseRewards.reduce((sum, reward) => sum + caseSellValue(reward.item), 0);
-  pendingCaseRewardsPanel.hidden = pendingCount === 0;
-  pendingCaseRewardsCount.textContent = `${pendingCount} ${pendingCount === 1 ? 'предмет' : 'предметов'}`;
+  pendingCaseRewardsPanel.hidden = pendingCount === 0 && !pendingCaseLoadError;
+  pendingCaseRewardsCount.textContent = pendingCaseLoadError && pendingCount === 0
+    ? 'Не удалось загрузить'
+    : pendingCaseLoadError
+      ? `${pendingCount} предметов · обновление не удалось`
+      : `${pendingCount} ${pendingCount === 1 ? 'предмет' : 'предметов'}`;
   pendingCaseActions.hidden = pendingCount === 0;
   pendingCaseClaimAllBtn.textContent = `Забрать все · ${pendingCount}`;
   pendingCaseSellAllBtn.textContent = `Продать все · ${fmt(pendingSaleTotal)}`;
   pendingCaseClaimAllBtn.disabled = caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress;
   pendingCaseSellAllBtn.disabled = caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress;
-  pendingCaseRewardsList.innerHTML = [...groups.values()].map(opening => `<article class="pending-case-card">
+  pendingCaseRewardsList.innerHTML = pendingCount ? `${pendingCaseLoadError ? '<div class="pending-case-load-error">Не удалось обновить список. <button type="button" class="btn-small" data-retry-pending>Повторить</button></div>' : ''}${[...groups.values()].map(opening => `<article class="pending-case-card">
     ${opening.case_image_url ? `<img src="${escapeHtml(opening.case_image_url)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}
     <div><strong>${escapeHtml(opening.case_name || 'Кейс')}</strong><span>${opening.rewards.length} незабранных скинов</span></div>
     <button type="button" class="btn-small" data-pending-opening="${escapeHtml(opening.opening_id)}" ${caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Посмотреть</button>
-  </article>`).join('');
+  </article>`).join('')}`
+    : pendingCaseLoadError
+      ? '<div class="pending-case-load-error">Не удалось получить список предметов. <button type="button" class="btn-small" data-retry-pending>Повторить</button></div>'
+      : '';
 }
 
 async function loadPendingCaseRewards() {
   if (!currentUser || !supabaseClient) return;
   const requestedUserId = currentUser.id;
-  const { data, error } = await supabaseClient.rpc('get_pending_case_rewards');
-  if (currentUser?.id !== requestedUserId) return;
-  if (error) {
+  const requestSequence = ++pendingCaseLoadSequence;
+  try {
+    const { data, error } = await caseRpc('get_pending_case_rewards', undefined, 12000);
+    if (currentUser?.id !== requestedUserId || requestSequence !== pendingCaseLoadSequence) return;
+    if (error) throw error;
+    pendingCaseRewards = Array.isArray(data) ? data : [];
+    pendingCaseLoadError = false;
+    renderPendingCaseRewards();
+  } catch (error) {
+    if (currentUser?.id !== requestedUserId || requestSequence !== pendingCaseLoadSequence) return;
     console.warn('Could not load pending case rewards:', error);
-    return;
+    pendingCaseLoadError = true;
+    renderPendingCaseRewards();
   }
-  pendingCaseRewards = Array.isArray(data) ? data : [];
-  renderPendingCaseRewards();
 }
 
 async function settleAllPendingCaseRewards(action) {
@@ -1640,33 +1682,33 @@ async function settleAllPendingCaseRewards(action) {
     groups.get(openingId).rewards.push(reward);
   });
 
-  caseSettlementInProgress = true;
-  renderPendingCaseRewards();
-  if (activeCaseOpening) renderCaseOpeningView(false);
+  setCaseSettlementUi(true, null, action);
   let settledCount = 0;
   let soldAmount = 0;
   let failedCount = 0;
+  let processedOpenings = 0;
   let bestDrop = null;
   const claimedItems = [];
   try {
-    await stateSaveQueue;
+    await waitForCaseStateSave();
     for (const opening of groups.values()) {
       let data;
       try {
-        const result = await supabaseClient.rpc('settle_case_opening_rewards', {
+        const result = await caseRpc('settle_case_opening_rewards', {
           p_opening_id: opening.opening_id,
           p_action: action
         });
         if (result.error) throw result.error;
         data = { ...result.data, settled_reward_ids: opening.rewards.map(reward => String(reward.id)) };
       } catch (bulkError) {
+        if (bulkError.code === 'CASE_RPC_TIMEOUT') throw bulkError;
         // Older Supabase installs may have the single-reward RPC but not the bulk RPC.
         console.warn('Bulk case settlement RPC failed; falling back to single rewards:', bulkError);
         const fallbackResults = [];
         let fallbackFailures = 0;
         for (const reward of opening.rewards) {
           try {
-            const result = await supabaseClient.rpc('settle_case_reward', {
+            const result = await caseRpc('settle_case_reward', {
               p_reward_id: reward.id,
               p_action: action
             });
@@ -1704,8 +1746,11 @@ async function settleAllPendingCaseRewards(action) {
         activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => settledIds.has(String(reward.id))
           ? { ...reward, status: settledStatus }
           : reward);
+        removeCaseRewardRows(settledIds);
       }
       pendingCaseRewards = pendingCaseRewards.filter(reward => !settledIds.has(String(reward.id)));
+      processedOpenings++;
+      caseFeedback.textContent = `${processedOpenings}/${groups.size} открытий обработано…`;
     }
 
     if (action === 'claim') addCaseClaimsToInventory(claimedItems, bestDrop);
@@ -1716,19 +1761,23 @@ async function settleAllPendingCaseRewards(action) {
     caseFeedback.textContent = failedCount
       ? `${successText} Не обработано: ${failedCount}; предметы остались доступными.`
       : successText;
+    if (activeCaseOpening) {
+      closeSettledCaseResultsIfEmpty();
+      syncCaseOpeningActions();
+    }
   } catch (error) {
     if (action === 'claim' && claimedItems.length) addCaseClaimsToInventory(claimedItems, bestDrop);
     else updateBalanceUI(true);
-    caseFeedback.textContent = settledCount
+    caseFeedback.textContent = error.code === 'CASE_RPC_TIMEOUT'
+      ? 'Запрос не ответил вовремя. Предметы оставлены доступными; обнови список и попробуй снова.'
+      : settledCount
       ? `Обработано ${settledCount} предметов. Остальные оставлены доступными.`
       : 'Не удалось обработать предметы. Они остались доступными.';
     console.error('Could not settle all pending case rewards:', error);
   } finally {
-    caseSettlementInProgress = false;
-    await loadPendingCaseRewards();
-    renderPendingCaseRewards();
-    if (activeCaseOpening && !closeSettledCaseResultsIfEmpty()) renderCaseOpeningView(false);
-    caseBackButton.disabled = false;
+    setCaseSettlementUi(false);
+    if (activeCaseOpening) closeSettledCaseResultsIfEmpty();
+    void loadPendingCaseRewards();
   }
 }
 
@@ -1745,12 +1794,12 @@ function pickCaseContentsItem(contents, fallbackItem) {
 }
 
 function makeCaseReelMarkup(item, caseContents, reward) {
-  const winnerIndex = 52;
+  const winnerIndex = 34;
   const rewardId = String(reward.id);
   activeCaseOpening.reelItems ||= {};
   activeCaseOpening.reelOffsets ||= {};
   if (!activeCaseOpening.reelItems[rewardId]) {
-    activeCaseOpening.reelItems[rewardId] = Array.from({ length: 68 }, (_, index) =>
+    activeCaseOpening.reelItems[rewardId] = Array.from({ length: 44 }, (_, index) =>
       index === winnerIndex ? item : pickCaseContentsItem(caseContents, item)
     );
   }
@@ -1768,7 +1817,7 @@ function makeCaseReelMarkup(item, caseContents, reward) {
   const revealed = !caseAnimationInProgress;
   const winnerRarityColor = /^#[0-9a-f]{6}$/i.test(item.rarity?.color || '') ? item.rarity.color : '';
   const winnerRarityStyle = winnerRarityColor ? ` style="--item-rarity-color:${escapeHtml(winnerRarityColor)}"` : '';
-  const actionDisabled = caseSettlementInProgress ? ' disabled' : '';
+  const actionDisabled = caseOpeningInProgress || caseSettlementInProgress || caseAnimationInProgress ? ' disabled' : '';
   const revealCard = revealed ? `<div class="case-reveal-card"${winnerRarityStyle}>
       <img src="${escapeHtml(item.img || '')}" alt="">
       <div class="case-reveal-copy"><strong title="${escapeHtml(item.name || 'Предмет')}">${escapeHtml(item.name || 'Предмет')}</strong><span>${fmt(Number(item.price || 0))}</span></div>
@@ -1809,16 +1858,88 @@ function renderCaseOpeningView(animate = false) {
     const reel = makeCaseReelMarkup(item, caseContents, reward);
     return `<article class="case-reward-row" data-reward-id="${escapeHtml(reward.id)}" aria-label="Предмет ${index + 1}">${reel}</article>`;
   }).join('') || '<div class="case-empty">В этом открытии нет ожидающих наград.</div>';
-  caseClaimAllBtn.textContent = `Забрать все (${pending.length})`;
-  caseSellAllBtn.textContent = `Продать все · ${fmt(sellTotal)}`;
-  caseResultBulkActions.hidden = caseAnimationInProgress || pending.length === 0;
-  caseClaimAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
-  caseSellAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
-  caseBackButton.disabled = caseSettlementInProgress;
+  syncCaseOpeningActions();
 
   if (!caseAnimationInProgress) {
     requestAnimationFrame(() => centerCaseReelTracks(caseRewardList.querySelectorAll('.case-reel-track')));
   }
+}
+
+function syncCaseOpeningActions() {
+  const pending = (activeCaseOpening?.rewards || []).filter(reward => reward.status === 'pending');
+  const sellTotal = pending.reduce((sum, reward) => sum + caseSellValue(reward.item), 0);
+  caseClaimAllBtn.textContent = `Забрать все (${pending.length})`;
+  caseSellAllBtn.textContent = `Продать все · ${fmt(sellTotal)}`;
+  caseResultBulkActions.hidden = caseAnimationInProgress || pending.length === 0;
+  caseClaimAllBtn.disabled = !pending.length || caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress;
+  caseSellAllBtn.disabled = !pending.length || caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress;
+  caseBackButton.disabled = caseOpeningInProgress || caseSettlementInProgress;
+  caseRewardList.querySelectorAll('[data-reward-action]').forEach(button => {
+    button.disabled = caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress;
+  });
+}
+
+function setCaseSettlementUi(busy, rewardId = null, action = null) {
+  caseSettlementInProgress = busy;
+  const rows = [...caseRewardList.querySelectorAll('.case-reward-row')];
+  rows.forEach(row => {
+    row.classList.toggle('is-settling', busy && (!rewardId || row.dataset.rewardId === String(rewardId)));
+    row.querySelectorAll('[data-reward-action]').forEach(button => {
+      if (busy) {
+        if (!Object.hasOwn(button.dataset, 'idleLabel')) button.dataset.idleLabel = button.textContent;
+        button.disabled = true;
+        if (rewardId && row.dataset.rewardId === String(rewardId) && button.dataset.rewardAction === action) {
+          button.textContent = action === 'claim' ? 'Забираю…' : 'Продаю…';
+        }
+      } else {
+        button.disabled = caseAnimationInProgress;
+        if (Object.hasOwn(button.dataset, 'idleLabel')) {
+          button.textContent = button.dataset.idleLabel;
+          delete button.dataset.idleLabel;
+        }
+      }
+    });
+  });
+  caseClaimAllBtn.disabled = busy || caseOpeningInProgress || caseAnimationInProgress || !activeCaseOpening?.rewards?.some(reward => reward.status === 'pending');
+  caseSellAllBtn.disabled = busy || caseOpeningInProgress || caseAnimationInProgress || !activeCaseOpening?.rewards?.some(reward => reward.status === 'pending');
+  caseBackButton.disabled = busy || caseOpeningInProgress;
+  pendingCaseClaimAllBtn.disabled = busy || caseOpeningInProgress || caseAnimationInProgress || !pendingCaseRewards.length;
+  pendingCaseSellAllBtn.disabled = busy || caseOpeningInProgress || caseAnimationInProgress || !pendingCaseRewards.length;
+  pendingCaseRewardsList.querySelectorAll('[data-pending-opening]').forEach(button => {
+    button.disabled = busy || caseOpeningInProgress || caseAnimationInProgress;
+  });
+  caseOpenButton.disabled = busy || caseOpeningInProgress;
+  caseOpenQuantityInput.disabled = busy || caseOpeningInProgress;
+  caseSkipAnimationToggle.disabled = busy || caseOpeningInProgress;
+  if (busy && !rewardId && action) {
+    if (action === 'claim') caseClaimAllBtn.textContent = 'Добавляю…';
+    else caseSellAllBtn.textContent = 'Продаю…';
+    if (action === 'claim') pendingCaseClaimAllBtn.textContent = 'Добавляю…';
+    else pendingCaseSellAllBtn.textContent = 'Продаю…';
+  }
+  if (!busy) {
+    syncCaseOpeningActions();
+    renderPendingCaseRewards();
+  }
+}
+
+function removeCaseRewardRows(rewardIds) {
+  const ids = new Set([...rewardIds].map(String));
+  const rows = [...caseRewardList.querySelectorAll('.case-reward-row')];
+  const before = new Map(rows.filter(row => !ids.has(String(row.dataset.rewardId)))
+    .map(row => [row, row.getBoundingClientRect()]));
+  rows.filter(row => ids.has(String(row.dataset.rewardId))).forEach(row => row.remove());
+  before.forEach((first, row) => {
+    const last = row.getBoundingClientRect();
+    const dx = first.left - last.left;
+    const dy = first.top - last.top;
+    if ((dx || dy) && typeof row.animate === 'function') {
+      row.animate([
+        { transform: `translate3d(${dx}px,${dy}px,0)` },
+        { transform: 'translate3d(0,0,0)' }
+      ], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
+  });
 }
 
 function centerCaseReelTracks(tracks) {
@@ -1883,7 +2004,7 @@ async function playCaseReels() {
       if (animationId === caseAnimationSequence) winner.classList.add('case-reel-winner', 'landed');
       finish();
     }, duration + 150);
-    track.style.transition = `transform ${duration}ms cubic-bezier(.62,.05,.98,.7)`;
+    track.style.transition = `transform ${duration}ms cubic-bezier(.25,.46,.45,.94)`;
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (animationId !== caseAnimationSequence) { finish(); return; }
       track.style.transform = `translate3d(${targetX}px,0,0)`;
@@ -1950,8 +2071,9 @@ function updateCaseRewardLocally(rewardId, status) {
   if (activeCaseOpening) {
     activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => String(reward.id) === String(rewardId) ? { ...reward, status } : reward);
   }
+  removeCaseRewardRows([rewardId]);
   renderPendingCaseRewards();
-  if (!closeSettledCaseResultsIfEmpty()) renderCaseOpeningView(false);
+  if (!closeSettledCaseResultsIfEmpty()) syncCaseOpeningActions();
 }
 
 function closeSettledCaseResultsIfEmpty() {
@@ -1963,13 +2085,13 @@ function closeSettledCaseResultsIfEmpty() {
 }
 
 async function settleOneCaseReward(rewardId, action) {
-  if (!activeCaseOpening || caseSettlementInProgress || caseAnimationInProgress) return;
-  caseSettlementInProgress = true;
-  renderCaseOpeningView(false);
+  if (!activeCaseOpening || caseOpeningInProgress || caseSettlementInProgress || caseAnimationInProgress) return;
+  setCaseSettlementUi(true, rewardId, action);
   caseResultStatus.textContent = action === 'claim' ? 'Добавляю скин в инвентарь…' : 'Продаю скин…';
+  caseFeedback.textContent = action === 'claim' ? 'Добавляю скин в инвентарь…' : 'Продаю скин…';
   try {
-    await stateSaveQueue;
-    const { data, error } = await supabaseClient.rpc('settle_case_reward', { p_reward_id: rewardId, p_action: action });
+    await waitForCaseStateSave();
+    const { data, error } = await caseRpc('settle_case_reward', { p_reward_id: rewardId, p_action: action });
     if (error) throw error;
     state.balance = Number(data.balance);
     if (action === 'claim') addCaseClaimsToInventory([data.item], data.best_drop);
@@ -1978,56 +2100,95 @@ async function settleOneCaseReward(rewardId, action) {
     caseFeedback.textContent = action === 'claim'
       ? `Скин «${data.item?.name || 'Предмет'}» добавлен в инвентарь.`
       : `Скин продан за ${fmt(Number(data.amount || 0))}.`;
-    await loadPendingCaseRewards();
+    void loadPendingCaseRewards();
   } catch (error) {
-    caseResultStatus.textContent = 'Не удалось обработать скин. Награда осталась доступна.';
-    caseFeedback.textContent = 'Не удалось обработать скин. Награда осталась доступна.';
+    const message = error.code === 'CASE_RPC_TIMEOUT'
+      ? 'Запрос занял слишком много времени. Обнови незабранные предметы и попробуй снова.'
+      : 'Не удалось обработать скин. Награда осталась доступна.';
+    caseResultStatus.textContent = message;
+    caseFeedback.textContent = message;
     console.error('Could not settle case reward:', error);
+    void loadPendingCaseRewards();
   } finally {
-    caseSettlementInProgress = false;
-    caseBackButton.disabled = false;
-    renderCaseOpeningView(false);
+    setCaseSettlementUi(false);
   }
 }
 
 async function settleAllCaseRewards(action) {
-  if (!activeCaseOpening || caseSettlementInProgress || caseAnimationInProgress) return;
-  const openingId = activeCaseOpening.opening_id;
-  caseSettlementInProgress = true;
-  renderCaseOpeningView(false);
+  if (!activeCaseOpening || caseOpeningInProgress || caseSettlementInProgress || caseAnimationInProgress) return;
+  const opening = activeCaseOpening;
+  const openingId = opening.opening_id;
+  const openingRewards = opening.rewards.filter(reward => reward.status === 'pending');
+  if (!openingRewards.length) return;
+  setCaseSettlementUi(true, null, action);
   caseResultStatus.textContent = action === 'claim' ? 'Добавляю все скины в инвентарь…' : 'Продаю все скины…';
+  caseFeedback.textContent = action === 'claim' ? 'Добавляю все скины в инвентарь…' : 'Продаю все скины…';
   try {
-    await stateSaveQueue;
-    const { data, error } = await supabaseClient.rpc('settle_case_opening_rewards', {
-      p_opening_id: openingId,
-      p_action: action
-    });
-    if (error) throw error;
-    state.balance = Number(data.balance);
+    await waitForCaseStateSave();
+    let data;
+    let settledIds;
+    try {
+      const result = await caseRpc('settle_case_opening_rewards', { p_opening_id: openingId, p_action: action });
+      if (result.error) throw result.error;
+      data = result.data;
+      settledIds = openingRewards.map(reward => String(reward.id));
+    } catch (bulkError) {
+      if (bulkError.code === 'CASE_RPC_TIMEOUT') throw bulkError;
+      console.warn('Bulk case settlement RPC failed; falling back to single rewards:', bulkError);
+      const results = [];
+      let failedCount = 0;
+      for (const reward of openingRewards) {
+        try {
+          const result = await caseRpc('settle_case_reward', { p_reward_id: reward.id, p_action: action });
+          if (result.error) throw result.error;
+          results.push(result.data);
+        } catch (error) {
+          failedCount++;
+          console.error('Could not settle case reward:', reward.id, error);
+        }
+      }
+      data = {
+        settled_count: results.length,
+        items: results.map(result => result.item).filter(Boolean),
+        amount: results.reduce((sum, result) => sum + Number(result.amount || 0), 0),
+        balance: results.length ? results[results.length - 1].balance : state.balance,
+        best_drop: results.reduce((best, result) => result.best_drop || best, null),
+        failed_count: failedCount
+      };
+      settledIds = results.map(result => String(result.reward_id));
+    }
+
+    const settledSet = new Set(settledIds);
+    if (Number.isFinite(Number(data.balance))) state.balance = Number(data.balance);
     if (action === 'claim') addCaseClaimsToInventory(data.items || [], data.best_drop);
     else updateBalanceUI(true);
     const settledStatus = action === 'claim' ? 'claimed' : 'sold';
-    activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => reward.status === 'pending' ? { ...reward, status: settledStatus } : reward);
-    pendingCaseRewards = pendingCaseRewards.filter(reward => String(reward.opening_id) !== String(openingId));
+    opening.rewards = opening.rewards.map(reward => settledSet.has(String(reward.id)) ? { ...reward, status: settledStatus } : reward);
+    pendingCaseRewards = pendingCaseRewards.filter(reward => !settledSet.has(String(reward.id)));
+    removeCaseRewardRows(settledIds);
     renderPendingCaseRewards();
     closeSettledCaseResultsIfEmpty();
+    syncCaseOpeningActions();
+    const settledCount = Number(data.settled_count || settledIds.length);
     caseFeedback.textContent = action === 'claim'
-      ? `В инвентарь добавлено ${Number(data.settled_count || 0)} скинов.`
-      : `Продано ${Number(data.settled_count || 0)} скинов за ${fmt(Number(data.amount || 0))}.`;
-    await loadPendingCaseRewards();
+      ? `В инвентарь добавлено ${settledCount} скинов${data.failed_count ? `; ещё ${data.failed_count} остались доступными` : ''}.`
+      : `Продано ${settledCount} скинов за ${fmt(Number(data.amount || 0))}${data.failed_count ? `; ещё ${data.failed_count} остались доступными` : ''}.`;
+    void loadPendingCaseRewards();
   } catch (error) {
-    caseResultStatus.textContent = 'Не удалось обработать награды. Они остались доступными.';
-    caseFeedback.textContent = 'Не удалось обработать награды. Они остались доступными.';
+    const message = error.code === 'CASE_RPC_TIMEOUT'
+      ? 'Запрос не ответил вовремя. Предметы оставлены доступными; обнови список и попробуй снова.'
+      : 'Не удалось обработать награды. Они остались доступными.';
+    caseResultStatus.textContent = message;
+    caseFeedback.textContent = message;
     console.error('Could not settle all case rewards:', error);
+    void loadPendingCaseRewards();
   } finally {
-    caseSettlementInProgress = false;
-    caseBackButton.disabled = false;
-    renderCaseOpeningView(false);
+    setCaseSettlementUi(false);
   }
 }
 
 async function openGameCase(caseId, quantity) {
-  if (!currentUser || !supabaseClient || caseOpeningInProgress) return;
+  if (!currentUser || !supabaseClient || caseOpeningInProgress || caseSettlementInProgress) return;
   const gameCase = gameCases.find(item => String(item.id) === String(caseId));
   if (!gameCase) return;
   caseOpeningInProgress = true;
@@ -2039,8 +2200,8 @@ async function openGameCase(caseId, quantity) {
   caseSkipAnimationToggle.disabled = true;
   caseFeedback.textContent = `Открываю ${quantity} ${quantity === 1 ? 'кейс' : 'кейса'}…`;
   try {
-    await stateSaveQueue;
-    const { data, error } = await supabaseClient.rpc('open_game_cases', {
+    await waitForCaseStateSave();
+    const { data, error } = await caseRpc('open_game_cases', {
       p_case_id: gameCase.id,
       p_quantity: quantity
     });
@@ -2056,6 +2217,7 @@ async function openGameCase(caseId, quantity) {
     }));
     pendingCaseRewards = [...new Map([...pendingCaseRewards, ...rewards].map(reward => [String(reward.id), reward])).values()];
     renderPendingCaseRewards();
+    void loadPendingCaseRewards();
     caseFeedback.textContent = `${quantity} ${quantity === 1 ? 'кейс открыт' : 'кейса открыто'}. Выбери, забрать или продать выпавшие скины.`;
     await showCaseOpeningReview({
       opening_id: data.opening_id,
@@ -2065,7 +2227,9 @@ async function openGameCase(caseId, quantity) {
     }, !caseSkipAnimation);
   } catch (error) {
     const message = String(error.message || '').toLowerCase();
-    caseFeedback.textContent = message.includes('insufficient balance')
+    caseFeedback.textContent = error.code === 'CASE_RPC_TIMEOUT'
+      ? 'Сервер не ответил вовремя. Попробуй открыть кейс ещё раз.'
+      : message.includes('insufficient balance')
       ? 'Не хватает баланса на открытие выбранного количества кейсов.'
       : message.includes('open_game_cases') || message.includes('function')
         ? 'Сначала выполни обновлённый supabase/cases.sql в SQL Editor.'
@@ -2078,6 +2242,7 @@ async function openGameCase(caseId, quantity) {
     caseOpenQuantityInput.disabled = false;
     if (caseQuantitySelect) caseQuantitySelect.trigger.disabled = false;
     caseSkipAnimationToggle.disabled = false;
+    syncCaseOpeningActions();
     renderPendingCaseRewards();
   }
 }
@@ -2192,6 +2357,12 @@ caseOpenButton.addEventListener('click', () => {
   void openGameCase(selectedGameCase.id, quantity);
 });
 pendingCaseRewardsList.addEventListener('click', event => {
+  const retryButton = event.target.closest('[data-retry-pending]');
+  if (retryButton) {
+    retryButton.disabled = true;
+    void loadPendingCaseRewards();
+    return;
+  }
   const button = event.target.closest('[data-pending-opening]');
   if (button) openPendingCaseOpening(button.dataset.pendingOpening);
 });
