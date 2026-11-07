@@ -3254,8 +3254,10 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
 
   const winAngle = Math.PI * 2 * chance / 100;
   if (chance > 0) {
-    const start = Math.PI / 2 - winAngle / 2;
-    const end = Math.PI / 2 + winAngle / 2;
+    const start = bonusChance > 0
+      ? Math.PI / 2 + (Math.PI * 2 * bonusChance / 100) / 2
+      : Math.PI / 2 - winAngle / 2;
+    const end = start + winAngle;
     const rgb = color.match(/\d+/g).map(Number);
     const shade = (amount, mixWithWhite = false) => {
       const adjusted = rgb.map(channel => Math.round(mixWithWhite ? channel + (255 - channel) * amount : channel * amount));
@@ -3275,8 +3277,8 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
 
   const bonusAngle = Math.PI * 2 * bonusChance / 100;
   if (bonusAngle > 0) {
-    const start = Math.PI / 2 + winAngle / 2;
-    const end = start + bonusAngle;
+    const start = Math.PI / 2 - bonusAngle / 2;
+    const end = Math.PI / 2 + bonusAngle / 2;
     const gold = ctx.createLinearGradient(0, cy + ringRadius, size, cy - ringRadius);
     gold.addColorStop(0, '#b87906');
     gold.addColorStop(.48, '#ffe16a');
@@ -3287,9 +3289,10 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
     ctx.lineWidth = 28;
     ctx.stroke();
 
-    const markerAngle = start + bonusAngle / 2;
-    const markerX = cx + Math.cos(markerAngle) * ringRadius;
-    const markerY = cy + Math.sin(markerAngle) * ringRadius;
+    const markerAngle = Math.PI / 2;
+    const markerRadius = ringRadius - 15;
+    const markerX = cx + Math.cos(markerAngle) * markerRadius;
+    const markerY = cy + Math.sin(markerAngle) * markerRadius;
     ctx.save();
     ctx.shadowColor = 'rgba(255,190,24,.9)';
     ctx.shadowBlur = 17;
