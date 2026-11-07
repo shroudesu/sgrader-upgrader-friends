@@ -21,6 +21,29 @@ drop policy if exists upgrade_wins_read_authenticated on public.upgrade_wins;
 create policy upgrade_wins_read_authenticated on public.upgrade_wins
   for select to authenticated using (true);
 
+create or replace function public.get_upgrade_wins_feed()
+returns table (
+  id bigint,
+  player_id bigint,
+  username text,
+  avatar text,
+  item jsonb,
+  created_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select w.id, w.player_id, w.username, w.avatar, w.item, w.created_at
+    from public.upgrade_wins as w
+   order by w.created_at desc
+   limit 24;
+$$;
+
+revoke all on function public.get_upgrade_wins_feed() from public, anon, authenticated;
+grant execute on function public.get_upgrade_wins_feed() to anon, authenticated;
+
 create or replace function public.publish_upgrade_win(p_instance_id text)
 returns boolean
 language plpgsql

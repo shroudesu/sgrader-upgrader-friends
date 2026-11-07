@@ -74,7 +74,7 @@ begin
 
   insert into public.profiles (user_id, username)
   values (new.id, v_username);
-  insert into public.wallets (user_id, balance) values (new.id, 0);
+  insert into public.wallets (user_id, balance) values (new.id, 500.00);
   insert into public.game_states (user_id) values (new.id);
   return new;
 end;

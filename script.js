@@ -315,9 +315,13 @@ const caseResultCaseName = document.getElementById('caseResultCaseName');
 const caseDetailPrice = document.getElementById('caseDetailPrice');
 const caseResultStatus = document.getElementById('caseResultStatus');
 const caseRewardList = document.getElementById('caseRewardList');
+const caseSkipNowBtn = document.getElementById('caseSkipNowBtn');
 const caseResultBulkActions = document.getElementById('caseResultBulkActions');
 const caseClaimAllBtn = document.getElementById('caseClaimAllBtn');
 const caseSellAllBtn = document.getElementById('caseSellAllBtn');
+const pendingCaseActions = document.getElementById('pendingCaseActions');
+const pendingCaseClaimAllBtn = document.getElementById('pendingCaseClaimAllBtn');
+const pendingCaseSellAllBtn = document.getElementById('pendingCaseSellAllBtn');
 const onlineUsersCount = document.getElementById('onlineUsersCount');
 const adminUsersEl = document.getElementById('adminUsers');
 const adminFeedback = document.getElementById('adminFeedback');
@@ -337,6 +341,8 @@ const betSelectionStatus = document.getElementById('betSelectionStatus');
 const buySelectedBtn = document.getElementById('buySelectedBtn');
 const refreshUpgradeFeedBtn = document.getElementById('refreshUpgradeFeedBtn');
 const upgradeFeed = document.getElementById('upgradeFeed');
+const authRefreshUpgradeFeedBtn = document.getElementById('authRefreshUpgradeFeedBtn');
+const authUpgradeFeed = document.getElementById('authUpgradeFeed');
 const spinStrengthSlider = document.getElementById('spinStrength');
 const spinStrengthValue = document.getElementById('spinStrengthValue');
 const spinModeButtons = document.querySelectorAll('.spin-mode');
@@ -783,6 +789,7 @@ logoutBtn.addEventListener('click', async () => {
   authError.textContent = '';
   setAuthMode('login');
   showAuthScreen();
+  void loadUpgradeFeed();
 });
 
 function renderHeaderAvatar() {
@@ -1596,12 +1603,18 @@ function renderPendingCaseRewards() {
     groups.get(openingId).rewards.push(reward);
   });
   const pendingCount = pendingCaseRewards.length;
+  const pendingSaleTotal = pendingCaseRewards.reduce((sum, reward) => sum + caseSellValue(reward.item), 0);
   pendingCaseRewardsPanel.hidden = pendingCount === 0;
   pendingCaseRewardsCount.textContent = `${pendingCount} ${pendingCount === 1 ? 'предмет' : 'предметов'}`;
+  pendingCaseActions.hidden = pendingCount === 0;
+  pendingCaseClaimAllBtn.textContent = `Забрать все · ${pendingCount}`;
+  pendingCaseSellAllBtn.textContent = `Продать все · ${fmt(pendingSaleTotal)}`;
+  pendingCaseClaimAllBtn.disabled = caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress;
+  pendingCaseSellAllBtn.disabled = caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress;
   pendingCaseRewardsList.innerHTML = [...groups.values()].map(opening => `<article class="pending-case-card">
     ${opening.case_image_url ? `<img src="${escapeHtml(opening.case_image_url)}" alt="">` : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>'}
     <div><strong>${escapeHtml(opening.case_name || 'Кейс')}</strong><span>${opening.rewards.length} незабранных скинов</span></div>
-    <button type="button" class="btn-small" data-pending-opening="${escapeHtml(opening.opening_id)}">Посмотреть</button>
+    <button type="button" class="btn-small" data-pending-opening="${escapeHtml(opening.opening_id)}" ${caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress ? 'disabled' : ''}>Посмотреть</button>
   </article>`).join('');
 }
 
@@ -1616,6 +1629,71 @@ async function loadPendingCaseRewards() {
   }
   pendingCaseRewards = Array.isArray(data) ? data : [];
   renderPendingCaseRewards();
+}
+
+async function settleAllPendingCaseRewards(action) {
+  if (!currentUser || !pendingCaseRewards.length || caseOpeningInProgress || caseSettlementInProgress || caseAnimationInProgress) return;
+  const groups = new Map();
+  pendingCaseRewards.forEach(reward => {
+    const openingId = String(reward.opening_id);
+    if (!groups.has(openingId)) groups.set(openingId, { opening_id: reward.opening_id, rewards: [] });
+    groups.get(openingId).rewards.push(reward);
+  });
+
+  caseSettlementInProgress = true;
+  renderPendingCaseRewards();
+  if (activeCaseOpening) renderCaseOpeningView(false);
+  let settledCount = 0;
+  let soldAmount = 0;
+  let completedGroups = 0;
+  let bestDrop = null;
+  const claimedItems = [];
+  try {
+    await stateSaveQueue;
+    for (const opening of groups.values()) {
+      const { data, error } = await supabaseClient.rpc('settle_case_opening_rewards', {
+        p_opening_id: opening.opening_id,
+        p_action: action
+      });
+      if (error) throw error;
+      completedGroups++;
+      settledCount += Number(data.settled_count || opening.rewards.length);
+      state.balance = Number(data.balance);
+      if (action === 'claim') {
+        claimedItems.push(...(data.items || []));
+        bestDrop = data.best_drop || bestDrop;
+      } else {
+        soldAmount += Number(data.amount || 0);
+      }
+
+      const settledStatus = action === 'claim' ? 'claimed' : 'sold';
+      if (activeCaseOpening && String(activeCaseOpening.opening_id) === String(opening.opening_id)) {
+        activeCaseOpening.rewards = activeCaseOpening.rewards.map(reward => reward.status === 'pending'
+          ? { ...reward, status: settledStatus }
+          : reward);
+      }
+      pendingCaseRewards = pendingCaseRewards.filter(reward => String(reward.opening_id) !== String(opening.opening_id));
+    }
+
+    if (action === 'claim') addCaseClaimsToInventory(claimedItems, bestDrop);
+    else updateBalanceUI(true);
+    caseFeedback.textContent = action === 'claim'
+      ? `В инвентарь добавлено ${settledCount} скинов.`
+      : `Продано ${settledCount} скинов за ${fmt(soldAmount)}.`;
+  } catch (error) {
+    if (action === 'claim' && claimedItems.length) addCaseClaimsToInventory(claimedItems, bestDrop);
+    else updateBalanceUI(true);
+    caseFeedback.textContent = completedGroups
+      ? `Обработано открытий: ${completedGroups}. Остальные предметы оставлены доступными.`
+      : 'Не удалось обработать предметы. Они остались доступными.';
+    console.error('Could not settle all pending case rewards:', error);
+  } finally {
+    caseSettlementInProgress = false;
+    await loadPendingCaseRewards();
+    renderPendingCaseRewards();
+    if (activeCaseOpening && !closeSettledCaseResultsIfEmpty()) renderCaseOpeningView(false);
+    caseBackButton.disabled = false;
+  }
 }
 
 function pickCaseContentsItem(contents, fallbackItem) {
@@ -1659,6 +1737,8 @@ function renderCaseOpeningView(animate = false) {
     : pending.length
       ? `Выбери действие для каждого скина. Продать все можно за ${fmt(sellTotal)}.`
       : 'Все награды уже обработаны.';
+  caseSkipNowBtn.hidden = !caseAnimationInProgress;
+  caseSkipNowBtn.disabled = !caseAnimationInProgress;
 
   const caseContents = selectedGameCase && selectedGameCase.name === activeCaseOpening.case_name
     ? selectedGameCase.contents || []
@@ -1723,13 +1803,13 @@ async function playCaseReels() {
     const winnerRect = winner.getBoundingClientRect();
     const winnerCenter = winnerRect.left - trackRect.left + winnerRect.width / 2;
     const targetX = viewport.clientWidth / 2 - winnerCenter;
-    const duration = 15000;
+    const duration = 12000;
     track.addEventListener('transitionend', onTransitionEnd);
     fallbackTimer = setTimeout(() => {
       if (animationId === caseAnimationSequence) winner.classList.add('case-reel-winner', 'landed');
       finish();
     }, duration + 150);
-    track.style.transition = `transform ${duration}ms cubic-bezier(.10,.75,.08,1)`;
+    track.style.transition = `transform ${duration}ms cubic-bezier(.12,.72,.4,.96)`;
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (animationId !== caseAnimationSequence) { finish(); return; }
       track.style.transform = `translate3d(${targetX}px,0,0)`;
@@ -1746,6 +1826,7 @@ async function playCaseReels() {
     finishTracks.forEach(finish => finish());
   };
   cancelCaseAnimation = cancel;
+  caseSkipNowBtn.disabled = false;
   await Promise.all(trackAnimations);
   if (cancelCaseAnimation === cancel) cancelCaseAnimation = null;
 }
@@ -1755,11 +1836,13 @@ async function showCaseOpeningReview(opening, animate = false) {
   caseOpenResults.hidden = false;
   caseAnimationInProgress = Boolean(animate && opening.rewards?.some(reward => reward.status === 'pending'));
   renderCaseOpeningView(caseAnimationInProgress);
+  renderPendingCaseRewards();
   caseOpenResults.scrollIntoView({ behavior: 'smooth', block: 'center' });
   if (caseAnimationInProgress) {
     await playCaseReels();
     caseAnimationInProgress = false;
     renderCaseOpeningView(false);
+    renderPendingCaseRewards();
     caseResultStatus.textContent = 'Прокрутка завершена. Выбери, что сделать со скинами.';
   }
 }
@@ -1919,6 +2002,7 @@ async function openGameCase(caseId, quantity) {
     caseOpenQuantityInput.disabled = false;
     if (caseQuantitySelect) caseQuantitySelect.trigger.disabled = false;
     caseSkipAnimationToggle.disabled = false;
+    renderPendingCaseRewards();
   }
 }
 
@@ -2042,6 +2126,12 @@ caseRewardList.addEventListener('click', event => {
 });
 caseClaimAllBtn.addEventListener('click', () => void settleAllCaseRewards('claim'));
 caseSellAllBtn.addEventListener('click', () => void settleAllCaseRewards('sell'));
+pendingCaseClaimAllBtn.addEventListener('click', () => void settleAllPendingCaseRewards('claim'));
+pendingCaseSellAllBtn.addEventListener('click', () => void settleAllPendingCaseRewards('sell'));
+caseSkipNowBtn.addEventListener('click', () => {
+  if (!caseAnimationInProgress || !cancelCaseAnimation) return;
+  cancelCaseAnimation();
+});
 caseSkipAnimationToggle.addEventListener('change', () => {
   caseSkipAnimation = caseSkipAnimationToggle.checked;
   try { localStorage.setItem(CASE_SKIP_ANIMATION_KEY, String(caseSkipAnimation)); } catch (e) {}
@@ -3873,14 +3963,15 @@ async function publishUpgradeWin(instanceId) {
 }
 
 function renderUpgradeFeed(items) {
+  const feeds = [upgradeFeed, authUpgradeFeed].filter(Boolean);
   if (!items.length) {
-    upgradeFeed.innerHTML = '<div class="feed-empty">Выигранные предметы появятся здесь.</div>';
+    feeds.forEach(feed => { feed.innerHTML = '<div class="feed-empty">Выигранные предметы появятся здесь.</div>'; });
     return;
   }
   upgradeFeed.innerHTML = items.map(entry => {
     const item = entry.item || {};
     const date = entry.created_at ? new Date(entry.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
-    return `<button type="button" class="upgrade-feed-card" data-user-id="${escapeHtml(entry.user_id)}">
+    return `<button type="button" class="upgrade-feed-card" data-user-id="${escapeHtml(entry.user_id || '')}" ${currentUser ? '' : 'disabled'}>
       <span class="feed-user"><img src="${escapeHtml(entry.avatar || '')}" alt=""><strong>${escapeHtml(entry.username || 'Игрок')}</strong></span>
       <img class="feed-item-image" src="${escapeHtml(item.img || '')}" alt="">
       <span class="feed-item-name">${escapeHtml(item.name || 'Скин')}</span>
@@ -3889,15 +3980,28 @@ function renderUpgradeFeed(items) {
       <small class="feed-item-date">${date}</small>
     </button>`;
   }).join('');
+  const markup = upgradeFeed.innerHTML;
+  feeds.forEach(feed => { feed.innerHTML = markup; });
 }
 
 async function loadUpgradeFeed() {
-  if (!currentUser || !supabaseClient) return;
-  const { data, error } = await supabaseClient.from('upgrade_wins')
-    .select('id, user_id, player_id, username, avatar, item, created_at')
-    .order('created_at', { ascending: false }).limit(24);
+  const feeds = [upgradeFeed, authUpgradeFeed].filter(Boolean);
+  if (!supabaseClient) {
+    feeds.forEach(feed => { feed.innerHTML = '<div class="feed-empty">Общая лента пока не настроена.</div>'; });
+    return;
+  }
+  const requestedUserId = currentUser?.id || null;
+  const { data, error } = currentUser
+    ? await supabaseClient.from('upgrade_wins')
+      .select('id, user_id, player_id, username, avatar, item, created_at')
+      .order('created_at', { ascending: false }).limit(24)
+    : await supabaseClient.rpc('get_upgrade_wins_feed');
+  if ((currentUser?.id || null) !== requestedUserId) return;
   if (error) {
-    upgradeFeed.innerHTML = '<div class="feed-empty">Примени supabase/community-features.sql, чтобы включить общую ленту.</div>';
+    const message = currentUser
+      ? 'Примени supabase/community-features.sql, чтобы включить общую ленту.'
+      : 'Примени supabase/auth-upgrade-feed.sql, чтобы показывать ленту до входа.';
+    feeds.forEach(feed => { feed.innerHTML = `<div class="feed-empty">${message}</div>`; });
     console.error('Could not load upgrade feed:', error);
     return;
   }
@@ -3961,11 +4065,14 @@ async function viewPublicProfile(userId) {
     : '<div class="feed-empty">Инвентарь пуст.</div>';
 }
 
-upgradeFeed.addEventListener('click', event => {
+function handleUpgradeFeedClick(event) {
   const card = event.target.closest('.upgrade-feed-card');
-  if (card) void viewPublicProfile(card.dataset.userId);
-});
+  if (card && currentUser) void viewPublicProfile(card.dataset.userId);
+}
+upgradeFeed.addEventListener('click', handleUpgradeFeedClick);
+authUpgradeFeed.addEventListener('click', handleUpgradeFeedClick);
 refreshUpgradeFeedBtn.addEventListener('click', () => void loadUpgradeFeed());
+authRefreshUpgradeFeedBtn.addEventListener('click', () => void loadUpgradeFeed());
 $('publicProfileClose').addEventListener('click', closePublicProfile);
 publicProfileModal.addEventListener('click', event => { if (event.target === publicProfileModal) closePublicProfile(); });
 
@@ -4330,7 +4437,12 @@ async function initSession() {
   }
 }
 initCustomSelects();
+void loadUpgradeFeed();
 void initSession();
+
+setInterval(() => {
+  if (!currentUser && !authScreen.classList.contains('hide')) void loadUpgradeFeed();
+}, 60000);
 
 setInterval(() => { void refreshWallet(); }, 10000);
 

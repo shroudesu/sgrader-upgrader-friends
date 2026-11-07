@@ -10,6 +10,10 @@
 
 <!-- ================= ЭКРАН АВТОРИЗАЦИИ ================= -->
 <div class="auth-screen" id="authScreen">
+  <aside class="panel upgrade-feed-panel auth-upgrade-feed-panel" aria-label="Лента выигрышей">
+    <div class="panel-title-row"><div><h2 class="panel-title" style="margin-bottom:4px">Лента выигрышей</h2><div class="feed-subtitle">Новые сверху · обновляется онлайн</div></div><button type="button" class="btn-small" id="authRefreshUpgradeFeedBtn" aria-label="Обновить ленту">↻</button></div>
+    <div class="upgrade-feed" id="authUpgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
+  </aside>
   <div class="auth-box">
     <div class="auth-logo">SGRADER<span></span></div>
     <h1 class="auth-title" id="authTitle">Вход</h1>
@@ -32,7 +36,7 @@
     </form>
 
     <div class="auth-hint" id="backendSetupHint" role="status"></div>
-    <div class="auth-hint">Указывай игровой ник; email не требуется.</div>
+    <div class="auth-hint">Указывай игровой ник; email не требуется. Новому аккаунту начисляется 500 ₽.</div>
   </div>
 </div>
 
@@ -55,10 +59,13 @@
     <button class="nav-tab" data-tab="admin" id="adminNav" style="display:none">Админка</button>
   </nav>
 
-  <div class="volume-control" title="Громкость звука победы">
-    <span class="volume-icon" id="volumeIcon">🔊</span>
-    <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="70">
-    <span class="volume-value" id="volumeValue">70%</span>
+  <div class="balance">
+    <span class="balance-label">Денежный баланс</span>
+    <span class="balance-value" id="balance">0.00</span>
+  </div>
+  <div class="balance inventory-balance-summary">
+    <span class="balance-label">Баланс инвентаря</span>
+    <span class="balance-value" id="inventoryBalance">0.00</span>
   </div>
 
   <div class="user-info">
@@ -73,15 +80,6 @@
     <button type="button" class="settings-trigger" id="settingsBtn" aria-label="Настройки" title="Настройки">
       <iconify-icon icon="mdi:chevron-down"></iconify-icon>
     </button>
-  </div>
-
-  <div class="balance">
-    <span class="balance-label">Денежный баланс</span>
-    <span class="balance-value" id="balance">0.00</span>
-  </div>
-  <div class="balance inventory-balance-summary">
-    <span class="balance-label">Баланс инвентаря</span>
-    <span class="balance-value" id="inventoryBalance">0.00</span>
   </div>
 </header>
 
@@ -271,7 +269,7 @@
         </div>
       </div>
       <section class="case-open-results" id="caseOpenResults" hidden>
-        <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
+        <div class="case-result-heading"><div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div><button type="button" class="btn-small case-skip-now" id="caseSkipNowBtn" hidden>Пропустить прокрутку</button></div>
         <div class="case-result-rewards" id="caseRewardList"></div>
         <div class="case-result-bulk-actions" id="caseResultBulkActions">
           <button type="button" class="btn-modal btn-confirm" id="caseClaimAllBtn">Забрать все</button>
@@ -308,6 +306,7 @@
       </section>
       <div class="pending-case-rewards" id="pendingCaseRewards" hidden>
         <div class="pending-case-heading"><div><h3>Незабранные предметы</h3><span id="pendingCaseRewardsCount">0 предметов</span></div></div>
+        <div class="pending-case-actions" id="pendingCaseActions" hidden><button type="button" class="btn-small pending-case-claim-all" id="pendingCaseClaimAllBtn">Забрать все</button><button type="button" class="btn-small danger pending-case-sell-all" id="pendingCaseSellAllBtn">Продать все</button></div>
         <div class="pending-case-list" id="pendingCaseRewardsList"></div>
       </div>
     </section>
@@ -500,6 +499,10 @@
         <label class="settings-audio-volume" for="musicVolumeSlider">
           <span>Громкость музыки <strong id="musicVolumeValue">30%</strong></span>
           <input type="range" id="musicVolumeSlider" min="0" max="100" value="30" aria-label="Громкость фоновой музыки">
+        </label>
+        <label class="settings-audio-volume settings-win-volume" for="volumeSlider">
+          <span>Громкость звука победы <strong id="volumeValue">70%</strong></span>
+          <div class="settings-volume-control"><span class="volume-icon" id="volumeIcon" aria-hidden="true">🔊</span><input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="70" aria-label="Громкость звука победы"></div>
         </label>
       </div>
       <div class="settings-avatar-row"><img id="settingsAvatarPreview" alt="Аватар"><div><strong>Аватар</strong><p>Выбери изображение с устройства</p><label class="btn-small avatar-file-label" for="avatarFile">Изменить аватар</label><input type="file" id="avatarFile" accept="image/png,image/jpeg,image/webp" hidden></div></div>
