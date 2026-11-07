@@ -85,6 +85,12 @@
   <section class="tab-page active" id="page-upgrade">
     <h1 class="title">Апгрейд скинов</h1>
 
+    <div class="upgrade-page-layout">
+      <aside class="panel upgrade-feed-panel">
+        <div class="panel-title-row"><div><h2 class="panel-title" style="margin-bottom:4px">Лента выигрышей</h2><div class="feed-subtitle">Новые сверху · обновляется онлайн</div></div><button type="button" class="btn-small" id="refreshUpgradeFeedBtn" aria-label="Обновить ленту">↻</button></div>
+        <div class="upgrade-feed" id="upgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
+      </aside>
+      <div class="upgrade-main">
     <div class="layout">
       <aside class="col">
         <div class="panel upgrade-inventory-panel" id="upgradeInventoryPanel">
@@ -220,17 +226,14 @@
 
       </aside>
     </div>
-
-    <div class="panel upgrade-feed-panel">
-      <div class="panel-title-row"><div><h2 class="panel-title" style="margin-bottom:4px">Лента выигрышей</h2><div class="feed-subtitle">Новые скины из успешных апгрейдов</div></div><button type="button" class="btn-small" id="refreshUpgradeFeedBtn">Обновить</button></div>
-      <div class="upgrade-feed" id="upgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
+      </div>
     </div>
   </section>
 
   <!-- БАТЛЫ СКИНОВ -->
   <section class="tab-page" id="page-battles">
     <h1 class="title">Батлы скинов</h1>
-    <div class="battle-toolbar"><p>Для входа нужен предмет стоимостью не меньше 95% ставки создателя.</p><button type="button" class="btn-small battle-create-btn" id="openCreateBattleBtn"><iconify-icon icon="mdi:plus-circle-outline"></iconify-icon> Создать батл</button></div>
+    <div class="battle-toolbar"><p>Для входа нужен предмет стоимостью не меньше 95% ставки создателя.</p><button type="button" class="battle-create-btn" id="openCreateBattleBtn"><iconify-icon icon="mdi:plus-circle-outline"></iconify-icon> Создать батл</button></div>
     <div class="panel battle-list-panel">
       <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Открытые батлы</h2><button type="button" class="btn-small" id="refreshBattlesBtn">Обновить</button></div>
       <div class="battle-list" id="battleList"><div class="battle-empty">Загружаю батлы…</div></div>
@@ -342,12 +345,12 @@
 
   <div class="modal-overlay battle-room-overlay" id="battleRoomModal" aria-hidden="true">
     <div class="modal battle-room-modal" role="dialog" aria-modal="true" aria-labelledby="battleRoomTitle">
-      <div class="battle-room-heading"><h3 class="modal-title" id="battleRoomTitle">Батл скинов</h3><span class="battle-room-status" id="battleRoomStatus">Ожидание соперника…</span></div>
+      <div class="battle-room-heading"><div class="battle-room-title-group"><h3 class="modal-title" id="battleRoomTitle">Батл скинов</h3><span class="battle-room-status" id="battleRoomStatus">Ожидание соперника…</span></div><button type="button" class="battle-room-minimize" id="battleRoomMinimize" aria-label="Свернуть окно батла" title="Свернуть окно">×</button></div>
       <div class="battle-room-bank"><span>Банк батла</span><strong id="battleRoomBank">0.00 ₽</strong></div>
       <div class="battle-room-matchup">
-        <div class="battle-room-player creator-room-side"><div class="battle-room-color creator-color"></div><img id="battleCreatorAvatar" alt=""><strong id="battleCreatorName">Создатель</strong><img class="battle-room-skin" id="battleCreatorSkinImage" alt=""><span id="battleCreatorSkinName">—</span><small id="battleCreatorSkinPrice">—</small></div>
+        <div class="battle-room-player creator-room-side"><div class="battle-room-color creator-color"></div><span class="battle-avatar"><img id="battleCreatorAvatar" alt="" hidden><iconify-icon id="battleCreatorAvatarFallback" icon="mdi:account-circle-outline"></iconify-icon></span><strong id="battleCreatorName">Создатель</strong><img class="battle-room-skin" id="battleCreatorSkinImage" alt=""><span id="battleCreatorSkinName">—</span><small id="battleCreatorSkinPrice">—</small></div>
         <div class="battle-room-wheel-wrap"><div class="battle-wheel" id="battleWheel"><canvas id="battleWheelCanvas" width="240" height="240"></canvas></div><div class="battle-pointer"></div></div>
-        <div class="battle-room-player guest-room-side"><div class="battle-room-color guest-color"></div><img id="battleGuestAvatar" alt=""><strong id="battleGuestName">Ждём гостя</strong><img class="battle-room-skin" id="battleGuestSkinImage" alt=""><span id="battleGuestSkinName">Ожидает входа</span><small id="battleGuestSkinPrice">—</small></div>
+        <div class="battle-room-player guest-room-side"><div class="battle-room-color guest-color"></div><span class="battle-avatar"><img id="battleGuestAvatar" alt="" hidden><iconify-icon id="battleGuestAvatarFallback" icon="mdi:account-circle-outline"></iconify-icon></span><strong id="battleGuestName">Ждём гостя</strong><img class="battle-room-skin" id="battleGuestSkinImage" alt=""><span id="battleGuestSkinName">Ожидает входа</span><small id="battleGuestSkinPrice">—</small></div>
       </div>
       <div class="battle-result" id="battleResult" aria-live="polite">Создатель ждёт соперника.</div>
       <div class="battle-room-actions"><button type="button" class="btn-small danger" id="battleRoomCancel">Отменить батл и вернуть скин</button></div>

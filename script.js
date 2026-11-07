@@ -300,6 +300,7 @@ const battlePickerFeedback = document.getElementById('battlePickerFeedback');
 const battlePickerCancel = document.getElementById('battlePickerCancel');
 const battlePickerConfirm = document.getElementById('battlePickerConfirm');
 const battleRoomModal = document.getElementById('battleRoomModal');
+const battleRoomMinimize = document.getElementById('battleRoomMinimize');
 const battleRoomStatus = document.getElementById('battleRoomStatus');
 const battleRoomBank = document.getElementById('battleRoomBank');
 const battleRoomCancel = document.getElementById('battleRoomCancel');
@@ -1813,6 +1814,20 @@ async function getBattleParticipantProfile(userId) {
   return data;
 }
 
+function setBattleAvatar(imageId, fallbackId, avatarUrl) {
+  const image = $(imageId);
+  const fallback = $(fallbackId);
+  const avatar = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
+  image.onerror = () => {
+    image.hidden = true;
+    fallback.hidden = false;
+  };
+  image.hidden = !avatar;
+  fallback.hidden = !!avatar;
+  if (avatar) image.src = avatar;
+  else image.removeAttribute('src');
+}
+
 async function renderBattleRoom(battle) {
   if (!battle) return;
   activeBattleRoom = battle;
@@ -1820,12 +1835,12 @@ async function renderBattleRoom(battle) {
   const creatorProfile = await getBattleParticipantProfile(battle.creator_user_id).catch(() => null);
   const guestProfile = battle.guest_user_id ? await getBattleParticipantProfile(battle.guest_user_id).catch(() => null) : null;
   $('battleCreatorName').textContent = creatorProfile?.username || battle.creator_name || 'Создатель';
-  $('battleCreatorAvatar').src = creatorProfile?.avatar || '';
+  setBattleAvatar('battleCreatorAvatar', 'battleCreatorAvatarFallback', creatorProfile?.avatar);
   $('battleCreatorSkinImage').src = battle.creator_skin?.img || '';
   $('battleCreatorSkinName').textContent = battle.creator_skin?.name || 'Скин';
   $('battleCreatorSkinPrice').textContent = fmt(Number(battle.creator_skin?.price || 0));
   $('battleGuestName').textContent = guestProfile?.username || battle.guest_name || 'Ждём гостя';
-  $('battleGuestAvatar').src = guestProfile?.avatar || '';
+  setBattleAvatar('battleGuestAvatar', 'battleGuestAvatarFallback', guestProfile?.avatar);
   $('battleGuestSkinImage').src = battle.guest_skin?.img || '';
   $('battleGuestSkinName').textContent = battle.guest_skin?.name || 'Ожидает входа';
   $('battleGuestSkinPrice').textContent = battle.guest_skin ? fmt(Number(battle.guest_skin.price || 0)) : '—';
@@ -1840,10 +1855,17 @@ async function renderBattleRoom(battle) {
 function openBattleRoom(battle) {
   if (!battle) return;
   activeBattleRoom = battle;
+  battleRoomCancel.disabled = false;
+  battleRoomCancel.hidden = battle.status !== 'waiting' || battle.creator_user_id !== currentUser?.id;
   battleRoomModal.classList.add('show');
   battleRoomModal.setAttribute('aria-hidden', 'false');
   drawBattleWheel();
   void renderBattleRoom(battle);
+}
+
+function minimizeBattleRoom() {
+  battleRoomModal.classList.remove('show');
+  battleRoomModal.setAttribute('aria-hidden', 'true');
 }
 
 function closeBattleRoom() {
@@ -2025,6 +2047,37 @@ async function loadBattles() {
   }
 }
 
+async function recoverBattleAfterCancelFailure(room) {
+  const { data: freshBattle, error } = await supabaseClient.from('skin_battles')
+    .select('id, creator_user_id, creator_name, creator_skin, guest_user_id, guest_name, guest_skin, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
+    .eq('id', room.id).single();
+  if (error) throw error;
+  latestBattles = [freshBattle, ...latestBattles.filter(item => item.id !== freshBattle.id)];
+  battleStatuses.set(freshBattle.id, freshBattle.status);
+
+  if (freshBattle.status === 'waiting') {
+    activeBattleRoom = freshBattle;
+    await renderBattleRoom(freshBattle);
+    renderBattleList();
+    renderBattleArchive();
+    battleRoomStatus.textContent = 'Батл всё ещё открыт. Попробуй отменить ещё раз.';
+    return;
+  }
+  if (freshBattle.status === 'completed') {
+    showBattleOutcome(freshBattle);
+    return;
+  }
+
+  closeBattleRoom();
+  await loadUserState();
+  renderMyInventory();
+  renderProfile();
+  restoreSlotsFromState();
+  renderBattleList();
+  renderBattleArchive();
+  battleFeedback.textContent = 'Батл уже отменён, скин возвращён в инвентарь.';
+}
+
 battlePickerConfirm.addEventListener('click', async () => {
   const selectedStake = state.inventory.find(item => item.instanceId === selectedBattleSkinId);
   if (!selectedStake) return;
@@ -2079,23 +2132,50 @@ battlePickerConfirm.addEventListener('click', async () => {
 
 battleRoomCancel.addEventListener('click', async () => {
   if (!activeBattleRoom || activeBattleRoom.status !== 'waiting') return;
+  const room = activeBattleRoom;
   battleRoomCancel.disabled = true;
-  const { error } = await supabaseClient.rpc('cancel_skin_battle', { p_battle_id: activeBattleRoom.id });
-  if (error) {
-    battleRoomStatus.textContent = 'Батл уже начался; обновляю состояние…';
+  battleRoomStatus.textContent = 'Отменяю батл и возвращаю скин…';
+  battleFeedback.textContent = '';
+  try {
+    const { data, error } = await supabaseClient.rpc('cancel_skin_battle', { p_battle_id: room.id });
+    if (error || data !== true) {
+      await recoverBattleAfterCancelFailure(room);
+      return;
+    }
+
+    const cancelledBattle = { ...room, status: 'cancelled' };
+    latestBattles = latestBattles.some(item => item.id === room.id)
+      ? latestBattles.map(item => item.id === room.id ? cancelledBattle : item)
+      : [cancelledBattle, ...latestBattles];
+    battleStatuses.set(room.id, 'cancelled');
+    closeBattleRoom();
+    renderBattleList();
+    renderBattleArchive();
+    try {
+      await loadUserState();
+      renderMyInventory();
+      renderProfile();
+      restoreSlotsFromState();
+      battleFeedback.textContent = 'Батл отменён, скин возвращён.';
+    } catch (refreshError) {
+      battleFeedback.textContent = 'Батл отменён. Обнови страницу, чтобы перечитать инвентарь.';
+      console.error('Battle was cancelled, but player state could not be refreshed:', refreshError);
+    }
+    void loadBattles();
+  } catch (error) {
     console.error('Could not cancel battle:', error);
-    await loadBattles();
+    try {
+      await recoverBattleAfterCancelFailure(room);
+    } catch (refreshError) {
+      battleRoomStatus.textContent = 'Не удалось проверить отмену. Список обновится автоматически; попробуй ещё раз.';
+      console.error('Could not refresh battle after cancel attempt:', refreshError);
+    }
+  } finally {
     battleRoomCancel.disabled = false;
-    return;
   }
-  closeBattleRoom();
-  await loadUserState();
-  renderMyInventory();
-  renderProfile();
-  restoreSlotsFromState();
-  battleFeedback.textContent = 'Батл отменён, скин возвращён.';
-  await loadBattles();
 });
+
+battleRoomMinimize.addEventListener('click', minimizeBattleRoom);
 
 refreshBattlesBtn.addEventListener('click', () => void loadBattles());
 battleList.addEventListener('click', event => {
