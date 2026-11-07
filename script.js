@@ -219,6 +219,227 @@ function stableCatalogFactor(value) {
   return 0.94 + ((hash >>> 0) % 1201) / 10000;
 }
 
+// Market.CSGO publishes a public RUB snapshot with the cheapest active offer
+// for each market hash name. The browser cache is reduced to our catalog names.
+const MARKET_PRICE_URL = 'https://market.csgo.com/api/v2/prices/RUB.json';
+const MARKET_PRICE_CACHE_KEY = 'cs2up_market_csgo_rub_v1';
+const MARKET_PRICE_CACHE_TTL_MS = 5 * 60 * 1000;
+const MARKET_PRICE_POLL_MS = 5 * 60 * 1000;
+const MARKET_PRICE_TIMEOUT_MS = 12000;
+let marketPriceByName = new Map();
+let marketPriceUpdatedAt = 0;
+let marketPriceFetchedAt = 0;
+let marketPriceStatus = 'loading';
+let marketPriceCoverage = { matched: 0, total: 0 };
+let catalogSourceSummary = '';
+let catalogItemsById = new Map();
+let userStateLoadedId = null;
+let marketPriceRefreshTimer = null;
+let marketStateSyncTimer = null;
+
+function normalizeMarketHashName(value) {
+  return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
+}
+
+function marketPriceRows(payload) {
+  const items = payload?.items ?? payload?.data?.items ?? payload?.data ?? payload?.prices;
+  if (Array.isArray(items)) return items;
+  if (items && typeof items === 'object') return Object.values(items);
+  return Array.isArray(payload) ? payload : [];
+}
+
+function marketPriceFromRow(row) {
+  const raw = row?.price ?? row?.lowest_price ?? row?.lowestPrice;
+  if (raw == null) return null;
+  const normalized = String(raw).replace(/[\s\u00a0]/g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+  const price = Number(normalized);
+  return Number.isFinite(price) && price > 0 ? Math.round(price * 100) / 100 : null;
+}
+
+function marketPriceTimestamp(payload, fallback = Date.now()) {
+  const raw = Number(payload?.time ?? payload?.timestamp ?? payload?.updated_at ?? payload?.updatedAt);
+  if (!Number.isFinite(raw) || raw <= 0) return fallback;
+  const milliseconds = raw < 100000000000 ? raw * 1000 : raw;
+  return milliseconds > Date.now() + 5 * 60 * 1000 ? fallback : milliseconds;
+}
+
+function readMarketPriceCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(MARKET_PRICE_CACHE_KEY) || 'null');
+    if (!cached || !Array.isArray(cached.prices) || !Number.isFinite(Number(cached.fetchedAt))) return null;
+    const prices = new Map();
+    cached.prices.forEach(entry => {
+      if (!Array.isArray(entry) || entry.length < 2) return;
+      const key = normalizeMarketHashName(entry[0]);
+      const price = Number(entry[1]);
+      if (key && Number.isFinite(price) && price > 0) prices.set(key, price);
+    });
+    return prices.size ? { prices, updatedAt: Number(cached.updatedAt) || Number(cached.fetchedAt), fetchedAt: Number(cached.fetchedAt) } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function loadMarketPriceSnapshot({ force = false } = {}) {
+  const cached = readMarketPriceCache();
+  if (!force && cached && Date.now() - cached.fetchedAt < MARKET_PRICE_CACHE_TTL_MS) {
+    return { ...cached, status: 'live' };
+  }
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutId = setTimeout(() => controller?.abort(), MARKET_PRICE_TIMEOUT_MS);
+  try {
+    const response = await fetch(MARKET_PRICE_URL, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    if (!response.ok) throw new Error(`Market.CSGO ответил HTTP ${response.status}`);
+    const payload = await response.json();
+    if (payload?.success === false) throw new Error('Market.CSGO не отдал прайс-лист');
+    const prices = new Map();
+    for (const row of marketPriceRows(payload)) {
+      const name = row?.market_hash_name ?? row?.marketHashName ?? row?.hash_name ?? row?.name;
+      const key = normalizeMarketHashName(name);
+      const price = marketPriceFromRow(row);
+      if (!key || price == null) continue;
+      const previous = prices.get(key);
+      if (previous == null || price < previous) prices.set(key, price);
+    }
+    if (!prices.size) throw new Error('Формат прайс-листа Market.CSGO не распознан');
+    const fetchedAt = Date.now();
+    const snapshot = { prices, updatedAt: marketPriceTimestamp(payload, fetchedAt), fetchedAt, status: 'live' };
+    return snapshot;
+  } catch (error) {
+    if (cached) return { ...cached, status: 'stale', error };
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function applyMarketPricesToCatalog(snapshot) {
+  if (!snapshot?.prices?.size || !SKINS_CATALOG.length) return false;
+  marketPriceByName = snapshot.prices;
+  marketPriceUpdatedAt = Number(snapshot.updatedAt) || Date.now();
+  marketPriceFetchedAt = Number(snapshot.fetchedAt) || Date.now();
+  marketPriceStatus = snapshot.status === 'stale' ? 'stale' : 'live';
+  catalogItemsById = new Map();
+  const catalogPrices = new Map();
+  let matched = 0;
+  let changed = false;
+  for (const item of SKINS_CATALOG) {
+    const key = normalizeMarketHashName(item.marketHashName || item.name);
+    const price = marketPriceByName.get(key);
+    if (price != null) {
+      if (Number(item.price) !== price || item.priceSource !== 'market_csgo') changed = true;
+      item.price = price;
+      item.priceSource = 'market_csgo';
+      item.marketPrice = price;
+      catalogPrices.set(key, price);
+      matched += 1;
+    } else {
+      if (item.priceSource !== 'estimate' || Number(item.price) !== Number(item.estimatedPrice)) changed = true;
+      if (item.priceSource === 'market_csgo') item.price = Number(item.estimatedPrice || item.price);
+      item.priceSource = 'estimate';
+      item.marketPrice = null;
+    }
+    catalogItemsById.set(String(item.id), item);
+  }
+  marketPriceByName = catalogPrices;
+  marketPriceCoverage = { matched, total: SKINS_CATALOG.length };
+  SKINS_CATALOG.sort((a, b) => a.price - b.price);
+  try {
+    localStorage.setItem(MARKET_PRICE_CACHE_KEY, JSON.stringify({
+      updatedAt: marketPriceUpdatedAt,
+      fetchedAt: marketPriceFetchedAt,
+      prices: [...catalogPrices.entries()],
+    }));
+  } catch (error) {
+    console.warn('Could not cache the Market.CSGO catalog prices:', error);
+  }
+  return changed;
+}
+
+function updateCatalogPriceSourceNote() {
+  if (!catalogSourceNote) return;
+  const stamp = marketPriceUpdatedAt
+    ? new Date(marketPriceUpdatedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '';
+  const coverage = marketPriceCoverage.total
+    ? `${marketPriceCoverage.matched.toLocaleString('ru-RU')}/${marketPriceCoverage.total.toLocaleString('ru-RU')} позиций`
+    : '';
+  const marketStatus = marketPriceStatus === 'live'
+    ? `Market.CSGO RUB · ${coverage} · ${stamp}`
+    : marketPriceStatus === 'stale'
+      ? `Market.CSGO · сохранённый прайс от ${stamp}`
+      : marketPriceStatus === 'unavailable'
+        ? 'Market.CSGO временно недоступен · показаны оценки'
+        : 'Market.CSGO · загрузка цен…';
+  catalogSourceNote.textContent = [catalogSourceSummary, marketStatus].filter(Boolean).join(' · ');
+  catalogSourceNote.title = marketPriceStatus === 'unavailable'
+    ? 'Рыночный фид временно недоступен. В каталоге показаны расчётные оценки.'
+    : `Источник цен: лучшие доступные предложения Market.CSGO в RUB. Снимок: ${stamp || 'не получен'}. Для предметов без предложения Market.CSGO остаётся расчётная оценка.`;
+}
+
+function repriceCurrentInventory() {
+  if (!state.inventory?.length || !catalogItemsById.size) return false;
+  let changed = false;
+  for (const item of state.inventory) {
+    const marketItem = catalogItemsById.get(String(item.catalogId || ''));
+    if (!marketItem) continue;
+    const nextSource = marketItem.priceSource;
+    if (nextSource !== 'market_csgo' && item.priceSource !== 'market_csgo') continue;
+    if (Number(item.price) !== Number(marketItem.price) || item.priceSource !== nextSource) {
+      item.price = marketItem.price;
+      item.priceSource = nextSource;
+      item.marketHashName = marketItem.marketHashName || item.marketHashName || null;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+async function syncCurrentInventoryMarketPrices(catalogChanged = false) {
+  if (!currentUser || userStateLoadedId !== currentUser.id) return;
+  if (spinning || caseOpeningInProgress || caseSettlementInProgress) {
+    if (!marketStateSyncTimer) {
+      marketStateSyncTimer = setTimeout(() => {
+        marketStateSyncTimer = null;
+        void syncCurrentInventoryMarketPrices(catalogChanged);
+      }, 750);
+    }
+    return;
+  }
+  const requestedUserId = currentUser.id;
+  const inventoryChanged = repriceCurrentInventory();
+  if (!inventoryChanged && !catalogChanged) return;
+  if (inventoryChanged) await saveState();
+  if (currentUser?.id !== requestedUserId) return;
+  updateBalanceUI();
+  renderInventory();
+  renderTargets();
+  renderMyInventory();
+  restoreSlotsFromState();
+  renderProfile();
+  if (currentUser.role === 'admin' && !adminCaseForm.hidden) renderCaseSkinResults();
+}
+
+async function refreshMarketPrices({ force = false } = {}) {
+  try {
+    const snapshot = await loadMarketPriceSnapshot({ force });
+    const catalogChanged = applyMarketPricesToCatalog(snapshot);
+    updateCatalogPriceSourceNote();
+    await syncCurrentInventoryMarketPrices(catalogChanged);
+    return true;
+  } catch (error) {
+    marketPriceStatus = marketPriceByName.size ? 'stale' : 'unavailable';
+    updateCatalogPriceSourceNote();
+    console.warn('Could not load current Market.CSGO prices:', error);
+    return false;
+  }
+}
+
 // ============================================================
 // КЛЮЧИ ХРАНИЛИЩА
 // ============================================================
@@ -957,6 +1178,7 @@ async function loginAs(authUser) {
     role: profile.role,
     promoCode: profile.promo_code
   };
+  userStateLoadedId = null;
   startCurrentUserRealtimeUpdates(currentUser.id);
   void updateOnlinePresenceIdentity();
   const suspensionEnd = Date.parse(profile.suspended_until || '');
@@ -1034,6 +1256,7 @@ logoutBtn.addEventListener('click', async () => {
   }
   closeSettings();
   currentUser = null;
+  userStateLoadedId = null;
   activeUpgradeRun = null;
   spinning = false;
   upgradeResumeSequence += 1;
@@ -1219,6 +1442,11 @@ async function loadUserState() {
   if (!state.betItemIds.length && state.betId) {
     const legacyBet = state.inventory.find(item => item.catalogId === state.betId);
     if (legacyBet) state.betItemIds = [legacyBet.instanceId];
+  }
+  userStateLoadedId = currentUser.id;
+  if (catalogLoaded) {
+    assignedInstanceId = migrateCatalogIdsInInventory() || assignedInstanceId;
+    assignedInstanceId = repriceCurrentInventory() || assignedInstanceId;
   }
   if (assignedInstanceId || !Array.isArray(gameStateResult.data.state.betItemIds)) await saveState();
 }
@@ -1697,6 +1925,8 @@ function caseSkinSnapshot(item) {
     id: item.id,
     name: skinDisplayName(item.name),
     price: Number(item.price || 0),
+    marketHashName: item.marketHashName || null,
+    priceSource: item.priceSource || 'estimate',
     img: item.img || '',
     rarity: item.rarity || null,
     catalogType: item.catalogType || 'skin',
@@ -3375,15 +3605,19 @@ async function loadSkins() {
       { file: 'graffiti.json', type: 'graffiti', category: 'Graffiti' },
       { file: 'music_kits.json', type: 'music_kits', category: 'Music Kits' },
     ];
-    const [datasets, metadataResponse] = await Promise.all([
+    const [datasets, metadataResponse, marketPriceResult] = await Promise.all([
       Promise.all(catalogFiles.map(entry => fetchCatalogJson(entry.file))),
       fetch('catalog-source.json').catch(() => null),
+      loadMarketPriceSnapshot().catch(error => ({ error })),
     ]);
 
-    SKINS_CATALOG = catalogFiles.flatMap((entry, dataIndex) => datasets[dataIndex].map((item, idx) => ({
+    SKINS_CATALOG = catalogFiles.flatMap((entry, dataIndex) => datasets[dataIndex].map((item, idx) => {
+      const estimatedPrice = calcPrice(item, entry.type);
+      return {
       id: `${entry.type}_${item.id || idx}`,
       name: skinDisplayName(item.name),
-      price: calcPrice(item, entry.type),
+      price: estimatedPrice,
+      estimatedPrice,
       img: item.image || item.image_inventory || item.image_url,
       rarity: item.rarity,
       category: item.category?.name || entry.category,
@@ -3402,13 +3636,20 @@ async function loadSkins() {
       releaseDate: item.release_date || null,
       releaseYear: item.release_year ? String(item.release_year) : null,
       collectionNames: Array.isArray(item.collection_names) ? item.collection_names : [],
-    })));
+      };
+    }));
 
     SKINS_CATALOG.sort((a, b) => a.price - b.price);
     catalogLoaded = true;
-    if (migrateCatalogIdsInInventory()) await saveState();
+    const migratedCatalogIds = migrateCatalogIdsInInventory();
+    if (marketPriceResult?.prices?.size) applyMarketPricesToCatalog(marketPriceResult);
+    else marketPriceStatus = 'unavailable';
+    const repricedInventory = currentUser && userStateLoadedId === currentUser.id
+      ? repriceCurrentInventory()
+      : false;
+    if (migratedCatalogIds || repricedInventory) await saveState();
 
-    if (catalogSourceNote && metadataResponse?.ok) {
+    if (metadataResponse?.ok) {
       const metadata = await metadataResponse.json().catch(() => null);
       if (metadata) {
         const fetchedDate = metadata.fetchedAtUtc
@@ -3424,9 +3665,13 @@ async function loadSkins() {
         syncCustomSelect(invCategory);
         syncCustomSelect(targetCategory);
         const currentYearItems = Number(metadata.releaseYearCounts?.[catalogReleaseYear] || 0);
-        catalogSourceNote.textContent = `CS2 · ${totalItems.toLocaleString('ru-RU')} вариантов · ${baseDesigns.toLocaleString('ru-RU')} моделей · ${catalogReleaseYear}: ${currentYearItems.toLocaleString('ru-RU')} · ${fetchedDate}`;
-        catalogSourceNote.title = `Источник: ${metadata.source || 'CS2 item catalog'} · данные из файлов игры · лицензия ${metadata.license || 'см. источник'}`;
+        catalogSourceSummary = `CS2 · ${totalItems.toLocaleString('ru-RU')} вариантов · ${baseDesigns.toLocaleString('ru-RU')} моделей · ${catalogReleaseYear}: ${currentYearItems.toLocaleString('ru-RU')} · база ${fetchedDate}`;
+        catalogSourceNote.title = `Каталог: ${metadata.source || 'CS2 item catalog'} · данные из файлов игры · лицензия ${metadata.license || 'см. источник'}`;
       }
+    }
+    updateCatalogPriceSourceNote();
+    if (!marketPriceRefreshTimer) {
+      marketPriceRefreshTimer = setInterval(() => { void refreshMarketPrices({ force: true }); }, MARKET_PRICE_POLL_MS);
     }
 
     invLoading.classList.add('hide');
@@ -3445,6 +3690,12 @@ async function loadSkins() {
     console.error(err);
   }
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && marketPriceFetchedAt && Date.now() - marketPriceFetchedAt >= MARKET_PRICE_CACHE_TTL_MS) {
+    void refreshMarketPrices({ force: true });
+  }
+});
 
 // ============================================================
 // УМНЫЙ ПОИСК
@@ -3829,6 +4080,14 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
     ${qualityParts.length ? `<div class="item-quality">${qualityParts.map(part => escapeHtml(part)).join(' · ')}</div>` : ''}
     <div class="item-rarity">${escapeHtml(rarityName || item.category || 'Предмет')}</div>
   `;
+  const priceElement = card.querySelector('.item-price');
+  if (priceElement) {
+    const hasMarketQuote = item.priceSource === 'market_csgo';
+    priceElement.dataset.priceSource = hasMarketQuote ? 'market' : 'estimate';
+    priceElement.title = hasMarketQuote
+      ? 'Текущая минимальная цена предложения на Market.CSGO'
+      : 'Для этого предмета сейчас нет предложения на Market.CSGO; показана расчётная оценка';
+  }
 
   const marketCancelBadge = card.querySelector('.market-quantity-badge');
   if (marketCancelBadge) {
@@ -4085,6 +4344,10 @@ function appendMyInventoryCard(idx) {
   price.className = 'item-price';
   price.classList.add('item-price-green');
   price.textContent = fmt(inv.price);
+  price.dataset.priceSource = inv.priceSource === 'market_csgo' ? 'market' : 'estimate';
+  price.title = inv.priceSource === 'market_csgo'
+    ? 'Текущая минимальная цена предложения на Market.CSGO'
+    : 'Расчётная оценка: текущего предложения на Market.CSGO нет';
   const qualities = [inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
   card.append(imageWrap, name, price);
   if (qualities.length) {
@@ -4802,6 +5065,8 @@ modalConfirm.addEventListener('click', async () => {
         catalogId: item.id,
         name: item.name,
         price: item.price,
+        marketHashName: item.marketHashName || null,
+        priceSource: item.priceSource || 'estimate',
         img: item.img,
         rarity: item.rarity,
         catalogType: item.catalogType,
