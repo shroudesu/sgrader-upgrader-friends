@@ -490,10 +490,12 @@ let caseOpeningInProgress = false;
 let caseSkipAnimation = false;
 let caseAnimationInProgress = false;
 let caseAnimationSequence = 0;
+let cancelCaseAnimation = null;
 let caseSettlementInProgress = false;
 let pendingCaseRewards = [];
 let activeCaseOpening = null;
 let selectedGameCase = null;
+let upgradeFeedChannel = null;
 let onlinePresenceChannel = null;
 let onlinePresenceReady = false;
 let onlinePresenceSessionId = '';
@@ -733,6 +735,7 @@ async function loginAs(authUser) {
   restoreSlotsFromState();
   renderProfile();
   void loadUpgradeFeed();
+  startUpgradeFeedRealtime();
   void loadPendingCaseRewards();
   if (currentUser.role === 'admin') await renderAdminUsers();
 }
@@ -765,6 +768,10 @@ topupRequestForm.addEventListener('submit', event => {
 logoutBtn.addEventListener('click', async () => {
   await stateSaveQueue;
   if (supabaseClient) await supabaseClient.auth.signOut();
+  if (upgradeFeedChannel && supabaseClient) {
+    void supabaseClient.removeChannel(upgradeFeedChannel);
+    upgradeFeedChannel = null;
+  }
   closeSettings();
   currentUser = null;
   void updateOnlinePresenceIdentity();
@@ -815,7 +822,7 @@ settingsModal.addEventListener('click', event => { if (event.target === settings
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape') return;
   if (settingsModal.classList.contains('show')) closeSettings();
-  if (!caseDetailView.hidden && !caseOpeningInProgress && !caseAnimationInProgress && !caseSettlementInProgress) caseBackButton.click();
+  if (!caseDetailView.hidden && !caseSettlementInProgress) caseBackButton.click();
 });
 
 currencySelect.addEventListener('change', () => {
@@ -1352,6 +1359,7 @@ function renderCaseDetails(gameCase) {
     </article>`;
   }).join('') || '<div class="case-empty">В кейсе пока нет предметов.</div>';
   caseOpenQuantityInput.value = '1';
+  syncCustomSelect(caseOpenQuantityInput);
   caseSkipAnimationToggle.checked = caseSkipAnimation;
   caseFeedback.textContent = '';
   caseOpenResults.hidden = true;
@@ -1678,37 +1686,68 @@ function renderCaseOpeningView(animate = false) {
   caseSellAllBtn.textContent = `Продать все · ${fmt(sellTotal)}`;
   caseClaimAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
   caseSellAllBtn.disabled = !pending.length || caseAnimationInProgress || caseSettlementInProgress;
-  caseBackButton.disabled = caseAnimationInProgress || caseSettlementInProgress;
+  caseBackButton.disabled = caseSettlementInProgress;
 }
 
 async function playCaseReels() {
   const animationId = ++caseAnimationSequence;
   const tracks = [...caseRewardList.querySelectorAll('.case-reel-track')];
   await new Promise(resolve => requestAnimationFrame(resolve));
-  await Promise.all(tracks.map((track, index) => new Promise(resolve => {
+  if (animationId !== caseAnimationSequence) return;
+
+  const finishTracks = [];
+  const trackAnimations = tracks.map(track => new Promise(resolve => {
     const viewport = track.parentElement;
     const winner = track.querySelector('[data-reel-winner="true"]');
     if (!viewport || !winner) { resolve(); return; }
+
+    let finished = false;
+    let fallbackTimer = null;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+      track.removeEventListener('transitionend', onTransitionEnd);
+      resolve();
+    };
+    const onTransitionEnd = event => {
+      if (event.target === track && event.propertyName === 'transform') {
+        if (animationId === caseAnimationSequence) winner.classList.add('landed');
+        finish();
+      }
+    };
+    finishTracks.push(finish);
     track.style.transition = 'none';
     track.style.transform = 'translate3d(0,0,0)';
     const trackRect = track.getBoundingClientRect();
     const winnerRect = winner.getBoundingClientRect();
     const winnerCenter = winnerRect.left - trackRect.left + winnerRect.width / 2;
     const targetX = viewport.clientWidth / 2 - winnerCenter;
-    const delay = index * 90;
-    const duration = 4300 + Math.min(index, 6) * 220;
-    setTimeout(() => {
-      if (animationId !== caseAnimationSequence) { resolve(); return; }
-      track.style.transition = `transform ${duration}ms cubic-bezier(.10,.75,.08,1)`;
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        track.style.transform = `translate3d(${targetX}px,0,0)`;
-      }));
-      setTimeout(() => {
-        if (animationId === caseAnimationSequence) winner.classList.add('landed');
-        resolve();
-      }, duration + 50);
-    }, delay);
-  })));
+    const duration = 6000;
+    track.addEventListener('transitionend', onTransitionEnd);
+    fallbackTimer = setTimeout(() => {
+      if (animationId === caseAnimationSequence) winner.classList.add('landed');
+      finish();
+    }, duration + 150);
+    track.style.transition = `transform ${duration}ms cubic-bezier(.10,.75,.08,1)`;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (animationId !== caseAnimationSequence) { finish(); return; }
+      track.style.transform = `translate3d(${targetX}px,0,0)`;
+    }));
+  }));
+
+  const cancel = () => {
+    if (animationId !== caseAnimationSequence) return;
+    caseAnimationSequence++;
+    tracks.forEach(track => {
+      track.style.transition = 'none';
+      track.style.transform = 'translate3d(0,0,0)';
+    });
+    finishTracks.forEach(finish => finish());
+  };
+  cancelCaseAnimation = cancel;
+  await Promise.all(trackAnimations);
+  if (cancelCaseAnimation === cancel) cancelCaseAnimation = null;
 }
 
 async function showCaseOpeningReview(opening, animate = false) {
@@ -1762,6 +1801,7 @@ function closeSettledCaseResultsIfEmpty() {
   if (!activeCaseOpening || activeCaseOpening.rewards?.some(reward => reward.status === 'pending')) return false;
   caseOpenResults.hidden = true;
   activeCaseOpening = null;
+  caseBackButton.disabled = false;
   return true;
 }
 
@@ -1787,6 +1827,7 @@ async function settleOneCaseReward(rewardId, action) {
     console.error('Could not settle case reward:', error);
   } finally {
     caseSettlementInProgress = false;
+    caseBackButton.disabled = false;
     renderCaseOpeningView(false);
   }
 }
@@ -1821,6 +1862,7 @@ async function settleAllCaseRewards(action) {
     console.error('Could not settle all case rewards:', error);
   } finally {
     caseSettlementInProgress = false;
+    caseBackButton.disabled = false;
     renderCaseOpeningView(false);
   }
 }
@@ -1833,6 +1875,8 @@ async function openGameCase(caseId, quantity) {
   caseBackButton.disabled = true;
   caseOpenButton.disabled = true;
   caseOpenQuantityInput.disabled = true;
+  const caseQuantitySelect = customSelectInstances.get(caseOpenQuantityInput);
+  if (caseQuantitySelect) caseQuantitySelect.trigger.disabled = true;
   caseSkipAnimationToggle.disabled = true;
   caseFeedback.textContent = `Открываю ${quantity} ${quantity === 1 ? 'кейс' : 'кейса'}…`;
   try {
@@ -1870,9 +1914,10 @@ async function openGameCase(caseId, quantity) {
     console.error('Could not open game cases:', error);
   } finally {
     caseOpeningInProgress = false;
-    caseBackButton.disabled = caseAnimationInProgress || caseSettlementInProgress;
+    caseBackButton.disabled = caseSettlementInProgress;
     caseOpenButton.disabled = false;
     caseOpenQuantityInput.disabled = false;
+    if (caseQuantitySelect) caseQuantitySelect.trigger.disabled = false;
     caseSkipAnimationToggle.disabled = false;
   }
 }
@@ -1972,11 +2017,7 @@ casesGrid.addEventListener('click', event => {
   if (!button || caseOpeningInProgress) return;
   openCaseDetails(button.dataset.caseOpen);
 });
-caseOpenQuantityInput.addEventListener('input', () => {
-  if (caseOpenQuantityInput.value === '') return;
-  const value = Number(caseOpenQuantityInput.value);
-  if (!Number.isFinite(value)) return;
-  caseOpenQuantityInput.value = String(Math.max(1, Math.min(10, Math.trunc(value))));
+caseOpenQuantityInput.addEventListener('change', () => {
   updateCaseOpenButton();
 });
 caseOpenButton.addEventListener('click', () => {
@@ -2010,9 +2051,14 @@ try {
 } catch (e) { caseSkipAnimation = false; }
 caseSkipAnimationToggle.checked = caseSkipAnimation;
 caseBackButton.addEventListener('click', () => {
-  if (caseOpeningInProgress || caseAnimationInProgress || caseSettlementInProgress) return;
+  if ((caseOpeningInProgress && !caseAnimationInProgress) || caseSettlementInProgress) return;
+  if (cancelCaseAnimation) cancelCaseAnimation();
+  else caseAnimationSequence++;
+  caseAnimationInProgress = false;
   selectedGameCase = null;
   activeCaseOpening = null;
+  caseOpenResults.hidden = true;
+  caseBackButton.disabled = false;
   caseDetailView.hidden = true;
   caseListView.hidden = false;
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3844,7 +3890,8 @@ function renderUpgradeFeed(items) {
       <img class="feed-item-image" src="${escapeHtml(item.img || '')}" alt="">
       <span class="feed-item-name">${escapeHtml(item.name || 'Скин')}</span>
       <span class="feed-item-price">${fmt(Number(item.price || 0))}</span>
-      <small>${date}</small>
+      ${item.case_name ? `<small class="feed-item-source">Кейс: ${escapeHtml(item.case_name)}</small>` : ''}
+      <small class="feed-item-date">${date}</small>
     </button>`;
   }).join('');
 }
@@ -3860,6 +3907,24 @@ async function loadUpgradeFeed() {
     return;
   }
   renderUpgradeFeed(data || []);
+}
+
+function startUpgradeFeedRealtime() {
+  if (!currentUser || !supabaseClient || upgradeFeedChannel) return;
+  try {
+    upgradeFeedChannel = supabaseClient.channel('upgrade-wins-feed')
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'upgrade_wins'
+      }, () => { void loadUpgradeFeed(); })
+      .subscribe(status => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn('Upgrade wins feed realtime subscription unavailable:', status);
+        }
+      });
+  } catch (error) {
+    upgradeFeedChannel = null;
+    console.warn('Upgrade wins feed realtime subscription unavailable:', error);
+  }
 }
 
 function closePublicProfile() {
@@ -4115,6 +4180,7 @@ function initCustomSelects() {
     wrapper.className = 'custom-select';
     if (select.classList.contains('sort-select')) wrapper.classList.add('custom-select-sort');
     if (select.classList.contains('category-select')) wrapper.classList.add('custom-select-category');
+    if (select.classList.contains('case-quantity-select')) wrapper.classList.add('custom-select-quantity');
     if (select.classList.contains('settings-select')) wrapper.classList.add('custom-select-settings');
     if (select.closest('.topup-form')) wrapper.classList.add('custom-select-payment');
     select.parentNode.insertBefore(wrapper, select);

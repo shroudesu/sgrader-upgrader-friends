@@ -40,6 +40,20 @@ drop policy if exists upgrade_wins_read_authenticated on public.upgrade_wins;
 create policy upgrade_wins_read_authenticated on public.upgrade_wins
   for select to authenticated using (true);
 
+do $$
+begin
+  if exists (select 1 from pg_catalog.pg_publication where pubname = 'supabase_realtime')
+     and not exists (
+       select 1 from pg_catalog.pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'public'
+          and tablename = 'upgrade_wins'
+     ) then
+    alter publication supabase_realtime add table public.upgrade_wins;
+  end if;
+end;
+$$;
+
 alter table public.wallet_transactions
   drop constraint if exists wallet_transactions_reason_check;
 alter table public.wallet_transactions
@@ -457,7 +471,8 @@ begin
         'wear', v_item ->> 'wear',
         'stattrak', coalesce(v_item -> 'stattrak' = 'true'::jsonb, false),
         'souvenir', coalesce(v_item -> 'souvenir' = 'true'::jsonb, false),
-        'rarity', v_item -> 'rarity'
+        'rarity', v_item -> 'rarity',
+        'case_name', v_case_name
       )
     )
     on conflict (user_id, instance_id) do nothing;

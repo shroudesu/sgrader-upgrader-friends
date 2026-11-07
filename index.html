@@ -270,18 +270,6 @@
           <strong id="caseDetailPrice"></strong>
         </div>
       </div>
-      <div class="case-detail-controls">
-        <label class="case-quantity-control" for="caseOpenQuantity">Количество кейсов
-          <input type="number" id="caseOpenQuantity" min="1" max="10" step="1" value="1" inputmode="numeric">
-        </label>
-        <label class="settings-switch-row case-skip-toggle" for="caseSkipAnimation">
-          <span><strong>Пропустить анимацию</strong><small>Включи, чтобы сразу показать выигрыш</small></span>
-          <input type="checkbox" id="caseSkipAnimation">
-          <span class="settings-switch" aria-hidden="true"></span>
-        </label>
-        <button type="button" class="btn-confirm case-open-submit" id="caseOpenButton">Открыть кейс</button>
-      </div>
-      <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
       <section class="case-open-results" id="caseOpenResults" hidden>
         <div class="case-result-status" id="caseResultStatus" role="status" aria-live="polite"></div>
         <div class="case-result-rewards" id="caseRewardList"></div>
@@ -290,6 +278,30 @@
           <button type="button" class="btn-modal btn-case-sell" id="caseSellAllBtn">Продать все</button>
         </div>
       </section>
+      <div class="case-detail-controls">
+        <div class="case-quantity-control">
+          <label for="caseOpenQuantityCustomTrigger">Количество кейсов</label>
+          <select id="caseOpenQuantity" class="case-quantity-select" aria-label="Количество кейсов">
+            <option value="1" selected>1 кейс</option>
+            <option value="2">2 кейса</option>
+            <option value="3">3 кейса</option>
+            <option value="4">4 кейса</option>
+            <option value="5">5 кейсов</option>
+            <option value="6">6 кейсов</option>
+            <option value="7">7 кейсов</option>
+            <option value="8">8 кейсов</option>
+            <option value="9">9 кейсов</option>
+            <option value="10">10 кейсов</option>
+          </select>
+        </div>
+        <label class="settings-switch-row case-skip-toggle" for="caseSkipAnimation">
+          <span><strong>Пропустить анимацию</strong><small>Включи, чтобы сразу показать выигрыш</small></span>
+          <input type="checkbox" id="caseSkipAnimation">
+          <span class="settings-switch" aria-hidden="true"></span>
+        </label>
+        <button type="button" class="btn-confirm case-open-submit" id="caseOpenButton">Открыть кейс</button>
+      </div>
+      <div class="case-feedback" id="caseFeedback" role="status" aria-live="polite"></div>
       <section class="case-open-contents">
         <div class="case-open-contents-heading"><h3>Содержимое кейса</h3><span id="caseOpenContentsCount"></span></div>
         <div class="case-open-contents-list" id="caseOpenContents"></div>
