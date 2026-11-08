@@ -94,13 +94,21 @@ def current_items() -> dict[str, dict]:
     if not catalog:
         raise RuntimeError("Catalogs contain no market names")
 
+    graffiti_names: dict[str, set[str]] = {}
+    for item in read_catalog_file("graffiti.json"):
+        market_name = item.get("market_hash_name") or item.get("marketHashName") or item.get("name")
+        key = normalize_name(market_name)
+        if key:
+            graffiti_names.setdefault(key, set()).add(str(market_name))
+    market_catalog = {key: names for key, names in catalog.items() if key not in graffiti_names}
+
     payload = fetch_market_feed()
     prices: dict[str, Decimal] = {}
     for row in extract_rows(payload):
         market_name = row.get("market_hash_name") or row.get("marketHashName") or row.get("hash_name") or row.get("name")
         key = normalize_name(market_name)
         price = parse_price(row.get("price", row.get("lowest_price")))
-        if not key or key not in catalog or price is None:
+        if not key or key not in market_catalog or price is None:
             continue
         previous = prices.get(key)
         if previous is None or price < previous:
@@ -111,7 +119,7 @@ def current_items() -> dict[str, dict]:
 
     result: dict[str, dict] = {}
     for key, price in prices.items():
-        for name in catalog[key]:
+        for name in market_catalog[key]:
             result[name] = {"market_hash_name": name, "price": format(price, ".2f")}
 
     # Keep manually verified rare-item prices stable across scheduled feed
@@ -132,16 +140,20 @@ def current_items() -> dict[str, dict]:
                     del result[existing_name]
             result[name] = {"market_hash_name": name, "price": format(price, ".2f")}
 
-    # Some Market.CSGO graffiti quotes are obvious outliers in the tens of
-    # millions. Keep them in the catalogue but cap those quotes at 400,000 RUB.
-    graffiti_names = {
-        normalize_name(item.get("market_hash_name") or item.get("marketHashName") or item.get("name"))
-        for item in read_catalog_file("graffiti.json")
-    }
-    for name, row in result.items():
-        price = parse_price(row.get("price"))
-        if normalize_name(name) in graffiti_names and price is not None and price > Decimal("10000000"):
-            row["price"] = "400000.00"
+    # Market.CSGO graffiti quotes are excluded. Keep each graffiti's last
+    # published snapshot price so scheduled refreshes cannot reprice them;
+    # an explicit manual override above still takes precedence.
+    previous = existing_items()
+    result_keys = {normalize_name(name) for name in result}
+    for key, names in graffiti_names.items():
+        if key in result_keys:
+            continue
+        frozen_price = parse_price(previous.get(key))
+        if frozen_price is None:
+            continue
+        for name in names:
+            result[name] = {"market_hash_name": name, "price": format(frozen_price, ".2f")}
+        result_keys.add(key)
 
     timestamp = payload.get("time") or int(time.time())
     return {
