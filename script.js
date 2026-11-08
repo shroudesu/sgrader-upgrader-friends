@@ -575,6 +575,9 @@ const adminUsersEl = document.getElementById('adminUsers');
 const adminWipeAllBtn = document.getElementById('adminWipeAllBtn');
 const adminRefreshAllBtn = document.getElementById('adminRefreshAllBtn');
 const adminFeedback = document.getElementById('adminFeedback');
+const adminUpgradeTestPanel = document.querySelector('.admin-upgrade-test-controls');
+const adminUpgradeTestMode = document.getElementById('adminUpgradeTestMode');
+const adminUpgradeTestFeedback = document.getElementById('adminUpgradeTestFeedback');
 const adminInventoryModal = document.getElementById('adminInventoryModal');
 const adminInventoryClearBtn = document.getElementById('adminInventoryClearBtn');
 const adminInventoryTitle = document.getElementById('adminInventoryTitle');
@@ -779,6 +782,7 @@ let activeLadderType = 'total';
 let leaderboardData = null;
 let leaderboardLoadInFlight = false;
 let activeAdminModerationPlayerId = null;
+let adminUpgradeTestModeRequestInFlight = false;
 let suspensionCountdownTimer = null;
 let presenceHeartbeatTimer = null;
 let lastUserActivityAt = Date.now();
@@ -1333,7 +1337,10 @@ async function loginAs(authUser) {
   startUpgradeFeedRealtime();
   void loadPendingCaseRewards();
   void resumeActiveUpgrade();
-  if (currentUser.role === 'admin') await renderAdminUsers();
+  if (currentUser.role === 'admin') {
+    await renderAdminUsers();
+    void loadAdminUpgradeTestMode();
+  }
 }
 
 topupRequestForm.addEventListener('submit', event => {
@@ -1922,7 +1929,10 @@ function activateTab(page) {
   tab?.classList.add('active');
   panel.classList.add('active');
   if (page === 'profile') renderProfile();
-  if (page === 'admin') void renderAdminUsers();
+  if (page === 'admin') {
+    void renderAdminUsers();
+    void loadAdminUpgradeTestMode();
+  }
   if (page === 'admin') void loadCustomCatalogSkins();
   if (page === 'cases' || page === 'admin') void loadCases();
   if (page === 'cases') void loadPendingCaseRewards();
@@ -2033,6 +2043,91 @@ async function requestAdminPageRefresh(playerId = null, button = null) {
   if (button?.isConnected) button.disabled = false;
   if (adminRefreshAllBtn) adminRefreshAllBtn.disabled = false;
 }
+
+let adminUpgradeTestModeSaved = 'off';
+
+function setAdminUpgradeTestFeedback(message, kind = '') {
+  if (!adminUpgradeTestFeedback) return;
+  adminUpgradeTestFeedback.textContent = message;
+  adminUpgradeTestFeedback.classList.toggle('is-error', kind === 'error');
+  adminUpgradeTestFeedback.classList.toggle('is-success', kind === 'success');
+}
+
+function setAdminUpgradeTestControlsDisabled(disabled) {
+  if (!adminUpgradeTestMode) return;
+  adminUpgradeTestMode.disabled = disabled;
+  const trigger = adminUpgradeTestMode.closest('.custom-select')?.querySelector('.custom-select-trigger');
+  if (trigger) trigger.disabled = disabled;
+}
+
+async function loadAdminUpgradeTestMode() {
+  if (!adminUpgradeTestPanel || !adminUpgradeTestMode) return;
+  const isAdmin = Boolean(currentUser && currentUser.role === 'admin' && supabaseClient);
+  adminUpgradeTestPanel.hidden = !isAdmin;
+  if (!isAdmin) return;
+
+  setAdminUpgradeTestControlsDisabled(true);
+  setAdminUpgradeTestFeedback('Загружаю режим…');
+  const { data, error } = await supabaseClient
+    .from('profiles')
+    .select('upgrade_test_mode')
+    .eq('user_id', currentUser.id)
+    .single();
+  if (currentUser?.role !== 'admin') return;
+  if (error) {
+    const migrationMissing = /upgrade_test_mode|schema cache|column .* does not exist/i.test(String(error.message || ''));
+    setAdminUpgradeTestFeedback(migrationMissing
+      ? 'Примени обновлённый supabase/upgrade-bonus.sql в SQL Editor.'
+      : 'Не удалось загрузить режим. Проверь соединение и открой админку повторно.', 'error');
+    console.error('Could not load the admin upgrade test mode:', error);
+    setAdminUpgradeTestControlsDisabled(false);
+    return;
+  }
+
+  adminUpgradeTestModeSaved = ['off', 'main100', 'gold100'].includes(data?.upgrade_test_mode)
+    ? data.upgrade_test_mode
+    : 'off';
+  adminUpgradeTestMode.value = adminUpgradeTestModeSaved;
+  syncCustomSelect(adminUpgradeTestMode);
+  setAdminUpgradeTestControlsDisabled(false);
+  setAdminUpgradeTestFeedback(adminUpgradeTestModeSaved === 'off'
+    ? 'Обычные серверные шансы активны.'
+    : 'Режим действует только на новые прокруты твоего аккаунта.');
+}
+
+async function saveAdminUpgradeTestMode() {
+  if (!currentUser || currentUser.role !== 'admin' || !supabaseClient || adminUpgradeTestModeRequestInFlight) return;
+  const nextMode = adminUpgradeTestMode.value;
+  if (!['off', 'main100', 'gold100'].includes(nextMode) || nextMode === adminUpgradeTestModeSaved) return;
+
+  adminUpgradeTestModeRequestInFlight = true;
+  setAdminUpgradeTestControlsDisabled(true);
+  setAdminUpgradeTestFeedback('Сохраняю режим…');
+  const { error } = await supabaseClient.rpc('set_my_upgrade_test_mode', { p_mode: nextMode });
+  adminUpgradeTestModeRequestInFlight = false;
+  if (error) {
+    adminUpgradeTestMode.value = adminUpgradeTestModeSaved;
+    syncCustomSelect(adminUpgradeTestMode);
+    const migrationMissing = /set_my_upgrade_test_mode|upgrade_test_mode|schema cache|does not exist|function/i.test(String(error.message || ''));
+    setAdminUpgradeTestFeedback(migrationMissing
+      ? 'Примени обновлённый supabase/upgrade-bonus.sql в SQL Editor.'
+      : 'Не удалось сохранить тестовый режим. Проверь соединение.', 'error');
+    console.error('Could not save the admin upgrade test mode:', error);
+    setAdminUpgradeTestControlsDisabled(false);
+    return;
+  }
+
+  adminUpgradeTestModeSaved = nextMode;
+  setAdminUpgradeTestControlsDisabled(false);
+  const messages = {
+    off: 'Обычные серверные шансы активны.',
+    main100: 'Основная цель гарантирована на 100% в новых прокрутах.',
+    gold100: 'Золотой шанс и этапы x2–x10 гарантированы в новых прокрутах.'
+  };
+  setAdminUpgradeTestFeedback(messages[nextMode], 'success');
+}
+
+adminUpgradeTestMode?.addEventListener('change', () => void saveAdminUpgradeTestMode());
 
 // ============================================================
 // БАЛАНС
@@ -6562,8 +6657,11 @@ function paintUpgradeRun(run) {
     currentBonusChance = Number(run.bonus_chance || 0);
     chanceValue.textContent = formatChance(currentChance);
     wheelSub.textContent = '';
-    upgradeBonusStatus.hidden = currentBonusChance <= 0;
-    if (currentBonusChance) upgradeBonusStatus.textContent = 'Золотой бонус · 5%';
+    const testMode = run.test_mode || 'off';
+    upgradeBonusStatus.hidden = currentBonusChance <= 0 && testMode !== 'main100';
+    if (testMode === 'main100') upgradeBonusStatus.textContent = 'ТЕСТ · основной шанс 100%';
+    else if (testMode === 'gold100') upgradeBonusStatus.textContent = 'ТЕСТ · золотая цепочка 100%';
+    else if (currentBonusChance) upgradeBonusStatus.textContent = 'Золотой бонус · 5%';
     drawWheel(currentChance, true, currentBonusChance);
   } else if (isBonusSpin) {
     currentChance = Number(run.bonus_chance || 0);
@@ -6571,7 +6669,9 @@ function paintUpgradeRun(run) {
     chanceValue.textContent = formatChance(currentChance);
     wheelSub.textContent = `бонус · x${bonusMultiplier}`;
     upgradeBonusStatus.hidden = false;
-    upgradeBonusStatus.textContent = `Бонусный прокрут ${run.stage}/5 · цель x${bonusMultiplier}`;
+    upgradeBonusStatus.textContent = run.test_mode === 'gold100'
+      ? `ТЕСТ · гарантированный золотой этап ${run.stage}/5 · x${bonusMultiplier}`
+      : `Бонусный прокрут ${run.stage}/5 · цель x${bonusMultiplier}`;
     drawWheel(currentChance, false, 0);
   } else {
     currentChance = 0;
@@ -6579,7 +6679,9 @@ function paintUpgradeRun(run) {
     chanceValue.textContent = '—';
     wheelSub.textContent = 'бонус готовится';
     upgradeBonusStatus.hidden = false;
-    upgradeBonusStatus.textContent = `Подготовка бонусного этапа ${run.stage}/5 · x${bonusMultiplier}`;
+    upgradeBonusStatus.textContent = run.test_mode === 'gold100'
+      ? `Подготовка тестового золотого этапа ${run.stage}/5 · x${bonusMultiplier}`
+      : `Подготовка бонусного этапа ${run.stage}/5 · x${bonusMultiplier}`;
     drawWheel(0, false, 0);
   }
   upgradeBtn.disabled = true;

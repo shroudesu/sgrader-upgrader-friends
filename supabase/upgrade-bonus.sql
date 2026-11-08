@@ -7,6 +7,7 @@ create table if not exists public.skin_upgrade_runs (
   status text not null check (status in ('base_pending', 'bonus_ready', 'bonus_pending', 'complete')),
   outcome text check (outcome is null or outcome in ('win', 'bonus', 'lose', 'hit', 'miss')),
   stage integer not null default 0 check (stage between 0 and 5),
+  test_mode text not null default 'off' check (test_mode in ('off', 'main100', 'gold100')),
   initial_item jsonb not null,
   current_item jsonb not null,
   bonus_base_item jsonb,
@@ -24,15 +25,55 @@ create table if not exists public.skin_upgrade_runs (
 );
 
 -- Keep existing projects compatible with the cash-prize bonus path.
+alter table public.profiles
+  add column if not exists upgrade_test_mode text not null default 'off';
+alter table public.profiles
+  drop constraint if exists profiles_upgrade_test_mode_check;
+alter table public.profiles
+  add constraint profiles_upgrade_test_mode_check
+    check (upgrade_test_mode in ('off', 'main100', 'gold100'));
+
 alter table public.skin_upgrade_runs
   add column if not exists awarded_balance numeric(14, 2) not null default 0;
 alter table public.skin_upgrade_runs
   add column if not exists bonus_base_item jsonb;
 alter table public.skin_upgrade_runs
+  add column if not exists test_mode text not null default 'off';
+alter table public.skin_upgrade_runs
+  drop constraint if exists skin_upgrade_runs_test_mode_check;
+alter table public.skin_upgrade_runs
+  add constraint skin_upgrade_runs_test_mode_check
+    check (test_mode in ('off', 'main100', 'gold100'));
+alter table public.skin_upgrade_runs
   drop constraint if exists skin_upgrade_runs_award_kind_check;
 alter table public.skin_upgrade_runs
   add constraint skin_upgrade_runs_award_kind_check
     check (award_kind is null or award_kind in ('win', 'return', 'balance'));
+
+create or replace function public.set_my_upgrade_test_mode(p_mode text)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid := auth.uid();
+begin
+  if v_user_id is null then raise exception 'Sign in required'; end if;
+  if p_mode is null or p_mode not in ('off', 'main100', 'gold100') then
+    raise exception 'Upgrade test mode is invalid';
+  end if;
+
+  update public.profiles
+     set upgrade_test_mode = p_mode
+   where user_id = v_user_id and role = 'admin';
+  if not found then raise exception 'Admin account required'; end if;
+  return p_mode;
+end;
+$$;
+
+revoke all on function public.set_my_upgrade_test_mode(text) from public, anon;
+grant execute on function public.set_my_upgrade_test_mode(text) to authenticated;
 
 alter table public.wallet_transactions
   drop constraint if exists wallet_transactions_reason_check;
@@ -190,6 +231,7 @@ declare
   v_target_price numeric;
   v_base_chance numeric;
   v_bonus_chance numeric;
+  v_test_mode text := 'off';
   v_roll numeric;
   v_outcome text;
   v_win_angle numeric;
@@ -201,6 +243,10 @@ declare
   v_run public.skin_upgrade_runs%rowtype;
 begin
   if v_user_id is null then raise exception 'Sign in required'; end if;
+  select case when role = 'admin' then coalesce(upgrade_test_mode, 'off') else 'off' end
+    into v_test_mode
+    from public.profiles where user_id = v_user_id;
+  if not found then raise exception 'Player profile not found'; end if;
   if nullif(trim(coalesce(p_inventory_item_id, '')), '') is null then
     raise exception 'Choose a skin from inventory';
   end if;
@@ -230,18 +276,31 @@ begin
   end if;
 
   v_base_chance := round(least(100, (v_base_price / v_target_price) * 100), 4);
-  if v_base_chance < 0.01 then raise exception 'Upgrade chance is below 0.01 percent'; end if;
-  v_bonus_chance := case
-    when v_base_price > 50000 and v_base_chance between 10 and 95 then 5
-    else 0
-  end;
-  v_roll := random() * 100;
-  if v_roll < v_base_chance - v_bonus_chance then
+  if v_base_chance < 0.01 and v_test_mode = 'off' then
+    raise exception 'Upgrade chance is below 0.01 percent';
+  end if;
+  if v_test_mode = 'main100' then
+    v_base_chance := 100;
+    v_bonus_chance := 0;
     v_outcome := 'win';
-  elsif v_roll < v_base_chance then
+  elsif v_test_mode = 'gold100' then
+    -- Keep the wheel geometry valid, but always land on the golden sector.
+    v_base_chance := greatest(10, least(95, v_base_chance));
+    v_bonus_chance := 5;
     v_outcome := 'bonus';
   else
-    v_outcome := 'lose';
+    v_bonus_chance := case
+      when v_base_price > 50000 and v_base_chance between 10 and 95 then 5
+      else 0
+    end;
+    v_roll := random() * 100;
+    if v_roll < v_base_chance - v_bonus_chance then
+      v_outcome := 'win';
+    elsif v_roll < v_base_chance then
+      v_outcome := 'bonus';
+    else
+      v_outcome := 'lose';
+    end if;
   end if;
 
   v_win_angle := v_base_chance * 3.6;
@@ -287,11 +346,11 @@ begin
   update public.game_states set state = v_state, updated_at = now() where user_id = v_user_id;
 
   insert into public.skin_upgrade_runs (
-    user_id, status, outcome, stage, initial_item, current_item, target_item,
+    user_id, status, outcome, stage, test_mode, initial_item, current_item, target_item,
     base_chance, bonus_chance, visual_start_angle, visual_end_angle,
     spin_duration_ms, spin_started_at
   ) values (
-    v_user_id, 'base_pending', v_outcome, 0, v_initial_item, v_initial_item, v_target_item,
+    v_user_id, 'base_pending', v_outcome, 0, v_test_mode, v_initial_item, v_initial_item, v_target_item,
     v_base_chance, v_bonus_chance, 0, v_final_angle + v_full_spins * 360,
     v_duration, clock_timestamp()
   ) returning * into v_run;
@@ -358,6 +417,7 @@ begin
   v_is_cash := coalesce(v_run.current_item ->> 'catalogType', 'skin') = 'balance'
     or v_expected_price > 8888888
     or (jsonb_array_length(p_candidates) = 0 and v_run.stage > 1)
+    or (jsonb_array_length(p_candidates) = 0 and v_run.test_mode = 'gold100')
     or (jsonb_array_length(p_candidates) = 1 and p_candidates -> 0 ->> 'catalogType' = 'balance');
 
   if jsonb_array_length(p_candidates) = 0 and not v_is_cash then
@@ -419,7 +479,11 @@ begin
     v_target := jsonb_set(v_target, '{instanceId}', to_jsonb(gen_random_uuid()::text), true);
   end if;
   v_odds := (array[50, 45, 40, 35, 15]::numeric[])[v_run.stage];
-  v_run.outcome := case when random() * 100 < v_odds then 'hit' else 'miss' end;
+  v_run.outcome := case
+    when v_run.test_mode = 'gold100' then 'hit'
+    when random() * 100 < v_odds then 'hit'
+    else 'miss'
+  end;
   v_win_angle := v_odds * 3.6;
   v_start_angle := mod(v_run.visual_end_angle, 360);
   if v_run.outcome = 'hit' then

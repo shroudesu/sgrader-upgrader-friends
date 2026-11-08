@@ -428,6 +428,15 @@
     <h1 class="title">Админ-панель</h1>
     <div class="panel admin-panel">
       <div class="admin-users-toolbar"><p class="admin-notice">Игроки и начисления хранятся в общей базе.</p><div class="admin-users-toolbar-actions"><button type="button" class="btn-small danger admin-wipe-all-btn" id="adminWipeAllBtn">Вайп всем</button><button type="button" class="btn-small" id="adminRefreshAllBtn"><iconify-icon icon="mdi:refresh"></iconify-icon> Обновить всем онлайн</button></div></div>
+      <section class="admin-upgrade-test-controls" aria-labelledby="adminUpgradeTestTitle">
+        <div><h2 id="adminUpgradeTestTitle">Тестовые шансы апгрейдера</h2><p>Режим применяется только к твоим новым прокрутам и проверяется сервером.</p></div>
+        <label for="adminUpgradeTestMode">Режим<select id="adminUpgradeTestMode" class="settings-select">
+          <option value="off">Обычные шансы</option>
+          <option value="main100">Основной шанс — 100%</option>
+          <option value="gold100">Золотой шанс — 100% до x10</option>
+        </select></label>
+        <div class="admin-upgrade-test-feedback" id="adminUpgradeTestFeedback" role="status" aria-live="polite">Загружаю режим…</div>
+      </section>
       <div class="admin-table-wrap">
         <table class="admin-table">
           <thead><tr><th>ID игрока</th><th>Ник</th><th>Статус</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th><th>Управление</th><th>Инвентарь</th><th>Вайп</th></tr></thead>

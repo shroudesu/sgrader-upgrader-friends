@@ -650,6 +650,14 @@ input[type="range"]:active::-moz-range-thumb { transform: scale(1.12); }
 .telegram-link:hover { color: var(--black); }
 .admin-panel { padding: 18px; }
 .admin-notice { color: var(--text-dim); font-size: 12px; line-height: 1.5; margin-bottom: 16px; }
+.admin-upgrade-test-controls { display: grid; grid-template-columns: minmax(220px,1fr) minmax(230px,320px); align-items: center; gap: 8px 18px; margin: 4px 0 14px; padding: 14px; border: 1px solid rgba(212,175,55,.32); border-radius: 9px; background: linear-gradient(110deg,rgba(212,175,55,.07),var(--bg-2) 52%); }
+.admin-upgrade-test-controls h2 { margin: 0 0 4px; font-size: 13px; }
+.admin-upgrade-test-controls p { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.45; }
+.admin-upgrade-test-controls > label { display: grid; gap: 6px; color: var(--text-dim); font-size: 10px; }
+.admin-upgrade-test-controls .custom-select { width: 100%; }
+.admin-upgrade-test-feedback { grid-column: 1 / -1; min-height: 14px; color: var(--text-dim); font-size: 10px; }
+.admin-upgrade-test-feedback.is-error { color: var(--danger); }
+.admin-upgrade-test-feedback.is-success { color: var(--success); }
 .admin-table-wrap { width: 100%; overflow-x: auto; }
 .admin-table { width: 100%; border-collapse: collapse; min-width: 1250px; font-size: 12px; }
 .admin-table th, .admin-table td { padding: 10px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
@@ -1206,6 +1214,8 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .case-result-enter { animation: case-scroll-appear .48s ease-out both; }
 
 @media (max-width: 640px) {
+  .admin-upgrade-test-controls { grid-template-columns: 1fr; }
+  .admin-upgrade-test-feedback { grid-column: auto; }
   .custom-skin-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .custom-skin-file-label { grid-column: 1 / -1; }
   .custom-skin-preview { grid-column: 1; }
