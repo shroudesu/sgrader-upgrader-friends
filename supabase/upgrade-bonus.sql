@@ -325,7 +325,7 @@ begin
     or (jsonb_array_length(p_candidates) = 1 and p_candidates -> 0 ->> 'catalogType' = 'balance');
 
   if jsonb_array_length(p_candidates) = 0 and not v_is_cash then
-    v_award := case when v_run.stage > 1 then v_run.current_item else v_run.initial_item end;
+    v_award := v_run.current_item;
     v_inventory := coalesce(v_state -> 'inventory', '[]'::jsonb) || jsonb_build_array(v_award);
     v_state := jsonb_set(v_state, '{inventory}', v_inventory, true);
     v_state := jsonb_set(v_state, '{betItemIds}', '[]'::jsonb, true);
@@ -333,7 +333,7 @@ begin
     v_state := jsonb_set(v_state, '{targetName}', 'null'::jsonb, true);
     update public.game_states set state = v_state, updated_at = now() where user_id = v_user_id;
     update public.skin_upgrade_runs set status = 'complete', awarded_item = v_award,
-      award_kind = case when stage > 1 then 'win' else 'return' end,
+      award_kind = 'win',
       awarded_balance = 0, completed_at = now(), outcome = null
      where id = p_run_id returning * into v_run;
     if v_run.award_kind = 'win' and coalesce(v_run.awarded_item ->> 'catalogType', 'skin') = 'skin' then
@@ -472,13 +472,9 @@ begin
     end if;
     v_complete := true;
   elsif v_run.outcome = 'miss' then
-    if v_run.stage = 1 then
-      -- Stage x2 is guaranteed: the first roll only decides whether the
-      -- player may continue to a higher stage, not whether x2 is awarded.
-      v_award := v_run.target_item;
-    else
-      v_award := v_run.current_item;
-    end if;
+    -- At stage 1 current_item is the selected ordinary target; later it is
+    -- the last successful bonus-stage item.
+    v_award := v_run.current_item;
     if coalesce(v_award ->> 'catalogType', 'skin') = 'balance' then
       v_award_kind := 'balance';
     else
