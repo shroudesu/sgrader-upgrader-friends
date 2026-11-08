@@ -1,6 +1,23 @@
 name: Refresh Skinport price snapshot
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/refresh-market-prices.yml'
+      - 'scripts/refresh-market-prices.py'
+      - 'catalog-exclusions.json'
+      - 'market-price-overrides.json'
+      - 'skins_variants.json'
+      - 'skins_variants.json.gz'
+      - 'stickers.json'
+      - 'stickers.json.gz'
+      - 'agents.json'
+      - 'agents.json.gz'
+      - 'graffiti.json'
+      - 'graffiti.json.gz'
+      - 'music_kits.json'
+      - 'music_kits.json.gz'
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
