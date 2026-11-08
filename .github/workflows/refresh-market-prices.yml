@@ -1,4 +1,4 @@
-name: Refresh Market.CSGO price snapshot
+name: Refresh Skinport price snapshot
 
 on:
   schedule:
@@ -21,17 +21,20 @@ jobs:
         with:
           ref: main
 
+      - name: Install Brotli decoder
+        run: python3 -m pip install --disable-pip-version-check brotli
+
       - name: Build the catalog price snapshot
         run: python3 scripts/refresh-market-prices.py
 
       - name: Publish changed prices
         run: |
           if git diff --quiet -- market-prices.json market-prices.json.gz; then
-            echo "Market.CSGO prices did not change."
+            echo "Catalog prices did not change."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add market-prices.json market-prices.json.gz
-          git commit -m "Refresh Market.CSGO price snapshot"
+          git commit -m "Refresh Skinport price snapshot"
           git push origin main

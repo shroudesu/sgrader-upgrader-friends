@@ -114,7 +114,7 @@
             <div class="inventory-heading-actions"><span class="inv-count" id="myInvCount">0</span><button type="button" class="btn-small buy-selected-btn" id="buySelectedBtn" hidden>Купить</button><button type="button" class="catalog-toggle" id="catalogToggle" aria-label="Открыть каталог" title="Открыть каталог"><iconify-icon icon="mdi:cart-outline"></iconify-icon></button></div>
           </div>
           <div id="catalogTools" hidden>
-            <div class="catalog-source-note"><span id="catalogSourceNote">Загрузка базы предметов CS2…</span> · цены: <a href="https://market.csgo.com/ru/" target="_blank" rel="noopener noreferrer">Market.CSGO</a> · каталог: <a href="https://github.com/CS2Cap/CS2-API" target="_blank" rel="noopener noreferrer">CS2 API</a></div>
+            <div class="catalog-source-note"><span id="catalogSourceNote">Загрузка базы предметов CS2…</span> · цены: <a href="https://skinport.com/" target="_blank" rel="noopener noreferrer">Skinport</a> · каталог: <a href="https://github.com/CS2Cap/CS2-API" target="_blank" rel="noopener noreferrer">CS2 API</a></div>
             <input type="text" id="invSearch" class="search-input" placeholder="Поиск предметов и вариантов качества...">
             <div class="price-filter">
               <input type="number" id="invPriceFrom" class="price-input" placeholder="от ₽" data-price-placeholder="от" min="0" step="any">
@@ -444,6 +444,18 @@
         </table>
       </div>
       <div class="auth-error admin-feedback" id="adminFeedback" role="status"></div>
+    </div>
+    <div class="panel admin-panel admin-price-panel">
+      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Цены каталога</h2></div>
+      <p class="admin-notice">Цены обычных скинов обновляются из Skinport. Здесь можно задать ручную цену для любого предмета каталога; она имеет приоритет над автоматической и не перезаписывается обновлением.</p>
+      <div class="admin-price-toolbar">
+        <label for="adminPriceSearch">Поиск по названию или market hash name<input type="search" id="adminPriceSearch" class="search-input" placeholder="Например, AK-47 Redline или Sticker Titan" autocomplete="off"></label>
+        <label for="adminPriceCategory">Категория<select id="adminPriceCategory" class="settings-select">
+          <option value="all">Все категории</option><option value="skin">Обычные скины</option><option value="stickers">Стикеры</option><option value="souvenir">Сувенирные</option><option value="agents">Агенты</option><option value="graffiti">Граффити</option><option value="music_kits">Музыкальные наборы</option><option value="other">Прочие</option>
+        </select></label>
+      </div>
+      <div class="admin-price-feedback" id="adminPriceFeedback" role="status" aria-live="polite">Введи не менее двух символов для поиска.</div>
+      <div class="admin-price-results" id="adminPriceResults"><div class="case-empty">Цены загружаются вместе с каталогом…</div></div>
     </div>
     <div class="panel admin-panel case-admin-panel">
       <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Управление кейсами</h2><button type="button" class="btn-small" id="adminCaseNewBtn">Создать кейс</button></div>

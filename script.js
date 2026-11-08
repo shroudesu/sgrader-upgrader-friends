@@ -219,14 +219,17 @@ function stableCatalogFactor(value) {
   return 0.94 + ((hash >>> 0) % 1201) / 10000;
 }
 
-// Market.CSGO publishes a public RUB snapshot with the cheapest active offer
-// for each market hash name. The browser cache is reduced to our catalog names.
+// The site reads a compact Skinport RUB snapshot. Admin overrides live in
+// Supabase and take priority over the automated values.
 const MARKET_PRICE_URL = 'market-prices.json';
-const MARKET_PRICE_CACHE_KEY = 'cs2up_market_csgo_rub_v2';
+const MARKET_PRICE_CACHE_KEY = 'cs2up_skinport_rub_v4';
 const MARKET_PRICE_CACHE_TTL_MS = 5 * 60 * 1000;
 const MARKET_PRICE_POLL_MS = 5 * 60 * 1000;
 const MARKET_PRICE_TIMEOUT_MS = 12000;
 let marketPriceByName = new Map();
+let marketSnapshotPriceByName = new Map();
+let marketSnapshotSourceByName = new Map();
+let adminMarketPriceOverrides = new Map();
 let marketPriceUpdatedAt = 0;
 let marketPriceFetchedAt = 0;
 let marketPriceStatus = 'loading';
@@ -236,9 +239,28 @@ let catalogItemsById = new Map();
 let userStateLoadedId = null;
 let marketPriceRefreshTimer = null;
 let marketStateSyncTimer = null;
+let marketPriceOverridesChannel = null;
+let marketPriceOverrideSignature = '';
 
 function normalizeMarketHashName(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
+}
+
+function isTrackedPriceSource(source) {
+  const value = String(source || '');
+  return value === 'market_csgo' || value === 'legacy_snapshot' || value === 'admin' || value === 'manual_static' || value === 'preserved_manual' || value === 'preserved_previous' || value.startsWith('skinport_');
+}
+
+function marketPriceSourceTitle(source) {
+  if (source === 'admin') return 'Ручная цена администратора';
+  if (source === 'manual_static' || source === 'preserved_manual') return 'Сохранённая цена каталога; её можно изменить в админке';
+  if (source === 'skinport_sales_30d') return 'Медиана фактических продаж Skinport за 30 дней';
+  if (source === 'skinport_listings_median') return 'Медиана доступных предложений Skinport';
+  if (source === 'skinport_listing_min') return 'Минимум Skinport при достаточном количестве предложений';
+  if (String(source || '').startsWith('skinport')) return 'Цена с Skinport';
+  if (source === 'market_csgo') return 'Сохранённый снимок Market.CSGO';
+  if (source === 'legacy_snapshot' || source === 'preserved_previous') return 'Сохранённая цена прежнего каталога';
+  return 'Расчётная оценка';
 }
 
 function marketPriceRows(payload) {
@@ -268,13 +290,18 @@ function readMarketPriceCache() {
     const cached = JSON.parse(localStorage.getItem(MARKET_PRICE_CACHE_KEY) || 'null');
     if (!cached || !Array.isArray(cached.prices) || !Number.isFinite(Number(cached.fetchedAt))) return null;
     const prices = new Map();
+    const sources = new Map(Array.isArray(cached.sources) ? cached.sources : []);
     cached.prices.forEach(entry => {
       if (!Array.isArray(entry) || entry.length < 2) return;
       const key = normalizeMarketHashName(entry[0]);
       const price = Number(entry[1]);
       if (key && Number.isFinite(price) && price > 0) prices.set(key, price);
     });
-    return prices.size ? { prices, updatedAt: Number(cached.updatedAt) || Number(cached.fetchedAt), fetchedAt: Number(cached.fetchedAt) } : null;
+    return prices.size ? {
+      prices, sources, provider: cached.provider === 'legacy' ? 'legacy' : 'skinport',
+      updatedAt: Number(cached.updatedAt) || Number(cached.fetchedAt),
+      fetchedAt: Number(cached.fetchedAt)
+    } : null;
   } catch (_) {
     return null;
   }
@@ -283,7 +310,7 @@ function readMarketPriceCache() {
 async function loadMarketPriceSnapshot({ force = false } = {}) {
   const cached = readMarketPriceCache();
   if (!force && cached && Date.now() - cached.fetchedAt < MARKET_PRICE_CACHE_TTL_MS) {
-    return { ...cached, status: 'live' };
+    return { ...cached, provider: cached.provider || 'skinport', status: 'live' };
   }
 
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -293,37 +320,41 @@ async function loadMarketPriceSnapshot({ force = false } = {}) {
       cache: 'no-store',
       signal: controller?.signal,
     });
-    if (payload?.success === false) throw new Error('Market.CSGO не отдал прайс-лист');
+    if (payload?.success === false) throw new Error('Skinport не отдал прайс-лист');
     const prices = new Map();
+    const sources = new Map();
+    const provider = String(payload?.source || '').toLowerCase() === 'skinport' ? 'skinport' : 'legacy';
+    const defaultSource = provider === 'skinport' ? 'skinport' : 'legacy_snapshot';
     for (const row of marketPriceRows(payload)) {
       const name = row?.market_hash_name ?? row?.marketHashName ?? row?.hash_name ?? row?.name;
       const key = normalizeMarketHashName(name);
       const price = marketPriceFromRow(row);
       if (!key || price == null) continue;
       const previous = prices.get(key);
-      if (previous == null || price < previous) prices.set(key, price);
+      if (previous == null || price < previous) {
+        prices.set(key, price);
+        sources.set(key, String(row?.source || defaultSource));
+      }
     }
-    if (!prices.size) throw new Error('Формат прайс-листа Market.CSGO не распознан');
+    if (!prices.size) throw new Error('Формат прайс-листа Skinport не распознан');
     const fetchedAt = Date.now();
-    const snapshot = { prices, updatedAt: marketPriceTimestamp(payload, fetchedAt), fetchedAt, status: 'live' };
+    const snapshot = { prices, sources, provider, updatedAt: marketPriceTimestamp(payload, fetchedAt), fetchedAt, status: 'live' };
     return snapshot;
   } catch (error) {
-    if (cached) return { ...cached, status: 'stale', error };
+    if (cached) return { ...cached, provider: cached.provider || 'skinport', status: 'stale', error };
     throw error;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-function applyMarketPricesToCatalog(snapshot) {
-  if (!snapshot?.prices?.size || !SKINS_CATALOG.length) return false;
-  marketPriceByName = snapshot.prices;
-  marketPriceUpdatedAt = Number(snapshot.updatedAt) || Date.now();
-  marketPriceFetchedAt = Number(snapshot.fetchedAt) || Date.now();
-  marketPriceStatus = snapshot.status === 'stale' ? 'stale' : 'live';
+function rebuildCatalogMarketPrices() {
+  if (!SKINS_CATALOG.length) return false;
   catalogItemsById = new Map();
   const catalogPrices = new Map();
-  let matched = 0;
+  const catalogSources = new Map();
+  let skinportMatched = 0;
+  let standardSkinTotal = 0;
   let changed = false;
   for (const item of SKINS_CATALOG) {
     if (item.isCustomSkin) {
@@ -331,35 +362,54 @@ function applyMarketPricesToCatalog(snapshot) {
       continue;
     }
     const key = normalizeMarketHashName(item.marketHashName || item.name);
-    const price = marketPriceByName.get(key);
+    if (item.catalogType === 'skin' && item.souvenir !== true && !normalizeMarketHashName(item.marketHashName || item.name).startsWith('souvenir ')) {
+      standardSkinTotal += 1;
+    }
+    const price = adminMarketPriceOverrides.get(key) ?? marketSnapshotPriceByName.get(key);
+    const priceSource = adminMarketPriceOverrides.has(key)
+      ? 'admin'
+      : (marketSnapshotSourceByName.get(key) || 'skinport');
     if (price != null) {
-      if (Number(item.price) !== price || item.priceSource !== 'market_csgo') changed = true;
+      if (Number(item.price) !== price || item.priceSource !== priceSource) changed = true;
       item.price = price;
-      item.priceSource = 'market_csgo';
+      item.priceSource = priceSource;
       item.marketPrice = price;
       catalogPrices.set(key, price);
-      matched += 1;
+      catalogSources.set(key, priceSource);
+      if (String(priceSource).startsWith('skinport_')) skinportMatched += 1;
     } else {
       if (item.priceSource !== 'estimate' || Number(item.price) !== Number(item.estimatedPrice)) changed = true;
-      if (item.priceSource === 'market_csgo') item.price = Number(item.estimatedPrice || item.price);
+      if (isTrackedPriceSource(item.priceSource)) item.price = Number(item.estimatedPrice || item.price);
       item.priceSource = 'estimate';
       item.marketPrice = null;
     }
     catalogItemsById.set(String(item.id), item);
   }
   marketPriceByName = catalogPrices;
-  marketPriceCoverage = { matched, total: SKINS_CATALOG.filter(item => !item.isCustomSkin).length };
+  marketPriceCoverage = { matched: skinportMatched, total: standardSkinTotal };
   SKINS_CATALOG.sort((a, b) => a.price - b.price);
   try {
     localStorage.setItem(MARKET_PRICE_CACHE_KEY, JSON.stringify({
       updatedAt: marketPriceUpdatedAt,
       fetchedAt: marketPriceFetchedAt,
+      provider: marketPriceStatus === 'legacy' ? 'legacy' : 'skinport',
       prices: [...catalogPrices.entries()],
+      sources: [...catalogSources.entries()],
     }));
   } catch (error) {
-    console.warn('Could not cache the Market.CSGO catalog prices:', error);
+    console.warn('Could not cache the catalog prices:', error);
   }
   return changed;
+}
+
+function applyMarketPricesToCatalog(snapshot) {
+  if (!snapshot?.prices?.size) return false;
+  marketSnapshotPriceByName = snapshot.prices;
+  marketSnapshotSourceByName = snapshot.sources || new Map();
+  marketPriceUpdatedAt = Number(snapshot.updatedAt) || Date.now();
+  marketPriceFetchedAt = Number(snapshot.fetchedAt) || Date.now();
+  marketPriceStatus = snapshot.status === 'stale' ? 'stale' : (snapshot.provider === 'legacy' ? 'legacy' : 'live');
+  return rebuildCatalogMarketPrices();
 }
 
 function updateCatalogPriceSourceNote() {
@@ -367,20 +417,21 @@ function updateCatalogPriceSourceNote() {
   const stamp = marketPriceUpdatedAt
     ? new Date(marketPriceUpdatedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '';
-  const coverage = marketPriceCoverage.total
-    ? `${marketPriceCoverage.matched.toLocaleString('ru-RU')}/${marketPriceCoverage.total.toLocaleString('ru-RU')} позиций`
-    : '';
   const marketStatus = marketPriceStatus === 'live'
-    ? `Market.CSGO RUB · ${coverage} · ${stamp}`
+    ? `Skinport RUB · ${marketPriceCoverage.matched.toLocaleString('ru-RU')}/${marketPriceCoverage.total.toLocaleString('ru-RU')} обычных скинов · ${stamp}`
+    : marketPriceStatus === 'legacy'
+      ? 'Старый снимок цен · ждёт первой публикации Skinport'
     : marketPriceStatus === 'stale'
-      ? `Market.CSGO · сохранённый прайс от ${stamp}`
+      ? `Skinport · сохранённый прайс от ${stamp}`
       : marketPriceStatus === 'unavailable'
-        ? 'Market.CSGO временно недоступен · показаны оценки'
-        : 'Market.CSGO · загрузка цен…';
+        ? 'Skinport временно недоступен · сохранённые цены каталога'
+        : 'Skinport · загрузка цен…';
   catalogSourceNote.textContent = [catalogSourceSummary, marketStatus].filter(Boolean).join(' · ');
   catalogSourceNote.title = marketPriceStatus === 'unavailable'
-    ? 'Рыночный фид временно недоступен. В каталоге показаны расчётные оценки.'
-    : `Источник цен: лучшие доступные предложения Market.CSGO в RUB. Снимок: ${stamp || 'не получен'}. Для предметов без предложения Market.CSGO остаётся расчётная оценка.`;
+    ? 'Skinport временно недоступен. Используются сохранённые цены и ручные изменения администратора.'
+    : marketPriceStatus === 'legacy'
+      ? 'Пока GitHub Actions не опубликовал первый снимок Skinport, показывается прежний сохранённый прайс. Наклейки, сувенирные и прочие цены останутся прежними или могут быть заданы вручную в админке.'
+      : `Источник обычных скинов: Skinport RUB. Используется медиана продаж/предложений при достаточном объёме. Наклейки, сувенирные и прочие цены остаются прежними или задаются вручную. Снимок: ${stamp || 'не получен'}.`;
 }
 
 function repriceCurrentInventory() {
@@ -390,7 +441,7 @@ function repriceCurrentInventory() {
     const marketItem = catalogItemsById.get(String(item.catalogId || ''));
     if (!marketItem) continue;
     const nextSource = marketItem.priceSource;
-    if (nextSource !== 'market_csgo' && item.priceSource !== 'market_csgo') continue;
+    if (!isTrackedPriceSource(nextSource) && !isTrackedPriceSource(item.priceSource)) continue;
     if (Number(item.price) !== Number(marketItem.price) || item.priceSource !== nextSource) {
       item.price = marketItem.price;
       item.priceSource = nextSource;
@@ -426,17 +477,225 @@ async function syncCurrentInventoryMarketPrices(catalogChanged = false) {
   if (currentUser.role === 'admin' && !adminCaseForm.hidden) renderCaseSkinResults();
 }
 
+function setAdminPriceFeedback(message, kind = '') {
+  if (!adminPriceFeedback) return;
+  adminPriceFeedback.textContent = message;
+  adminPriceFeedback.classList.toggle('is-error', kind === 'error');
+  adminPriceFeedback.classList.toggle('is-success', kind === 'success');
+}
+
+async function loadAdminMarketPriceOverrides({ render = true, sync = true } = {}) {
+  if (!supabaseClient) return false;
+  const { data, error } = await supabaseClient
+    .from('market_price_overrides')
+    .select('market_hash_name,price,updated_by,updated_at')
+    .order('market_hash_name', { ascending: true });
+  if (error) {
+    if (currentUser?.role === 'admin' && adminPriceFeedback) {
+      const missingMigration = /market_price_overrides|schema cache|does not exist|could not find the table/i.test(String(error.message || ''));
+      setAdminPriceFeedback(missingMigration
+        ? 'Примени supabase/admin-market-prices.sql в Supabase → SQL Editor, чтобы включить общие ручные цены.'
+        : 'Не удалось загрузить ручные цены. Проверь соединение с Supabase.', 'error');
+    }
+    console.warn('Could not load shared manual market prices:', error);
+    return false;
+  }
+
+  const signature = JSON.stringify(data || []);
+  adminMarketPriceOverrides = new Map((data || []).map(row => [
+    normalizeMarketHashName(row.market_hash_name),
+    Number(row.price),
+  ]).filter(([key, price]) => key && Number.isFinite(price) && price > 0));
+  marketPriceOverrideSignature = signature;
+  const catalogChanged = rebuildCatalogMarketPrices();
+  updateCatalogPriceSourceNote();
+  if (render && adminPriceSearch?.value) renderAdminPriceResults();
+  if (currentUser?.role === 'admin' && adminPriceFeedback && !adminPriceFeedback.classList.contains('is-error')) {
+    setAdminPriceFeedback(`${adminMarketPriceOverrides.size.toLocaleString('ru-RU')} ручных цен загружено. Поиск работает по всему каталогу.`);
+  }
+  if (sync && currentUser && catalogChanged) await syncCurrentInventoryMarketPrices(true);
+  return catalogChanged;
+}
+
+function adminPriceCategoryFor(item) {
+  if (item.souvenir === true || normalizeMarketHashName(item.marketHashName || item.name).startsWith('souvenir ')) return 'souvenir';
+  if (['skin', 'stickers', 'agents', 'graffiti', 'music_kits'].includes(item.catalogType)) return item.catalogType;
+  return 'other';
+}
+
+function adminPriceCategoryTitle(category) {
+  return ({
+    skin: 'Обычный скин', stickers: 'Стикер', souvenir: 'Сувенирный предмет',
+    agents: 'Агент', graffiti: 'Граффити', music_kits: 'Музыкальный набор', other: 'Прочее'
+  })[category] || 'Предмет каталога';
+}
+
+function normalizeAdminPriceSearch(value) {
+  return String(value || '').normalize('NFKC').toLocaleLowerCase('ru-RU')
+    .replace(/[™®©]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim().replace(/\s+/g, ' ');
+}
+
+function renderAdminPriceResults({ preserveFeedback = false } = {}) {
+  if (!adminPriceResults || !adminPriceSearch || !adminPriceCategory) return;
+  if (!catalogLoaded) {
+    adminPriceResults.innerHTML = '<div class="case-empty">Каталог загружается…</div>';
+    return;
+  }
+
+  const rawQuery = adminPriceSearch.value.trim();
+  const query = normalizeAdminPriceSearch(rawQuery);
+  if (query.length < 2) {
+    adminPriceResults.innerHTML = '<div class="case-empty">Введи минимум два символа: поиск работает по названию, типу и market hash name.</div>';
+    if (!preserveFeedback) setAdminPriceFeedback('Поиск по всему каталогу · изменения цены применяются сразу ко всем игрокам.');
+    return;
+  }
+
+  const tokens = query.split(' ').filter(Boolean);
+  const selectedCategory = adminPriceCategory.value || 'all';
+  const matches = [];
+  for (const item of SKINS_CATALOG) {
+    if (item.isCustomSkin) continue; // Custom entries have their own editor and table.
+    const category = adminPriceCategoryFor(item);
+    if (selectedCategory !== 'all' && category !== selectedCategory) continue;
+    const marketName = item.marketHashName || item.name || '';
+    const haystack = normalizeAdminPriceSearch([
+      marketName, item.name, item.weapon, item.category, adminPriceCategoryTitle(category)
+    ].filter(Boolean).join(' '));
+    if (!tokens.every(token => haystack.includes(token))) continue;
+    const starts = haystack.startsWith(query) || normalizeAdminPriceSearch(marketName).startsWith(query);
+    matches.push({ item, category, marketName, starts });
+  }
+
+  matches.sort((a, b) => Number(b.starts) - Number(a.starts)
+    || a.marketName.localeCompare(b.marketName, 'en', { sensitivity: 'base' }));
+  const visible = matches.slice(0, 60);
+  if (!visible.length) {
+    adminPriceResults.innerHTML = '<div class="case-empty">Ничего не найдено. Попробуй короткое название или market hash name.</div>';
+    if (!preserveFeedback) setAdminPriceFeedback('Совпадений нет.');
+    return;
+  }
+
+  adminPriceResults.innerHTML = visible.map(({ item, category, marketName }) => {
+    const key = normalizeMarketHashName(marketName);
+    const hasManualPrice = adminMarketPriceOverrides.has(key);
+    const manualPrice = adminMarketPriceOverrides.get(key);
+    const currentPrice = hasManualPrice ? manualPrice : Number(item.price || 0);
+    const inputValue = displayCurrency === 'USD' ? currentPrice / RUB_PER_USD : currentPrice;
+    const source = hasManualPrice ? 'Ручная цена · применяется ко всем игрокам' : marketPriceSourceTitle(item.priceSource);
+    return `<article class="admin-price-row" data-market-price-row="${escapeHtml(key)}">
+      <img src="${escapeHtml(item.img || '')}" alt="" loading="lazy">
+      <div class="admin-price-item"><strong title="${escapeHtml(item.name || marketName)}">${escapeHtml(item.name || marketName)}</strong>
+        <small title="${escapeHtml(marketName)}">${escapeHtml(marketName)}</small>
+        <span>${escapeHtml(adminPriceCategoryTitle(category))} · ${escapeHtml(source)}</span>
+        <span>Текущая цена каталога: <b>${fmt(item.price)}</b></span>
+      </div>
+      <div class="admin-price-editor">
+        <label><span>Новая цена (${displayCurrency === 'USD' ? '$' : '₽'})</span>
+          <input type="number" min="0.01" max="${escapeHtml(maxTransactionAmountForCurrency())}" step="0.01" value="${Number(inputValue || 0).toFixed(2)}" aria-label="Цена для ${escapeHtml(marketName)}">
+        </label>
+        <div><button type="button" class="btn-small" data-market-price-action="save" data-market-price-name="${escapeHtml(marketName)}">Сохранить</button>
+        ${hasManualPrice ? '<button type="button" class="btn-small danger" data-market-price-action="reset" data-market-price-name="' + escapeHtml(marketName) + '">Сбросить</button>' : ''}</div>
+      </div>
+    </article>`;
+  }).join('');
+  if (!preserveFeedback) {
+    const suffix = matches.length > visible.length ? ` · показаны первые ${visible.length}` : '';
+    setAdminPriceFeedback(`Найдено ${matches.length.toLocaleString('ru-RU')} предметов${suffix}.`);
+  }
+}
+
+async function saveAdminMarketPriceOverride(marketName, amount, button) {
+  if (currentUser?.role !== 'admin' || !supabaseClient) return;
+  const price = amountToRub(amount);
+  if (!Number.isFinite(price) || price <= 0 || price > MAX_DEMO_TRANSACTION_RUB) {
+    setAdminPriceFeedback(`Цена должна быть больше 0 и не выше ${fmt(MAX_DEMO_TRANSACTION_RUB)}.`, 'error');
+    return;
+  }
+  if (!marketName || marketName.length > 180) {
+    setAdminPriceFeedback('У этого предмета нет корректного market hash name.', 'error');
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const { error } = await supabaseClient.from('market_price_overrides').upsert({
+      market_hash_name: marketName,
+      price,
+      updated_by: currentUser.id,
+    }, { onConflict: 'market_hash_name' });
+    if (error) throw error;
+    await loadAdminMarketPriceOverrides({ render: false, sync: true });
+    setAdminPriceFeedback(`Цена «${marketName}» обновлена для всех игроков.`, 'success');
+    renderAdminPriceResults({ preserveFeedback: true });
+  } catch (error) {
+    console.error('Could not save manual catalog price:', error);
+    const missingMigration = /market_price_overrides|schema cache|does not exist|could not find the table/i.test(String(error?.message || ''));
+    setAdminPriceFeedback(missingMigration
+      ? 'Примени supabase/admin-market-prices.sql в Supabase → SQL Editor.'
+      : 'Не удалось сохранить цену. Проверь права администратора и соединение с Supabase.', 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeAdminMarketPriceOverride(marketName, button) {
+  if (currentUser?.role !== 'admin' || !supabaseClient) return;
+  openConfirm('Сбросить ручную цену?', `Для «${marketName}» снова будет использоваться цена Skinport или сохранённая оценка.`, async () => {
+    button.disabled = true;
+    try {
+      const { error } = await supabaseClient.from('market_price_overrides').delete().eq('market_hash_name', marketName);
+      if (error) throw error;
+      await loadAdminMarketPriceOverrides({ render: false, sync: true });
+      setAdminPriceFeedback(`Ручная цена для «${marketName}» сброшена.`, 'success');
+      renderAdminPriceResults({ preserveFeedback: true });
+    } catch (error) {
+      console.error('Could not remove manual catalog price:', error);
+      setAdminPriceFeedback('Не удалось сбросить цену. Проверь права администратора и соединение с Supabase.', 'error');
+      button.disabled = false;
+    }
+  });
+}
+
+function startMarketPriceOverridesRealtime() {
+  if (!supabaseClient || marketPriceOverridesChannel) return;
+  try {
+    marketPriceOverridesChannel = supabaseClient.channel('market-price-overrides')
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'market_price_overrides'
+      }, () => { void loadAdminMarketPriceOverrides({ render: true, sync: true }); })
+      .subscribe(status => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn('Manual catalog price realtime subscription unavailable; periodic refresh remains active:', status);
+        }
+      });
+  } catch (error) {
+    marketPriceOverridesChannel = null;
+    console.warn('Manual catalog price realtime subscription unavailable:', error);
+  }
+}
+
+function stopMarketPriceOverridesRealtime() {
+  if (marketPriceOverridesChannel && supabaseClient) void supabaseClient.removeChannel(marketPriceOverridesChannel);
+  marketPriceOverridesChannel = null;
+}
+
 async function refreshMarketPrices({ force = false } = {}) {
   try {
     const snapshot = await loadMarketPriceSnapshot({ force });
-    const catalogChanged = applyMarketPricesToCatalog(snapshot);
+    let catalogChanged = applyMarketPricesToCatalog(snapshot);
+    if (supabaseClient) {
+      const overridesChanged = await loadAdminMarketPriceOverrides({ render: false, sync: false });
+      catalogChanged = overridesChanged || catalogChanged;
+    }
     updateCatalogPriceSourceNote();
     await syncCurrentInventoryMarketPrices(catalogChanged);
     return true;
   } catch (error) {
     marketPriceStatus = marketPriceByName.size ? 'stale' : 'unavailable';
     updateCatalogPriceSourceNote();
-    console.warn('Could not load current Market.CSGO prices:', error);
+    console.warn('Could not load current Skinport prices:', error);
     return false;
   }
 }
@@ -549,6 +808,10 @@ const adminCustomSkinSave = document.getElementById('adminCustomSkinSave');
 const adminCustomSkinCancel = document.getElementById('adminCustomSkinCancel');
 const adminCustomSkinFeedback = document.getElementById('adminCustomSkinFeedback');
 const adminCustomSkinList = document.getElementById('adminCustomSkinList');
+const adminPriceSearch = document.getElementById('adminPriceSearch');
+const adminPriceCategory = document.getElementById('adminPriceCategory');
+const adminPriceFeedback = document.getElementById('adminPriceFeedback');
+const adminPriceResults = document.getElementById('adminPriceResults');
 const caseSkipAnimationToggle = document.getElementById('caseSkipAnimation');
 const pendingCaseRewardsPanel = document.getElementById('pendingCaseRewards');
 const pendingCaseRewardsCount = document.getElementById('pendingCaseRewardsCount');
@@ -1299,6 +1562,8 @@ async function loginAs(authUser) {
   };
   userStateLoadedId = null;
   startCurrentUserRealtimeUpdates(currentUser.id);
+  startMarketPriceOverridesRealtime();
+  void loadAdminMarketPriceOverrides({ render: false, sync: false });
   void updateOnlinePresenceIdentity();
   const suspensionEnd = Date.parse(profile.suspended_until || '');
   if (Number.isFinite(suspensionEnd) && suspensionEnd > Date.now()) {
@@ -1372,6 +1637,7 @@ logoutBtn.addEventListener('click', async () => {
   await stateSaveQueue;
   if (supabaseClient) await supabaseClient.auth.signOut();
   stopCurrentUserRealtimeUpdates();
+  stopMarketPriceOverridesRealtime();
   if (upgradeFeedChannel && supabaseClient) {
     void supabaseClient.removeChannel(upgradeFeedChannel);
     upgradeFeedChannel = null;
@@ -1457,6 +1723,7 @@ currencySelect.addEventListener('change', () => {
     updateCaseOpenButton();
   }
   renderInventory(); renderTargets(); renderMyInventory();
+  renderAdminPriceResults({ preserveFeedback: true });
   if ($('page-ladder').classList.contains('active')) renderLeaderboards();
   updateChance();
 });
@@ -3478,6 +3745,19 @@ adminCaseCategories.addEventListener('click', event => {
   });
 });
 adminCaseSkinSearch.addEventListener('input', renderCaseSkinResults);
+adminPriceSearch?.addEventListener('input', () => renderAdminPriceResults());
+adminPriceCategory?.addEventListener('change', () => renderAdminPriceResults());
+adminPriceResults?.addEventListener('click', event => {
+  const button = event.target.closest('[data-market-price-action]');
+  if (!button || currentUser?.role !== 'admin') return;
+  const marketName = button.dataset.marketPriceName || '';
+  if (button.dataset.marketPriceAction === 'save') {
+    const input = button.closest('.admin-price-row')?.querySelector('input[type="number"]');
+    if (input) void saveAdminMarketPriceOverride(marketName, input.value, button);
+  } else if (button.dataset.marketPriceAction === 'reset') {
+    void removeAdminMarketPriceOverride(marketName, button);
+  }
+});
 adminCaseGlowColor.addEventListener('input', syncCaseGlowPreview);
 adminCaseImageFile.addEventListener('change', () => void uploadCaseImage(adminCaseImageFile.files?.[0]));
 adminCaseSkinResults.addEventListener('click', event => {
@@ -4475,6 +4755,8 @@ async function loadSkins() {
     const migratedCatalogIds = migrateCatalogIdsInInventory();
     if (marketPriceResult?.prices?.size) applyMarketPricesToCatalog(marketPriceResult);
     else marketPriceStatus = 'unavailable';
+    if (supabaseClient) await loadAdminMarketPriceOverrides({ render: false, sync: false });
+    else rebuildCatalogMarketPrices();
     const repricedInventory = currentUser && userStateLoadedId === currentUser.id
       ? repriceCurrentInventory()
       : false;
@@ -4501,6 +4783,7 @@ async function loadSkins() {
       }
     }
     updateCatalogPriceSourceNote();
+    if (currentUser?.role === 'admin') renderAdminPriceResults();
     if (!marketPriceRefreshTimer) {
       marketPriceRefreshTimer = setInterval(() => { void refreshMarketPrices({ force: true }); }, MARKET_PRICE_POLL_MS);
     }
@@ -4921,11 +5204,11 @@ function buildCatalogCard(item, { disabled, source, onClick }) {
   `;
   const priceElement = card.querySelector('.item-price');
   if (priceElement) {
-    const hasMarketQuote = item.priceSource === 'market_csgo';
+    const hasMarketQuote = isTrackedPriceSource(item.priceSource);
     priceElement.dataset.priceSource = hasMarketQuote ? 'market' : 'estimate';
     priceElement.title = hasMarketQuote
-      ? 'Текущая минимальная цена предложения на Market.CSGO'
-      : 'Для этого предмета сейчас нет предложения на Market.CSGO; показана расчётная оценка';
+      ? marketPriceSourceTitle(item.priceSource)
+      : 'Для этого предмета нет актуальной цены Skinport; показана расчётная оценка';
   }
 
   const marketCancelBadge = card.querySelector('.market-quantity-badge');
@@ -5183,10 +5466,10 @@ function appendMyInventoryCard(idx) {
   price.className = 'item-price';
   price.classList.add('item-price-green');
   price.textContent = fmt(inv.price);
-  price.dataset.priceSource = inv.priceSource === 'market_csgo' ? 'market' : 'estimate';
-  price.title = inv.priceSource === 'market_csgo'
-    ? 'Текущая минимальная цена предложения на Market.CSGO'
-    : 'Расчётная оценка: текущего предложения на Market.CSGO нет';
+  price.dataset.priceSource = isTrackedPriceSource(inv.priceSource) ? 'market' : 'estimate';
+  price.title = isTrackedPriceSource(inv.priceSource)
+    ? marketPriceSourceTitle(inv.priceSource)
+    : 'Расчётная оценка: актуальной цены Skinport нет';
   const qualities = [inv.stattrak ? 'StatTrak™' : '', inv.souvenir ? 'Souvenir' : '', inv.effect].filter(Boolean);
   card.append(imageWrap, name, price);
   if (qualities.length) {
