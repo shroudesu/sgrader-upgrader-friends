@@ -6349,7 +6349,7 @@ async function publishUpgradeWin(instanceId) {
   if (!currentUser || !supabaseClient || !instanceId) return;
   const { error } = await supabaseClient.rpc('publish_upgrade_win', { p_instance_id: instanceId });
   if (error) console.error('Could not publish upgrade win:', error);
-  else void loadUpgradeFeed();
+  void loadUpgradeFeed();
 }
 
 function renderUpgradeFeed(items) {
@@ -6734,6 +6734,7 @@ async function processSavedUpgradeRun(initialRun) {
     if (currentUser?.id !== signedInUserId) return;
     run = settled;
     activeUpgradeRun = run.status === 'complete' ? null : run;
+    if (run.status !== 'complete') void loadUpgradeFeed();
     if (run.status === 'complete') {
       await finishSavedUpgradeRun(run);
       return;

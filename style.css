@@ -174,6 +174,8 @@ select:not(.native-select-source) { appearance: none; -webkit-appearance: none; 
 .nav-tab.ladder-nav-tab { border: 1px solid rgba(245,205,99,.72); color: #f0cf73; box-shadow: inset 0 0 12px rgba(245,205,99,.08),0 0 10px rgba(245,205,99,.1); }
 .nav-tab.ladder-nav-tab:hover { border-color: #ffdf84; color: #ffe6a3; box-shadow: 0 0 14px rgba(245,205,99,.22); }
 .nav-tab.ladder-nav-tab.active { border-color: #f6d77f; background: linear-gradient(135deg,#f5d783,#c89732); color: #17130a; box-shadow: 0 0 16px rgba(245,205,99,.28); }
+.logo { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 5px; color: var(--white); font-size: 19px; font-weight: 900; letter-spacing: 1.65px; line-height: 1; white-space: nowrap; text-shadow: 0 0 10px rgba(255,255,255,.12); }
+.logo-up { color: var(--text-dim); font-size: 15px; font-weight: 400; letter-spacing: 1px; text-shadow: none; }
 
 .volume-control {
   display: flex; align-items: center; gap: 8px; padding: 6px 12px;
@@ -725,7 +727,7 @@ input[type="range"]:active::-moz-range-thumb { transform: scale(1.12); }
 .profile-inventory-status { min-height: 18px; margin: 4px 0 8px; color: var(--success); font-size: 10px; }
 .profile-load-more { grid-column: 1/-1; justify-self: center; margin: 8px 0; }
 
-.settings-modal { width: min(880px,96vw); max-width: 880px; max-height: min(94vh,900px); display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); grid-template-rows: auto auto minmax(0,1fr) auto; gap: 12px 18px; align-content: start; overflow-y: auto; text-align: left; }
+.modal.settings-modal { width: min(1100px,calc(100vw - 40px)); max-width: 1100px; min-height: min(680px,calc(100vh - 40px)); max-height: calc(100vh - 40px); display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); grid-template-rows: auto auto minmax(0,1fr) auto; gap: 12px 22px; align-content: start; overflow-y: auto; text-align: left; }
 .settings-modal .settings-heading { grid-column: 1 / -1; grid-row: 1; }
 .settings-currency { min-width: 0; grid-column: 1; grid-row: 2; }
 .settings-modal .settings-audio { grid-column: 1; grid-row: 3; align-self: start; margin: 0; }
@@ -872,7 +874,7 @@ input[type="range"]:active::-moz-range-thumb { transform: scale(1.12); }
   .user-info { order: 4; max-width: min(100%,390px); }
   .money-balance-chip { padding: 5px 6px; gap: 4px; }
   .money-balance-chip .balance-value { max-width: 92px; font-size: 11px; }
-  .settings-modal { grid-template-columns: minmax(0,1fr); grid-template-rows: auto; gap: 12px; width: min(560px,96vw); max-height: 92vh; padding: 18px; }
+  .modal.settings-modal { grid-template-columns: minmax(0,1fr); grid-template-rows: auto; gap: 12px; width: min(560px,calc(100vw - 24px)); max-width: 560px; min-height: 0; max-height: 92vh; padding: 18px; }
   .settings-modal .settings-heading,
   .settings-currency,
   .settings-modal .settings-audio,
@@ -886,8 +888,10 @@ input[type="range"]:active::-moz-range-thumb { transform: scale(1.12); }
 iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: middle; }
 
 /* ===== ОБЩАЯ ЛЕНТА, ПОКУПКА НЕСКОЛЬКИХ ПРЕДМЕТОВ И ПРОФИЛИ ===== */
-.inventory-balance-summary { padding-left: 14px; border-left: 1px solid var(--border); }
-.inventory-balance-summary .balance-value { color: var(--success); }
+.inventory-balance-summary { min-width: 0; flex-direction: row; align-items: center; gap: 5px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.55); border-radius: 8px; background: rgba(255,255,255,.055); color: #f1f1f1; }
+.inventory-balance-summary iconify-icon { flex: 0 0 auto; color: #fff; font-size: 14px; }
+.inventory-balance-summary .balance-value { overflow: hidden; max-width: 112px; color: #fff; font-size: 12px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; text-shadow: none; font-variant-numeric: tabular-nums; }
+.inventory-balance-summary .balance-value.flash { color: #fff; }
 .admin-users-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .admin-wipe-all-btn { border-color: rgba(255,85,85,.45); color: #ff7777; }
 .admin-wipe-all-btn:hover,.admin-wipe-player:hover { border-color: var(--danger); color: #fff; background: rgba(255,85,85,.12); }
@@ -1214,7 +1218,6 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 .public-inventory-card small, .public-profile-feedback { color: var(--text-dim); font-size: 8px; }
 
 @media (max-width: 700px) {
-  .inventory-balance-summary { padding-left: 0; border-left: 0; }
   .app > .container { max-width: 1500px; margin: 0 auto; padding: 24px 18px; }
   .upgrade-feed-panel { position: static; width: auto; max-height: 250px; margin: 12px 14px 0; padding: 14px 11px 12px; border: 1px solid var(--border); border-radius: 14px; }
   .upgrade-feed { flex: 0 0 auto; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
