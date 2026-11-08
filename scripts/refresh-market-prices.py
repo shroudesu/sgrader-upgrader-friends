@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FEED_URL = "https://market.csgo.com/api/v2/prices/RUB.json"
 OUTPUT = ROOT / "market-prices.json"
 OUTPUT_GZIP = ROOT / "market-prices.json.gz"
+EXCLUSIONS_FILE = ROOT / "catalog-exclusions.json"
 CATALOG_FILES = (
     "skins_variants.json",
     "stickers.json",
@@ -29,6 +30,17 @@ CATALOG_FILES = (
 
 def normalize_name(value: object) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(value or "")).strip()).casefold()
+
+
+def excluded_market_names() -> set[str]:
+    if not EXCLUSIONS_FILE.is_file():
+        return set()
+    config = json.loads(EXCLUSIONS_FILE.read_text(encoding="utf-8"))
+    return {
+        normalize_name(name)
+        for name in config.get("market_hash_names", [])
+        if normalize_name(name)
+    }
 
 
 def read_catalog_file(name: str) -> list[dict]:
@@ -90,7 +102,8 @@ def extract_rows(payload: dict) -> list[dict]:
 
 
 def current_items() -> dict[str, dict]:
-    catalog = catalog_names()
+    excluded = excluded_market_names()
+    catalog = {key: names for key, names in catalog_names().items() if key not in excluded}
     if not catalog:
         raise RuntimeError("Catalogs contain no market names")
 
@@ -98,7 +111,7 @@ def current_items() -> dict[str, dict]:
     for item in read_catalog_file("graffiti.json"):
         market_name = item.get("market_hash_name") or item.get("marketHashName") or item.get("name")
         key = normalize_name(market_name)
-        if key:
+        if key and key not in excluded:
             graffiti_names.setdefault(key, set()).add(str(market_name))
     market_catalog = {key: names for key, names in catalog.items() if key not in graffiti_names}
 
@@ -133,7 +146,7 @@ def current_items() -> dict[str, dict]:
             name = str(row.get("market_hash_name") or "").strip()
             key = normalize_name(name)
             price = parse_price(row.get("price"))
-            if not key or price is None:
+            if not key or key in excluded or price is None:
                 continue
             for existing_name in list(result):
                 if normalize_name(existing_name) == key:

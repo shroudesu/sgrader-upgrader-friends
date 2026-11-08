@@ -6,6 +6,16 @@ $projectRoot = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'index.html')
   Split-Path -Parent $PSScriptRoot
 }
 $upstreamRoot = 'https://raw.githubusercontent.com/CS2Cap/CS2-API/main/output/en'
+$exclusionsPath = Join-Path $projectRoot 'catalog-exclusions.json'
+$excludedMarketNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+if (Test-Path -LiteralPath $exclusionsPath -PathType Leaf) {
+  $exclusions = Get-Content -LiteralPath $exclusionsPath -Raw | ConvertFrom-Json
+  foreach ($marketName in @($exclusions.market_hash_names)) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$marketName)) {
+      [void]$excludedMarketNames.Add(([string]$marketName).Trim())
+    }
+  }
+}
 $fileMap = @(
   @{ file = 'skins.json'; type = 'skin'; category = $null },
   @{ file = 'stickers.json'; type = 'stickers'; category = 'Stickers' },
@@ -131,6 +141,12 @@ foreach ($entry in $fileMap) {
   Write-Host "Downloading $uri"
   $response = Invoke-WebRequest -Uri $uri -Headers @{ 'User-Agent' = 'SGRADER-UP-demo-catalog-refresh' }
   $items = @($response.Content | ConvertFrom-Json)
+  if ($excludedMarketNames.Count -gt 0) {
+    $items = @($items | Where-Object {
+      $marketName = [string]($_.market_hash_name ?? $_.marketHashName ?? $_.name)
+      -not $excludedMarketNames.Contains($marketName.Trim())
+    })
+  }
   if ($items.Count -eq 0) {
     throw "The upstream file $($entry.file) was empty. No catalog files were changed."
   }
