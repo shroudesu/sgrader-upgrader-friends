@@ -200,8 +200,14 @@ begin
   v_bonus_angle := v_bonus_chance * 3.6;
   if v_outcome = 'win' then
     if v_bonus_angle > 0 then
-      -- Golden sector occupies the bottom-center 5%; ordinary wins follow it.
-      v_final_angle := mod(v_bonus_angle / 2 + random()::numeric * v_win_angle, 360::numeric);
+      -- Golden 5% stays at bottom-center. Normal wins occupy equal arcs on
+      -- both sides, preserving the original centered chance bar visually.
+      if random() < 0.5 then
+        v_final_angle := mod(360::numeric - (v_win_angle + v_bonus_angle) / 2
+          + random()::numeric * (v_win_angle / 2), 360::numeric);
+      else
+        v_final_angle := mod(v_bonus_angle / 2 + random()::numeric * (v_win_angle / 2), 360::numeric);
+      end if;
     else
       v_final_angle := mod(360::numeric - v_win_angle / 2 + random()::numeric * v_win_angle, 360::numeric);
     end if;
@@ -210,7 +216,7 @@ begin
   else
     if v_bonus_angle > 0 then
       v_lose_angle := greatest(0::numeric, 360::numeric - v_win_angle - v_bonus_angle);
-      v_final_angle := mod(v_bonus_angle / 2 + v_win_angle
+      v_final_angle := mod((v_win_angle + v_bonus_angle) / 2
         + random()::numeric * v_lose_angle, 360::numeric);
     else
       v_final_angle := mod(v_win_angle / 2

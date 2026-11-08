@@ -3725,11 +3725,6 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
   const winAngle = Math.PI * 2 * chance / 100;
   const bonusAngle = Math.PI * 2 * bonusChance / 100;
   if (chance > 0) {
-    // Keep the golden sector fixed at the bottom and move the ordinary win
-    // sector beside it while the bonus is active. The visible segments must
-    // be disjoint because the server assigns a distinct result to each one.
-    const start = bonusAngle > 0 ? Math.PI / 2 + bonusAngle / 2 : Math.PI / 2 - winAngle / 2;
-    const end = start + winAngle;
     const rgb = color.match(/\d+/g).map(Number);
     const shade = (amount, mixWithWhite = false) => {
       const adjusted = rgb.map(channel => Math.round(mixWithWhite ? channel + (255 - channel) * amount : channel * amount));
@@ -3739,12 +3734,27 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
     gradient.addColorStop(0, shade(.72));
     gradient.addColorStop(.45, color);
     gradient.addColorStop(1, shade(.2, true));
-    ctx.beginPath();
-    if (chance >= 99.999 && bonusAngle === 0) ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
-    else ctx.arc(cx, cy, ringRadius, start, end);
     ctx.strokeStyle = gradient;
     ctx.lineWidth = 28;
-    ctx.stroke();
+    if (bonusAngle > 0) {
+      // Center the golden 5% sector at the bottom and split normal wins
+      // symmetrically around it. All three visible areas match server odds.
+      const goldStart = Math.PI / 2 - bonusAngle / 2;
+      const goldEnd = Math.PI / 2 + bonusAngle / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ringRadius, goldStart - winAngle / 2, goldStart);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, ringRadius, goldEnd, goldEnd + winAngle / 2);
+      ctx.stroke();
+    } else {
+      const start = Math.PI / 2 - winAngle / 2;
+      const end = start + winAngle;
+      ctx.beginPath();
+      if (chance >= 99.999) ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+      else ctx.arc(cx, cy, ringRadius, start, end);
+      ctx.stroke();
+    }
   }
 
   if (bonusAngle > 0) {
