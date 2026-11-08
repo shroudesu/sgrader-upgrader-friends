@@ -3723,9 +3723,13 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
   ctx.fillText('50%', cx + ringRadius, cy);
 
   const winAngle = Math.PI * 2 * chance / 100;
+  const bonusAngle = Math.PI * 2 * bonusChance / 100;
   if (chance > 0) {
-    const start = Math.PI / 2 - winAngle / 2;
-    const end = Math.PI / 2 + winAngle / 2;
+    // Keep the golden sector fixed at the bottom and move the ordinary win
+    // sector beside it while the bonus is active. The visible segments must
+    // be disjoint because the server assigns a distinct result to each one.
+    const start = bonusAngle > 0 ? Math.PI / 2 + bonusAngle / 2 : Math.PI / 2 - winAngle / 2;
+    const end = start + winAngle;
     const rgb = color.match(/\d+/g).map(Number);
     const shade = (amount, mixWithWhite = false) => {
       const adjusted = rgb.map(channel => Math.round(mixWithWhite ? channel + (255 - channel) * amount : channel * amount));
@@ -3736,14 +3740,13 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
     gradient.addColorStop(.45, color);
     gradient.addColorStop(1, shade(.2, true));
     ctx.beginPath();
-    if (chance >= 99.999) ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+    if (chance >= 99.999 && bonusAngle === 0) ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
     else ctx.arc(cx, cy, ringRadius, start, end);
     ctx.strokeStyle = gradient;
     ctx.lineWidth = 28;
     ctx.stroke();
   }
 
-  const bonusAngle = Math.PI * 2 * bonusChance / 100;
   if (bonusAngle > 0) {
     const bonusProgress = Math.min(1, bonusChance / 5);
     const start = Math.PI / 2 - bonusAngle / 2;

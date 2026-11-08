@@ -146,6 +146,7 @@ declare
   v_outcome text;
   v_win_angle numeric;
   v_bonus_angle numeric;
+  v_lose_angle numeric;
   v_final_angle numeric;
   v_full_spins integer;
   v_duration integer;
@@ -198,12 +199,23 @@ begin
   v_win_angle := v_base_chance * 3.6;
   v_bonus_angle := v_bonus_chance * 3.6;
   if v_outcome = 'win' then
-    v_final_angle := mod(360::numeric - v_win_angle / 2 + random()::numeric * v_win_angle, 360::numeric);
+    if v_bonus_angle > 0 then
+      -- Golden sector occupies the bottom-center 5%; ordinary wins follow it.
+      v_final_angle := mod(v_bonus_angle / 2 + random()::numeric * v_win_angle, 360::numeric);
+    else
+      v_final_angle := mod(360::numeric - v_win_angle / 2 + random()::numeric * v_win_angle, 360::numeric);
+    end if;
   elsif v_outcome = 'bonus' then
     v_final_angle := mod(360::numeric - v_bonus_angle / 2 + random()::numeric * v_bonus_angle, 360::numeric);
   else
-    v_final_angle := mod(v_win_angle / 2
-      + random()::numeric * greatest(0::numeric, 360::numeric - v_win_angle), 360::numeric);
+    if v_bonus_angle > 0 then
+      v_lose_angle := greatest(0::numeric, 360::numeric - v_win_angle - v_bonus_angle);
+      v_final_angle := mod(v_bonus_angle / 2 + v_win_angle
+        + random()::numeric * v_lose_angle, 360::numeric);
+    else
+      v_final_angle := mod(v_win_angle / 2
+        + random()::numeric * greatest(0::numeric, 360::numeric - v_win_angle), 360::numeric);
+    end if;
   end if;
   v_full_spins := 2 + greatest(1, least(10, coalesce(p_spin_strength, 5))) + floor(random() * 3)::integer;
   v_duration := case when p_spin_mode = 'slow' then 9000 else 4200 end;
