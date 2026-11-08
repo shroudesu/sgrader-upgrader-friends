@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
   <link rel="icon" type="image/png" href="newlogo.png">
-  <link rel="stylesheet" href="style.css?v=20261108-r26">
+  <link rel="stylesheet" href="style.css?v=20261108-r27">
 </head>
 <body>
 
@@ -52,7 +52,6 @@
 <div class="app" id="app" style="display:none">
 
 <header class="header">
-  <div class="logo"><img src="newlogo.png" alt=""><span>SGRADER<span>UP</span></span></div>
   <div class="online-users" title="Игроки, подключённые к сайту сейчас" aria-live="polite">
     <span class="online-users-dot" aria-hidden="true"></span>
     <strong id="onlineUsersCount">—</strong>
@@ -64,15 +63,10 @@
     <button class="nav-tab" data-tab="battles">Батлы</button>
     <button class="nav-tab" data-tab="cases">Кейсы</button>
     <button class="nav-tab ladder-nav-tab" data-tab="ladder">Ладдер</button>
-    <button class="nav-tab" data-tab="profile">Профиль</button>
     <button class="nav-tab" data-tab="admin" id="adminNav" style="display:none">Админка</button>
   </nav>
 
   <div class="header-balances" aria-label="Балансы игрока">
-    <div class="balance">
-      <span class="balance-label">Денежный баланс</span>
-      <span class="balance-value" id="balance">0.00</span>
-    </div>
     <div class="balance inventory-balance-summary">
       <span class="balance-label">Баланс инвентаря</span>
       <span class="balance-value" id="inventoryBalance">0.00</span>
@@ -80,7 +74,11 @@
   </div>
 
   <div class="user-info">
-    <button type="button" class="header-avatar" id="headerAvatarButton" aria-label="Изменить аватар в настройках">
+    <div class="money-balance-chip" aria-label="Денежный баланс">
+      <iconify-icon icon="mdi:cash-multiple" aria-hidden="true"></iconify-icon>
+      <span class="balance-value" id="balance">0.00</span>
+    </div>
+    <button type="button" class="header-avatar" id="headerAvatarButton" aria-label="Открыть профиль" title="Открыть профиль">
       <img id="headerAvatarImage" alt="" hidden>
       <iconify-icon id="headerAvatarFallback" icon="mdi:account-circle-outline"></iconify-icon>
     </button>
@@ -179,7 +177,7 @@
           </div>
           <div class="wheel-center">
             <span class="wheel-chance" id="chanceValue">—</span>
-            <span class="wheel-sub" id="wheelSub">средний шанс</span>
+            <span class="wheel-sub" id="wheelSub"></span>
           </div>
         </div>
 
@@ -426,10 +424,10 @@
   <section class="tab-page" id="page-admin">
     <h1 class="title">Админ-панель</h1>
     <div class="panel admin-panel">
-      <div class="admin-users-toolbar"><p class="admin-notice">Игроки и начисления хранятся в общей базе.</p><button type="button" class="btn-small" id="adminRefreshAllBtn"><iconify-icon icon="mdi:refresh"></iconify-icon> Обновить всем онлайн</button></div>
+      <div class="admin-users-toolbar"><p class="admin-notice">Игроки и начисления хранятся в общей базе.</p><div class="admin-users-toolbar-actions"><button type="button" class="btn-small danger admin-wipe-all-btn" id="adminWipeAllBtn">Вайп всем</button><button type="button" class="btn-small" id="adminRefreshAllBtn"><iconify-icon icon="mdi:refresh"></iconify-icon> Обновить всем онлайн</button></div></div>
       <div class="admin-table-wrap">
         <table class="admin-table">
-          <thead><tr><th>ID игрока</th><th>Ник</th><th>Статус</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th><th>Управление</th><th>Инвентарь</th></tr></thead>
+          <thead><tr><th>ID игрока</th><th>Ник</th><th>Статус</th><th>Промокод</th><th>Баланс</th><th>Начислить</th><th>Снять</th><th>Управление</th><th>Инвентарь</th><th>Вайп</th></tr></thead>
           <tbody id="adminUsers"></tbody>
         </table>
       </div>
@@ -597,9 +595,11 @@
   <div class="modal-overlay settings-overlay" id="settingsModal" aria-hidden="true">
     <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="settings-heading"><h3 class="modal-title" id="settingsTitle">Настройки аккаунта</h3><button type="button" class="settings-close" id="settingsClose" aria-label="Закрыть настройки">×</button></div>
-      <label class="settings-label" for="currencySelectCustomTrigger">Валюта сайта</label>
-      <select id="currencySelect" class="settings-select"><option value="RUB">RUB · ₽</option><option value="USD">USD · $</option></select>
-      <div class="settings-rate">Курс отображения: 1 USD = 90 RUB</div>
+      <div class="settings-currency">
+        <label class="settings-label" for="currencySelectCustomTrigger">Валюта сайта</label>
+        <select id="currencySelect" class="settings-select"><option value="RUB">RUB · ₽</option><option value="USD">USD · $</option></select>
+        <div class="settings-rate">Курс отображения: 1 USD = 90 RUB</div>
+      </div>
       <div class="settings-audio">
         <label class="settings-switch-row" for="musicEnabled">
           <span><strong>Фоновая музыка</strong><small>Треки 1–5 будут играть по кругу</small></span>

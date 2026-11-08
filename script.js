@@ -572,6 +572,7 @@ const ladderDescription = document.getElementById('ladderDescription');
 const ladderRefreshBtn = document.getElementById('ladderRefreshBtn');
 const ladderTypeButtons = [...document.querySelectorAll('[data-ladder-type]')];
 const adminUsersEl = document.getElementById('adminUsers');
+const adminWipeAllBtn = document.getElementById('adminWipeAllBtn');
 const adminRefreshAllBtn = document.getElementById('adminRefreshAllBtn');
 const adminFeedback = document.getElementById('adminFeedback');
 const adminInventoryModal = document.getElementById('adminInventoryModal');
@@ -1420,7 +1421,7 @@ function closeSettings() {
 }
 
 settingsBtn.addEventListener('click', openSettings);
-document.getElementById('headerAvatarButton').addEventListener('click', openSettings);
+document.getElementById('headerAvatarButton').addEventListener('click', () => activateTab('profile'));
 settingsClose.addEventListener('click', closeSettings);
 settingsModal.addEventListener('click', event => { if (event.target === settingsModal) closeSettings(); });
 document.addEventListener('keydown', event => {
@@ -1915,10 +1916,10 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
 function activateTab(page) {
   const tab = document.querySelector(`.nav-tab[data-tab="${page}"]`);
   const panel = $(`page-${page}`);
-  if (!tab || !panel) return;
+  if (!panel || (!tab && page !== 'profile')) return;
   document.querySelectorAll('.nav-tab').forEach(element => element.classList.remove('active'));
   document.querySelectorAll('.tab-page').forEach(element => element.classList.remove('active'));
-  tab.classList.add('active');
+  tab?.classList.add('active');
   panel.classList.add('active');
   if (page === 'profile') renderProfile();
   if (page === 'admin') void renderAdminUsers();
@@ -2093,7 +2094,7 @@ async function renderAdminUsers() {
   if (!currentUser || currentUser.role !== 'admin') return;
   const { data, error } = await supabaseClient.rpc('admin_list_players');
   if (error) {
-    adminUsersEl.innerHTML = '<tr><td colspan="9">Не удалось загрузить список игроков. Примените supabase/admin-moderation.sql.</td></tr>';
+    adminUsersEl.innerHTML = '<tr><td colspan="10">Не удалось загрузить список игроков. Примените supabase/admin-moderation.sql.</td></tr>';
     console.error('Could not load admin player list:', error);
     return;
   }
@@ -2118,9 +2119,55 @@ async function renderAdminUsers() {
       </form></td>
       <td><div class="admin-player-actions"><button class="btn-small admin-moderate-open ${activeSuspension ? 'danger' : ''}" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}" data-suspended-until="${escapeHtml(user.suspended_until || '')}" data-suspension-reason="${escapeHtml(user.suspension_reason || '')}">${activeSuspension ? 'Отстранён' : 'Управление'}</button><button class="btn-small admin-player-refresh" type="button" data-player-refresh="${escapeHtml(user.player_id)}" title="Перезагрузить страницу игрока"><iconify-icon icon="mdi:refresh"></iconify-icon> Обновить</button></div></td>
       <td><button class="btn-small admin-inventory-open" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}">Открыть</button></td>
+      <td><button class="btn-small danger admin-wipe-player" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}" aria-label="Вайп баланса и инвентаря ${escapeHtml(user.username)}">Вайп</button></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9">Пользователей пока нет.</td></tr>';
+  }).join('') || '<tr><td colspan="10">Пользователей пока нет.</td></tr>';
   updateAdminPresenceStatuses();
+}
+
+async function performAdminWipe(playerId = null, playerName = '') {
+  if (!currentUser || currentUser.role !== 'admin' || !supabaseClient) return;
+  if (adminWipeAllBtn) adminWipeAllBtn.disabled = true;
+  adminUsersEl?.querySelectorAll('.admin-wipe-player').forEach(button => { button.disabled = true; });
+  adminFeedback.textContent = playerId == null
+    ? 'Очищаю балансы и инвентари всех аккаунтов…'
+    : `Очищаю баланс и инвентарь игрока ${playerName || `#${playerId}`}…`;
+  adminFeedback.classList.add('show');
+  let data;
+  let error;
+  try {
+    ({ data, error } = await supabaseClient.rpc('admin_wipe_player_assets', { p_player_id: playerId == null ? null : Number(playerId) }));
+  } catch (requestError) {
+    error = requestError;
+  }
+  if (error) {
+    const message = String(error.message || '').toLowerCase();
+    adminFeedback.textContent = /admin_wipe_player_assets|function|schema cache|does not exist/i.test(message)
+      ? 'Примени supabase/admin-wipe.sql в SQL Editor, чтобы включить вайп.'
+      : 'Не удалось выполнить вайп. Проверь права администратора и соединение.';
+    console.error('Could not wipe player balances and inventories:', error);
+  } else {
+    const resultName = playerId == null ? 'всех аккаунтов' : (data.username || playerName || `игрока #${playerId}`);
+    adminFeedback.textContent = `Вайп ${resultName} завершён: обнулено ${fmt(Number(data.balance_removed || 0))}, удалено ${Number(data.inventory_items_removed || 0)} предметов и ${Number(data.pending_rewards_removed || 0)} незабранных дропов; отменено батлов: ${Number(data.battles_cancelled || 0)}.`;
+    if (playerId == null || String(currentUser.playerId) === String(playerId)) {
+      try {
+        await loadUserState();
+        updateBalanceUI();
+        renderMyInventory();
+        renderInventory();
+        renderTargets();
+        renderProfile();
+        restoreSlotsFromState();
+        if ($('page-cases').classList.contains('active')) void loadPendingCaseRewards();
+      } catch (refreshError) {
+        console.error('Wipe completed but the current player state did not refresh:', refreshError);
+        adminFeedback.textContent += ' Обнови страницу, чтобы перечитать своё состояние.';
+      }
+    }
+    await renderAdminUsers();
+  }
+  if (adminWipeAllBtn) adminWipeAllBtn.disabled = false;
+  adminUsersEl?.querySelectorAll('.admin-wipe-player').forEach(button => { button.disabled = false; });
 }
 
 function getPlayerPresenceStatus(userId) {
@@ -2274,8 +2321,8 @@ function renderCaseCards() {
       ? `<img src="${escapeHtml(gameCase.image_url)}" alt="${escapeHtml(gameCase.name)}">`
       : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>';
     const glowColor = safeCaseGlowColor(gameCase.glow_color);
-    return `<article class="case-card" data-case-id="${escapeHtml(gameCase.id)}">
-      <div class="case-card-art" style="--case-glow:${glowColor}">${art}</div>
+    return `<article class="case-card" data-case-id="${escapeHtml(gameCase.id)}" style="--case-glow:${glowColor}">
+      <div class="case-card-art">${art}</div>
       <div class="case-card-body"><h2 title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</h2>
         <div class="case-card-meta"><span>Цена</span><strong>${fmt(Number(gameCase.price))}</strong></div>
         <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть</button>
@@ -3872,6 +3919,17 @@ async function performAdminInventoryClear() {
 }
 
 adminUsersEl.addEventListener('click', event => {
+  const wipeButton = event.target.closest('.admin-wipe-player');
+  if (wipeButton) {
+    const playerId = wipeButton.dataset.playerId;
+    const username = wipeButton.dataset.username || 'игрока';
+    openConfirm(
+      'Вайп аккаунта?',
+      `Обнулить баланс и удалить инвентарь игрока ${username} (ID ${playerId})? Незабранные дропы удалятся, а открытые батлы будут отменены без возврата поставленных предметов.`,
+      () => { void performAdminWipe(playerId, username); }
+    );
+    return;
+  }
   const refreshButton = event.target.closest('[data-player-refresh]');
   if (refreshButton) {
     void requestAdminPageRefresh(refreshButton.dataset.playerRefresh, refreshButton);
@@ -3884,6 +3942,15 @@ adminUsersEl.addEventListener('click', event => {
   }
   const button = event.target.closest('.admin-inventory-open');
   if (button) void loadAdminPlayerInventory(button.dataset.playerId, button.dataset.username);
+});
+
+adminWipeAllBtn?.addEventListener('click', () => {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  openConfirm(
+    'Вайп всех аккаунтов?',
+    'Обнулить денежные балансы и удалить предметы из инвентарей всех пользователей, включая администраторов? Незабранные дропы удалятся, открытые батлы будут отменены без возврата поставленных предметов. Действие нельзя отменить.',
+    () => { void performAdminWipe(); }
+  );
 });
 
 adminRefreshAllBtn?.addEventListener('click', () => void requestAdminPageRefresh());
@@ -4514,7 +4581,7 @@ function updateChance() {
       currentChance = Number(run.base_chance || 0);
       currentBonusChance = Number(run.bonus_chance || 0);
       chanceValue.textContent = formatChance(currentChance);
-      wheelSub.textContent = 'средний шанс';
+      wheelSub.textContent = '';
       drawWheel(currentChance, false, currentBonusChance);
     } else if (run.status === 'bonus_pending') {
       currentChance = Number(run.bonus_chance || 0);
@@ -4534,7 +4601,7 @@ function updateChance() {
     return;
   }
 
-  wheelSub.textContent = 'средний шанс';
+  wheelSub.textContent = '';
   upgradeBonusStatus.hidden = true;
   currentBonusChance = 0;
   if (!betData || !targetData) {
@@ -6490,7 +6557,7 @@ function paintUpgradeRun(run) {
     currentChance = Number(run.base_chance || 0);
     currentBonusChance = Number(run.bonus_chance || 0);
     chanceValue.textContent = formatChance(currentChance);
-    wheelSub.textContent = 'средний шанс';
+    wheelSub.textContent = '';
     upgradeBonusStatus.hidden = currentBonusChance <= 0;
     if (currentBonusChance) upgradeBonusStatus.textContent = 'Золотой бонус · 5%';
     drawWheel(currentChance, true, currentBonusChance);
