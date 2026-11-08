@@ -523,6 +523,7 @@ const adminCaseFormTitle = document.getElementById('adminCaseFormTitle');
 const adminCaseCancel = document.getElementById('adminCaseCancel');
 const adminCaseName = document.getElementById('adminCaseName');
 const adminCasePrice = document.getElementById('adminCasePrice');
+const adminCaseGlowColor = document.getElementById('adminCaseGlowColor');
 const adminCaseImageFile = document.getElementById('adminCaseImageFile');
 const adminCaseImagePreview = document.getElementById('adminCaseImagePreview');
 const adminCaseImageStatus = document.getElementById('adminCaseImageStatus');
@@ -553,6 +554,7 @@ const pendingCaseRewardsPanel = document.getElementById('pendingCaseRewards');
 const pendingCaseRewardsCount = document.getElementById('pendingCaseRewardsCount');
 const pendingCaseRewardsList = document.getElementById('pendingCaseRewardsList');
 const caseResultCaseImage = document.getElementById('caseResultCaseImage');
+const caseDetailBanner = document.getElementById('caseDetailBanner');
 const caseResultCaseName = document.getElementById('caseResultCaseName');
 const caseDetailPrice = document.getElementById('caseDetailPrice');
 const caseResultStatus = document.getElementById('caseResultStatus');
@@ -565,6 +567,7 @@ const pendingCaseClaimAllBtn = document.getElementById('pendingCaseClaimAllBtn')
 const pendingCaseSellAllBtn = document.getElementById('pendingCaseSellAllBtn');
 const onlineUsersCount = document.getElementById('onlineUsersCount');
 const adminUsersEl = document.getElementById('adminUsers');
+const adminRefreshAllBtn = document.getElementById('adminRefreshAllBtn');
 const adminFeedback = document.getElementById('adminFeedback');
 const adminInventoryModal = document.getElementById('adminInventoryModal');
 const adminInventoryClearBtn = document.getElementById('adminInventoryClearBtn');
@@ -572,6 +575,8 @@ const adminInventoryTitle = document.getElementById('adminInventoryTitle');
 const adminInventorySummary = document.getElementById('adminInventorySummary');
 const adminInventoryFeedback = document.getElementById('adminInventoryFeedback');
 const adminInventoryGrid = document.getElementById('adminInventoryGrid');
+const adminInventoryCatalogSearch = document.getElementById('adminInventoryCatalogSearch');
+const adminInventoryCatalogResults = document.getElementById('adminInventoryCatalogResults');
 const adminInventoryClose = document.getElementById('adminInventoryClose');
 const adminModerationModal = document.getElementById('adminModerationModal');
 const adminModerationTitle = document.getElementById('adminModerationTitle');
@@ -752,6 +757,7 @@ let pendingSell = null;
 let pendingConfirm = null;
 let activeAdminInventoryPlayerId = null;
 let adminInventoryOperationInFlight = false;
+let forcedPageRefreshPending = false;
 let activeAdminModerationPlayerId = null;
 let suspensionCountdownTimer = null;
 let presenceHeartbeatTimer = null;
@@ -868,6 +874,10 @@ function skinDisplayName(name) {
   return String(name || 'Предмет').replace(/\s*(?:\(|\[)\s*(?:factory\s+new|minimal\s+wear|field[ -]?tested|well[ -]?worn|battle[ -]?(?:scarred|scared))\s*(?:\)|\])\s*$/i, '').trim();
 }
 
+function safeCaseGlowColor(color) {
+  return /^#[0-9a-f]{6}$/i.test(String(color || '')) ? String(color) : '#4ade80';
+}
+
 function chanceColor(percent) {
   const stops = [
     [0, [239, 48, 58]], [9, [239, 48, 58]], [10, [255, 104, 38]],
@@ -941,6 +951,7 @@ function showAuthScreen() {
   appEl.style.display = 'none';
   suspensionScreen.hidden = true;
   authScreen.classList.remove('hide');
+  document.title = 'SGRADER UP | CS2';
 }
 
 function formatSuspensionTime(milliseconds) {
@@ -958,6 +969,7 @@ function showSuspensionScreen(until, reason = '') {
   appEl.style.display = 'none';
   authScreen.classList.add('hide');
   suspensionScreen.hidden = false;
+  document.title = 'БАН | SGRADER UP';
   suspensionReason.textContent = `Причина: ${String(reason || 'не указана')}`;
   suspensionScreen.dataset.until = String(expiresAt);
   const updateCountdown = () => {
@@ -969,7 +981,7 @@ function showSuspensionScreen(until, reason = '') {
       return;
     }
     const endText = new Date(expiresAt).toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
-    suspensionCountdown.textContent = `Осталось ${formatSuspensionTime(remaining)} · окончание ${endText}.`;
+    suspensionCountdown.textContent = `Блокировка действует до ${endText}. Осталось ${formatSuspensionTime(remaining)}.`;
   };
   if (suspensionCountdownTimer) clearInterval(suspensionCountdownTimer);
   updateCountdown();
@@ -1061,6 +1073,44 @@ function handleCurrentUserProfileUpdate(profile, requestedUserId) {
   }
 }
 
+function handleAdminPageRefreshCommand(command, requestedUserId) {
+  if (!command || command.command !== 'refresh' || currentUser?.id !== requestedUserId) return;
+  if (command.target_user_id && String(command.target_user_id) !== String(requestedUserId)) return;
+  const issuedAt = Date.parse(command.created_at || '');
+  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > 5 * 60 * 1000) return;
+  const commandKey = `cs2up_refresh_command_${command.id}`;
+  try {
+    if (sessionStorage.getItem(commandKey)) return;
+    sessionStorage.setItem(commandKey, '1');
+  } catch (error) {
+    console.warn('Could not persist page refresh command receipt:', error);
+  }
+  if (forcedPageRefreshPending) return;
+  forcedPageRefreshPending = true;
+
+  const reloadDeadline = Date.now() + 30000;
+  const reloadWhenSafe = async () => {
+    if (currentUser?.id !== requestedUserId) {
+      forcedPageRefreshPending = false;
+      return;
+    }
+    if ((spinning || caseOpeningInProgress || caseSettlementInProgress) && Date.now() < reloadDeadline) {
+      setTimeout(reloadWhenSafe, 500);
+      return;
+    }
+    try {
+      await Promise.race([
+        stateSaveQueue,
+        new Promise(resolve => setTimeout(resolve, 3000))
+      ]);
+    } catch (error) {
+      console.warn('State save before requested page refresh failed:', error);
+    }
+    window.location.reload();
+  };
+  setTimeout(reloadWhenSafe, 250);
+}
+
 function stopCurrentUserRealtimeUpdates() {
   if (currentUserUpdatesChannel && supabaseClient) {
     void supabaseClient.removeChannel(currentUserUpdatesChannel);
@@ -1088,6 +1138,9 @@ function startCurrentUserRealtimeUpdates(userId) {
       }, payload => {
         if (!isLocalGameStateEcho(payload.new?.state)) queueCurrentUserStateRefresh();
       })
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'admin_user_commands'
+      }, payload => handleAdminPageRefreshCommand(payload.new, requestedUserId))
       .subscribe(status => {
         if (status === 'SUBSCRIBED') {
           currentUserRealtimeReady = true;
@@ -1181,19 +1234,20 @@ authForm.addEventListener('submit', async (e) => {
 });
 
 async function loginAs(authUser) {
-  let { data: profile, error: profileError } = await supabaseClient
+  const { data: profile, error: profileError } = await supabaseClient
     .from('profiles')
     .select('user_id, player_id, username, role, promo_code, suspended_until, suspension_reason')
     .eq('user_id', authUser.id)
     .single();
-  if (profileError && (profileError.code === '42703' || String(profileError.message || '').toLowerCase().includes('suspended_until'))) {
-    ({ data: profile, error: profileError } = await supabaseClient
-      .from('profiles')
-      .select('user_id, player_id, username, role, promo_code')
-      .eq('user_id', authUser.id)
-      .single());
+  if (profileError) {
+    if (profileError.code === '42703' || /suspended_until|suspension_reason/i.test(String(profileError.message || ''))) {
+      showAuthScreen();
+      showAuthError('Не удалось проверить блокировку аккаунта. Обнови Supabase-миграцию supabase/admin-moderation.sql; вход временно закрыт до проверки.');
+      console.error('Suspension status could not be verified; keeping the app locked:', profileError);
+      return;
+    }
+    throw profileError;
   }
-  if (profileError) throw profileError;
 
   currentUser = {
     id: authUser.id,
@@ -1837,6 +1891,29 @@ function activateTab(page) {
   if (page === 'battles') { drawBattleWheel(); void loadBattles(); renderBattleList(); renderBattleArchive(); }
 }
 
+async function requestAdminPageRefresh(playerId = null, button = null) {
+  if (!currentUser || currentUser.role !== 'admin' || !supabaseClient) return;
+  if (button) button.disabled = true;
+  if (adminRefreshAllBtn) adminRefreshAllBtn.disabled = true;
+  adminFeedback.textContent = 'Отправляю команду обновления…';
+  adminFeedback.classList.add('show');
+  const { data, error } = await supabaseClient.rpc('admin_request_page_refresh', {
+    p_player_id: playerId == null ? null : Number(playerId)
+  });
+  if (error) {
+    adminFeedback.textContent = /admin_request_page_refresh|function|schema cache|does not exist/i.test(String(error.message || ''))
+      ? 'Примени supabase/admin-live-controls-case-glow.sql в SQL Editor.'
+      : 'Не удалось отправить команду обновления. Проверь соединение.';
+    console.error('Could not request player page refresh:', error);
+  } else {
+    adminFeedback.textContent = playerId == null
+      ? 'Команда обновления отправлена всем авторизованным игрокам онлайн.'
+      : `Команда обновления отправлена игроку ${data.username || ''} (ID ${data.player_id}). Она выполнится, когда его вкладка получит сигнал.`;
+  }
+  if (button?.isConnected) button.disabled = false;
+  if (adminRefreshAllBtn) adminRefreshAllBtn.disabled = false;
+}
+
 // ============================================================
 // БАЛАНС
 // ============================================================
@@ -1920,7 +1997,7 @@ async function renderAdminUsers() {
         <input class="admin-amount" type="number" min="0.01" max="${maxOperationAmount}" step="0.01" placeholder="Сумма" aria-label="Сумма списания">
         <button class="btn-small danger" type="submit">Снять</button>
       </form></td>
-      <td><button class="btn-small admin-moderate-open ${activeSuspension ? 'danger' : ''}" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}" data-suspended-until="${escapeHtml(user.suspended_until || '')}" data-suspension-reason="${escapeHtml(user.suspension_reason || '')}">${activeSuspension ? 'Отстранён' : 'Управление'}</button></td>
+      <td><div class="admin-player-actions"><button class="btn-small admin-moderate-open ${activeSuspension ? 'danger' : ''}" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}" data-suspended-until="${escapeHtml(user.suspended_until || '')}" data-suspension-reason="${escapeHtml(user.suspension_reason || '')}">${activeSuspension ? 'Отстранён' : 'Управление'}</button><button class="btn-small admin-player-refresh" type="button" data-player-refresh="${escapeHtml(user.player_id)}" title="Перезагрузить страницу игрока"><iconify-icon icon="mdi:refresh"></iconify-icon> Обновить</button></div></td>
       <td><button class="btn-small admin-inventory-open" type="button" data-player-id="${escapeHtml(user.player_id)}" data-username="${escapeHtml(user.username)}">Открыть</button></td>
     </tr>`;
   }).join('') || '<tr><td colspan="9">Пользователей пока нет.</td></tr>';
@@ -2014,7 +2091,7 @@ function caseSkinSnapshot(item) {
   return {
     id: item.id,
     name: skinDisplayName(item.name),
-    price: Number(item.price || 0),
+    price: Math.round(Number(item.price || 0) * 100) / 100,
     marketHashName: item.marketHashName || null,
     priceSource: item.priceSource || 'estimate',
     img: item.img || '',
@@ -2077,8 +2154,9 @@ function renderCaseCards() {
     const art = gameCase.image_url
       ? `<img src="${escapeHtml(gameCase.image_url)}" alt="${escapeHtml(gameCase.name)}">`
       : '<iconify-icon icon="mdi:package-variant-closed"></iconify-icon>';
+    const glowColor = safeCaseGlowColor(gameCase.glow_color);
     return `<article class="case-card" data-case-id="${escapeHtml(gameCase.id)}">
-      <div class="case-card-art">${art}</div>
+      <div class="case-card-art" style="--case-glow:${glowColor}">${art}</div>
       <div class="case-card-body"><h2 title="${escapeHtml(gameCase.name)}">${escapeHtml(gameCase.name)}</h2>
         <div class="case-card-meta"><span>Цена</span><strong>${fmt(Number(gameCase.price))}</strong></div>
         <button type="button" class="case-open-btn" data-case-open="${escapeHtml(gameCase.id)}">Открыть</button>
@@ -2093,6 +2171,7 @@ function renderCaseDetails(gameCase) {
     ? [...gameCase.contents].sort((a, b) => Number(a.chance || 0) - Number(b.chance || 0))
     : [];
   caseResultCaseName.textContent = gameCase.name;
+  caseDetailBanner.style.setProperty('--case-glow', safeCaseGlowColor(gameCase.glow_color));
   caseResultCaseImage.src = gameCase.image_url || '';
   caseResultCaseImage.hidden = !gameCase.image_url;
   caseDetailPrice.textContent = `${fmt(Number(gameCase.price))} за кейс`;
@@ -2207,8 +2286,13 @@ async function loadCases() {
   }
   await loadCaseCategories();
   let { data, error } = await supabaseClient.from('game_cases')
-    .select('id,name,price,image_url,contents,category_id,sort_order,created_at,updated_at')
+    .select('id,name,price,image_url,glow_color,contents,category_id,sort_order,created_at,updated_at')
     .order('created_at', { ascending: false });
+  if (error && /glow_color|column/i.test(String(error.message || ''))) {
+    ({ data, error } = await supabaseClient.from('game_cases')
+      .select('id,name,price,image_url,contents,category_id,sort_order,created_at,updated_at')
+      .order('created_at', { ascending: false }));
+  }
   if (error && /sort_order|category_id|column/i.test(String(error.message || ''))) {
     ({ data, error } = await supabaseClient.from('game_cases')
       .select('id,name,price,image_url,contents,category_id,created_at,updated_at')
@@ -2311,6 +2395,11 @@ function setCaseImagePreview(url) {
   adminCaseImagePreview.hidden = false;
 }
 
+function syncCaseGlowPreview() {
+  const glow = safeCaseGlowColor(adminCaseGlowColor.value);
+  adminCaseImagePreview.parentElement?.style.setProperty('--case-glow', glow);
+}
+
 function resetCaseEditor() {
   if (caseImagePreviewObjectUrl) URL.revokeObjectURL(caseImagePreviewObjectUrl);
   caseImagePreviewObjectUrl = null;
@@ -2322,6 +2411,8 @@ function resetCaseEditor() {
   adminCaseImagePreview.removeAttribute('src');
   adminCaseImagePreview.hidden = true;
   adminCaseImageStatus.textContent = 'PNG до 5 МБ';
+  adminCaseGlowColor.value = '#4ade80';
+  syncCaseGlowPreview();
   adminCaseFeedback.textContent = '';
   adminCaseDeleteBtn.hidden = true;
   adminCaseDeleteBtn.disabled = false;
@@ -2349,6 +2440,8 @@ function openCaseEditor(gameCase) {
   caseImageUrl = gameCase.image_url || '';
   caseDraftContents = (gameCase.contents || []).map(entry => ({ item: entry.item, chance: Number(entry.chance) }));
   adminCaseName.value = gameCase.name || '';
+  adminCaseGlowColor.value = safeCaseGlowColor(gameCase.glow_color);
+  syncCaseGlowPreview();
   adminCaseCategory.value = gameCase.category_id || '';
   syncCustomSelect(adminCaseCategory);
   adminCasePrice.value = displayCurrency === 'USD'
@@ -3124,6 +3217,7 @@ adminCaseCategories.addEventListener('click', event => {
   });
 });
 adminCaseSkinSearch.addEventListener('input', renderCaseSkinResults);
+adminCaseGlowColor.addEventListener('input', syncCaseGlowPreview);
 adminCaseImageFile.addEventListener('change', () => void uploadCaseImage(adminCaseImageFile.files?.[0]));
 adminCaseSkinResults.addEventListener('click', event => {
   const button = event.target.closest('[data-case-add]');
@@ -3196,15 +3290,13 @@ adminCaseForm.addEventListener('submit', async event => {
       p_name: name,
       p_price: price,
       p_image_url: caseImageUrl || null,
-      p_contents: caseDraftContents.map(entry => ({ item: entry.item, chance: Number(entry.chance) }))
+      p_contents: caseDraftContents.map(entry => ({ item: entry.item, chance: Number(entry.chance) })),
+      p_glow_color: safeCaseGlowColor(adminCaseGlowColor.value)
     };
-    let { data, error } = await supabaseClient.rpc('admin_save_game_case', {
+    const { data, error } = await supabaseClient.rpc('admin_save_game_case', {
       ...saveArgs,
       p_category_id: adminCaseCategory.value || null
     });
-    if (error && !adminCaseCategory.value && /function|schema cache|does not exist/i.test(String(error.message || ''))) {
-      ({ data, error } = await supabaseClient.rpc('admin_save_game_case', saveArgs));
-    }
     if (error) throw error;
     caseEditorId = data.id;
     adminCaseFormTitle.textContent = 'Изменить кейс';
@@ -3213,8 +3305,8 @@ adminCaseForm.addEventListener('submit', async event => {
     await loadCases();
     adminCaseDeleteBtn.hidden = false;
   } catch (error) {
-    adminCaseFeedback.textContent = /function|schema cache|does not exist/i.test(String(error.message || ''))
-      ? 'Выполни supabase/case-categories.sql в SQL Editor.'
+    adminCaseFeedback.textContent = /function|schema cache|does not exist|glow_color/i.test(String(error.message || ''))
+      ? 'Выполни supabase/admin-live-controls-case-glow.sql в SQL Editor.'
       : 'Не удалось сохранить кейс. Проверь данные и подключение.';
     console.error('Could not save game case:', error);
   } finally {
@@ -3461,6 +3553,8 @@ async function loadAdminPlayerInventory(playerId, username = '') {
   adminInventoryTitle.textContent = username ? 'Инвентарь · ' + username + ' (#' + playerId + ')' : 'Инвентарь игрока #' + playerId;
   adminInventorySummary.textContent = '';
   adminInventoryFeedback.textContent = '';
+  adminInventoryCatalogSearch.value = '';
+  adminInventoryCatalogResults.innerHTML = '<div class="admin-inventory-catalog-hint">Введи название предмета из каталога.</div>';
   adminInventoryGrid.innerHTML = '<div class="admin-inventory-empty">Загружаю инвентарь…</div>';
   adminInventoryModal.classList.add('show');
   adminInventoryModal.setAttribute('aria-hidden', 'false');
@@ -3492,6 +3586,92 @@ async function loadAdminPlayerInventory(playerId, username = '') {
         '</div></article>';
     }).join('')
     : '<div class="admin-inventory-empty">Инвентарь пуст.</div>';
+}
+
+function renderAdminInventoryCatalogResults() {
+  if (!adminInventoryCatalogResults) return;
+  const query = adminInventoryCatalogSearch.value.trim().toLocaleLowerCase('ru-RU');
+  if (!query) {
+    adminInventoryCatalogResults.innerHTML = '<div class="admin-inventory-catalog-hint">Введи название предмета из каталога.</div>';
+    return;
+  }
+  if (!catalogLoaded) {
+    adminInventoryCatalogResults.innerHTML = '<div class="admin-inventory-catalog-hint">Загружаю каталог…</div>';
+    return;
+  }
+  const matches = SKINS_CATALOG.filter(item => item.catalogType === 'skin'
+    && String(item.name || '').toLocaleLowerCase('ru-RU').includes(query)).slice(0, 12);
+  if (!matches.length) {
+    adminInventoryCatalogResults.innerHTML = '<div class="admin-inventory-catalog-hint">Скины не найдены.</div>';
+    return;
+  }
+  adminInventoryCatalogResults.innerHTML = matches.map(item => `<button type="button" class="admin-inventory-catalog-option" data-admin-inventory-add="${escapeHtml(item.id)}" ${adminInventoryOperationInFlight ? 'disabled' : ''}>
+    <img src="${escapeHtml(item.img || '')}" alt="" loading="lazy"><span><strong>${escapeHtml(item.name)}</strong><small>${fmt(Number(item.price || 0))}</small></span><b>Добавить</b>
+  </button>`).join('');
+}
+
+function adminInventoryCatalogSnapshot(item) {
+  return {
+    id: String(item.id),
+    name: String(item.name || ''),
+    price: Math.round(Number(item.price || 0) * 100) / 100,
+    img: String(item.img || ''),
+    marketHashName: item.marketHashName || null,
+    priceSource: item.priceSource || 'estimate',
+    rarity: item.rarity || null,
+    catalogType: item.catalogType || 'skin',
+    category: item.category || '',
+    wear: item.wear || null,
+    floatMin: item.floatMin ?? null,
+    floatMax: item.floatMax ?? null,
+    stattrak: Boolean(item.stattrak),
+    souvenir: Boolean(item.souvenir),
+    effect: item.effect || null,
+    pattern: item.pattern || null
+  };
+}
+
+async function addAdminInventoryCatalogItem(catalogId) {
+  if (!currentUser || currentUser.role !== 'admin' || !activeAdminInventoryPlayerId || adminInventoryOperationInFlight) return;
+  const item = SKINS_CATALOG.find(entry => String(entry.id) === String(catalogId) && entry.catalogType === 'skin');
+  if (!item) {
+    adminInventoryFeedback.textContent = 'Этот скин больше не найден в каталоге. Обнови поиск.';
+    return;
+  }
+  const playerId = activeAdminInventoryPlayerId;
+  adminInventoryOperationInFlight = true;
+  renderAdminInventoryCatalogResults();
+  adminInventoryClearBtn.disabled = true;
+  adminInventoryFeedback.textContent = `Добавляю «${item.name}»…`;
+  const { data, error } = await supabaseClient.rpc('admin_add_player_inventory_item', {
+    p_player_id: playerId,
+    p_item: adminInventoryCatalogSnapshot(item)
+  });
+  if (error) {
+    adminInventoryOperationInFlight = false;
+    adminInventoryFeedback.textContent = /admin_add_player_inventory_item|function|schema cache|does not exist/i.test(String(error.message || ''))
+      ? 'Примени supabase/admin-live-controls-case-glow.sql в SQL Editor.'
+      : 'Не удалось добавить скин. Проверь каталог и соединение.';
+    console.error('Could not add catalog item to player inventory:', error);
+    renderAdminInventoryCatalogResults();
+    return;
+  }
+  const searchValue = adminInventoryCatalogSearch.value;
+  await loadAdminPlayerInventory(playerId, data.username || '');
+  adminInventoryCatalogSearch.value = searchValue;
+  adminInventoryFeedback.textContent = `«${data.item_name || item.name}» добавлен в инвентарь игрока ${data.username || `#${playerId}`}.`;
+  adminInventoryOperationInFlight = false;
+  adminInventoryClearBtn.disabled = false;
+  renderAdminInventoryCatalogResults();
+  if (String(currentUser.playerId) === String(playerId)) {
+    await loadUserState();
+    updateBalanceUI();
+    renderMyInventory();
+    renderInventory();
+    renderTargets();
+    renderProfile();
+    restoreSlotsFromState();
+  }
 }
 
 async function performAdminInventoryAction(action, itemId) {
@@ -3573,6 +3753,11 @@ async function performAdminInventoryClear() {
 }
 
 adminUsersEl.addEventListener('click', event => {
+  const refreshButton = event.target.closest('[data-player-refresh]');
+  if (refreshButton) {
+    void requestAdminPageRefresh(refreshButton.dataset.playerRefresh, refreshButton);
+    return;
+  }
   const moderationButton = event.target.closest('.admin-moderate-open');
   if (moderationButton) {
     openAdminModeration(moderationButton.dataset.playerId, moderationButton.dataset.username, moderationButton.dataset.suspendedUntil, moderationButton.dataset.suspensionReason);
@@ -3581,6 +3766,8 @@ adminUsersEl.addEventListener('click', event => {
   const button = event.target.closest('.admin-inventory-open');
   if (button) void loadAdminPlayerInventory(button.dataset.playerId, button.dataset.username);
 });
+
+adminRefreshAllBtn?.addEventListener('click', () => void requestAdminPageRefresh());
 
 adminInventoryClose.addEventListener('click', closeAdminInventoryModal);
 adminInventoryModal.addEventListener('click', event => {
@@ -3592,6 +3779,12 @@ adminInventoryClearBtn.addEventListener('click', () => {
   openConfirm('Очистить инвентарь?', `Удалить все предметы игрока #${playerId}? Баланс игрока останется без изменений.`, () => {
     void performAdminInventoryClear();
   });
+});
+
+adminInventoryCatalogSearch.addEventListener('input', renderAdminInventoryCatalogResults);
+adminInventoryCatalogResults.addEventListener('click', event => {
+  const button = event.target.closest('[data-admin-inventory-add]');
+  if (button && !button.disabled) void addAdminInventoryCatalogItem(button.dataset.adminInventoryAdd);
 });
 
 adminModerationClose.addEventListener('click', closeAdminModeration);
@@ -4041,6 +4234,7 @@ async function loadSkins() {
       restoreSlotsFromState();
       if (currentUser.role === 'admin' && !adminCaseForm.hidden) renderCaseSkinResults();
     }
+    if (adminInventoryModal.classList.contains('show')) renderAdminInventoryCatalogResults();
   } catch (err) {
     invLoading.textContent = 'Ошибка загрузки каталога';
     targetLoading.textContent = 'Ошибка загрузки каталога';
