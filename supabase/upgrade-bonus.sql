@@ -9,6 +9,7 @@ create table if not exists public.skin_upgrade_runs (
   stage integer not null default 0 check (stage between 0 and 5),
   initial_item jsonb not null,
   current_item jsonb not null,
+  bonus_base_item jsonb,
   target_item jsonb,
   base_chance numeric(7,4) not null check (base_chance between 0 and 100),
   bonus_chance numeric(7,4) not null default 0 check (bonus_chance between 0 and 100),
@@ -25,6 +26,8 @@ create table if not exists public.skin_upgrade_runs (
 -- Keep existing projects compatible with the cash-prize bonus path.
 alter table public.skin_upgrade_runs
   add column if not exists awarded_balance numeric(14, 2) not null default 0;
+alter table public.skin_upgrade_runs
+  add column if not exists bonus_base_item jsonb;
 alter table public.skin_upgrade_runs
   drop constraint if exists skin_upgrade_runs_award_kind_check;
 alter table public.skin_upgrade_runs
@@ -46,6 +49,33 @@ create unique index if not exists skin_upgrade_runs_one_active_per_user
 
 create index if not exists skin_upgrade_runs_user_created_idx
   on public.skin_upgrade_runs (user_id, created_at desc);
+
+-- Older first-stage runs may have kept the ordinary goal without an inventory
+-- instance id. Normalize it so returning that goal cannot make it disappear.
+update public.skin_upgrade_runs
+   set current_item = jsonb_set(
+     jsonb_set(current_item, '{instanceId}', to_jsonb(gen_random_uuid()::text), true),
+     '{catalogId}', coalesce(current_item -> 'catalogId', current_item -> 'id'), true
+   )
+ where status in ('bonus_ready', 'bonus_pending')
+   and nullif(current_item ->> 'instanceId', '') is null;
+
+-- Preserve the ordinary goal as the multiplier base for all five bonus rolls.
+update public.skin_upgrade_runs
+   set bonus_base_item = case
+     when status = 'base_pending' then target_item
+     when stage = 1 then current_item
+     else jsonb_set(
+       current_item,
+       '{price}',
+       to_jsonb(round(
+         coalesce((initial_item ->> 'price')::numeric, 0)
+         / nullif(base_chance / 100, 0), 2
+       )),
+       true
+     )
+   end
+ where status <> 'complete' and bonus_base_item is null;
 
 alter table public.skin_upgrade_runs enable row level security;
 revoke all on table public.skin_upgrade_runs from public, anon, authenticated;
@@ -292,6 +322,8 @@ declare
   v_target jsonb;
   v_price numeric;
   v_stake_price numeric;
+  v_base_price numeric;
+  v_expected_price numeric;
   v_odds numeric;
   v_win_angle numeric;
   v_start_angle numeric;
@@ -316,12 +348,16 @@ begin
   if v_run.stage < 1 or v_run.stage > 5 then raise exception 'Bonus stage is invalid'; end if;
   v_stake_price := coalesce((v_run.current_item ->> 'price')::numeric, 0);
   if v_stake_price <= 0 then raise exception 'Bonus starting value is invalid'; end if;
+  v_base_price := coalesce((v_run.bonus_base_item ->> 'price')::numeric, v_stake_price);
+  v_expected_price := v_base_price * (v_run.stage * 2);
+  if v_base_price <= 0 then raise exception 'Bonus multiplier base is invalid'; end if;
 
   -- The first golden stage is based on the ordinary target selected by the
-  -- player. Once the market cap prevents a skin target, the chain continues
-  -- with server-priced balance prizes instead of stopping early.
+  -- player. Stages target x2, x4, x6, x8 and x10 of that base value. If the
+  -- catalogue has no suitable skin, continue with a balance prize.
   v_is_cash := coalesce(v_run.current_item ->> 'catalogType', 'skin') = 'balance'
-    or (jsonb_array_length(p_candidates) = 0 and v_stake_price * 2 > 8888888)
+    or v_expected_price > 8888888
+    or (jsonb_array_length(p_candidates) = 0 and v_run.stage > 1)
     or (jsonb_array_length(p_candidates) = 1 and p_candidates -> 0 ->> 'catalogType' = 'balance');
 
   if jsonb_array_length(p_candidates) = 0 and not v_is_cash then
@@ -350,8 +386,9 @@ begin
   if jsonb_array_length(p_candidates) > 250 then raise exception 'Too many bonus candidates'; end if;
   if v_is_cash then
     if coalesce(v_run.current_item ->> 'catalogType', 'skin') <> 'balance'
-       and v_stake_price * 2 <= 8888888 then
-      raise exception 'Balance prizes are only available past the market price cap';
+       and jsonb_array_length(p_candidates) > 0
+       and v_expected_price <= 8888888 then
+      raise exception 'Balance prizes require a missing catalogue target or a market cap';
     end if;
     v_target := jsonb_build_object(
       'id', 'upgrade-balance-prize',
@@ -359,7 +396,7 @@ begin
       'instanceId', gen_random_uuid()::text,
       'name', 'Денежный баланс',
       'catalogType', 'balance',
-      'price', round(v_stake_price * 2, 2),
+      'price', round(v_expected_price, 2),
       'img', ''
     );
   else
@@ -370,8 +407,10 @@ begin
       raise exception 'Bonus candidate must be a skin';
     end if;
     v_price := (v_candidate ->> 'price')::numeric;
-    if v_price < v_stake_price * 1.5 or v_price > v_stake_price * 2.5 then
-      raise exception 'Bonus target must be near twice the current wager';
+    if v_price <= v_stake_price
+       or v_price < v_expected_price * 0.75
+       or v_price > v_expected_price * 1.25 then
+      raise exception 'Bonus target must match the current multiplier stage';
     end if;
     if coalesce(v_candidate ->> 'id', '') = coalesce(v_run.current_item ->> 'catalogId', v_run.current_item ->> 'id', '') then
       raise exception 'Bonus target cannot repeat the wager skin';
@@ -443,8 +482,10 @@ begin
 
   if v_run.status = 'base_pending' and v_run.outcome = 'bonus' then
     -- The ordinary target is the starting value for the golden chain.
+    v_award := jsonb_set(v_run.target_item, '{instanceId}', to_jsonb(gen_random_uuid()::text), true);
+    v_award := jsonb_set(v_award, '{catalogId}', coalesce(v_run.target_item -> 'id', v_run.target_item -> 'catalogId'), true);
     update public.skin_upgrade_runs set status = 'bonus_ready', stage = 1,
-      current_item = target_item, target_item = null
+      current_item = v_award, bonus_base_item = v_award, target_item = null
      where id = p_run_id returning * into v_run;
     return to_jsonb(v_run);
   end if;

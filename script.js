@@ -4587,7 +4587,7 @@ function updateChance() {
       currentChance = Number(run.bonus_chance || 0);
       currentBonusChance = 0;
       chanceValue.textContent = formatChance(currentChance);
-      wheelSub.textContent = `бонус · x${2 ** Number(run.stage || 1)}`;
+      wheelSub.textContent = `бонус · x${2 * Number(run.stage || 1)}`;
       drawWheel(currentChance, false, 0);
     } else {
       currentChance = 0;
@@ -6548,6 +6548,7 @@ targetCategory.addEventListener('change', () => {
 // ============================================================
 function paintUpgradeRun(run) {
   activeUpgradeRun = run;
+  const bonusMultiplier = 2 * Number(run.stage || 1);
   const currentItem = run.current_item || run.initial_item || null;
   const isBaseSpin = run.status === 'base_pending';
   const isBonusSpin = run.status === 'bonus_pending';
@@ -6568,9 +6569,9 @@ function paintUpgradeRun(run) {
     currentChance = Number(run.bonus_chance || 0);
     currentBonusChance = 0;
     chanceValue.textContent = formatChance(currentChance);
-    wheelSub.textContent = `бонус · x${2 ** Number(run.stage || 1)}`;
+    wheelSub.textContent = `бонус · x${bonusMultiplier}`;
     upgradeBonusStatus.hidden = false;
-    upgradeBonusStatus.textContent = `Бонусный прокрут ${run.stage}/5 · цель x${2 ** Number(run.stage || 1)}`;
+    upgradeBonusStatus.textContent = `Бонусный прокрут ${run.stage}/5 · цель x${bonusMultiplier}`;
     drawWheel(currentChance, false, 0);
   } else {
     currentChance = 0;
@@ -6578,7 +6579,7 @@ function paintUpgradeRun(run) {
     chanceValue.textContent = '—';
     wheelSub.textContent = 'бонус готовится';
     upgradeBonusStatus.hidden = false;
-    upgradeBonusStatus.textContent = `Подготовка бонусного этапа ${run.stage}/5 · x${2 ** Number(run.stage || 1)}`;
+    upgradeBonusStatus.textContent = `Подготовка бонусного этапа ${run.stage}/5 · x${bonusMultiplier}`;
     drawWheel(0, false, 0);
   }
   upgradeBtn.disabled = true;
@@ -6587,14 +6588,16 @@ function paintUpgradeRun(run) {
   updateUpgradeSelectionCards();
 }
 
-function buildBonusCandidatePool(currentItem) {
+function buildBonusCandidatePool(currentItem, baseItem, stage) {
   const currentPrice = Number(currentItem?.price || 0);
   if (currentItem?.catalogType === 'balance') return [];
   const currentCatalogId = String(currentItem?.catalogId ?? currentItem?.id ?? '');
-  const expectedPrice = currentPrice * 2;
+  const basePrice = Number(baseItem?.price || currentPrice);
+  const expectedPrice = basePrice * 2 * Math.max(1, Math.min(5, Number(stage) || 1));
   const nearDouble = SKINS_CATALOG.filter(item => item.catalogType === 'skin'
     && String(item.id) !== currentCatalogId
     && Number(item.price || 0) > currentPrice
+    && Number(item.price || 0) <= 8888888
     && Number(item.price || 0) >= expectedPrice * 0.75
     && Number(item.price || 0) <= expectedPrice * 1.25)
     .sort((left, right) => Math.abs(Math.log(Number(left.price) / expectedPrice)) - Math.abs(Math.log(Number(right.price) / expectedPrice)));
@@ -6696,7 +6699,7 @@ async function processSavedUpgradeRun(initialRun) {
       await catalogLoadPromise.catch(() => {});
       if (currentUser?.id !== signedInUserId) return;
       const currentItem = run.current_item || run.initial_item;
-      const candidates = buildBonusCandidatePool(currentItem);
+      const candidates = buildBonusCandidatePool(currentItem, run.bonus_base_item, run.stage);
       const { data, error } = await supabaseClient.rpc('prepare_skin_upgrade_bonus', {
         p_run_id: run.id,
         p_candidates: candidates,
