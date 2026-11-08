@@ -3742,10 +3742,10 @@ function paintWheel(chancePercent, bonusChancePercent = 0) {
       const goldStart = Math.PI / 2 - bonusAngle / 2;
       const goldEnd = Math.PI / 2 + bonusAngle / 2;
       ctx.beginPath();
-      ctx.arc(cx, cy, ringRadius, goldStart - winAngle / 2, goldStart);
+      ctx.arc(cx, cy, ringRadius, Math.PI / 2 - winAngle / 2, goldStart);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(cx, cy, ringRadius, goldEnd, goldEnd + winAngle / 2);
+      ctx.arc(cx, cy, ringRadius, goldEnd, Math.PI / 2 + winAngle / 2);
       ctx.stroke();
     } else {
       const start = Math.PI / 2 - winAngle / 2;

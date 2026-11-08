@@ -188,9 +188,9 @@ begin
     else 0
   end;
   v_roll := random() * 100;
-  if v_roll < v_base_chance then
+  if v_roll < v_base_chance - v_bonus_chance then
     v_outcome := 'win';
-  elsif v_roll < v_base_chance + v_bonus_chance then
+  elsif v_roll < v_base_chance then
     v_outcome := 'bonus';
   else
     v_outcome := 'lose';
@@ -201,12 +201,13 @@ begin
   if v_outcome = 'win' then
     if v_bonus_angle > 0 then
       -- Golden 5% stays at bottom-center. Normal wins occupy equal arcs on
-      -- both sides, preserving the original centered chance bar visually.
+      -- both sides inside the displayed base chance (it is not added on top).
       if random() < 0.5 then
-        v_final_angle := mod(360::numeric - (v_win_angle + v_bonus_angle) / 2
-          + random()::numeric * (v_win_angle / 2), 360::numeric);
+        v_final_angle := mod(360::numeric - v_win_angle / 2
+          + random()::numeric * ((v_win_angle - v_bonus_angle) / 2), 360::numeric);
       else
-        v_final_angle := mod(v_bonus_angle / 2 + random()::numeric * (v_win_angle / 2), 360::numeric);
+        v_final_angle := mod(v_bonus_angle / 2
+          + random()::numeric * ((v_win_angle - v_bonus_angle) / 2), 360::numeric);
       end if;
     else
       v_final_angle := mod(360::numeric - v_win_angle / 2 + random()::numeric * v_win_angle, 360::numeric);
@@ -215,8 +216,8 @@ begin
     v_final_angle := mod(360::numeric - v_bonus_angle / 2 + random()::numeric * v_bonus_angle, 360::numeric);
   else
     if v_bonus_angle > 0 then
-      v_lose_angle := greatest(0::numeric, 360::numeric - v_win_angle - v_bonus_angle);
-      v_final_angle := mod((v_win_angle + v_bonus_angle) / 2
+      v_lose_angle := greatest(0::numeric, 360::numeric - v_win_angle);
+      v_final_angle := mod(v_win_angle / 2
         + random()::numeric * v_lose_angle, 360::numeric);
     else
       v_final_angle := mod(v_win_angle / 2
