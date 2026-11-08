@@ -6726,7 +6726,9 @@ async function processSavedUpgradeRun(initialRun) {
     if (currentUser?.id !== signedInUserId) return;
 
     const hit = run.outcome === 'win' || run.outcome === 'hit';
-    wheelWrap.classList.add(run.outcome === 'bonus' ? 'upgrade-wheel-bonus' : hit ? 'upgrade-wheel-win' : 'upgrade-wheel-lose');
+    const firstBonusStage = run.status === 'bonus_pending' && Number(run.stage) === 1;
+    const guaranteedFirstBonus = firstBonusStage && run.outcome === 'miss';
+    wheelWrap.classList.add(run.outcome === 'bonus' ? 'upgrade-wheel-bonus' : hit || guaranteedFirstBonus ? 'upgrade-wheel-win' : 'upgrade-wheel-lose');
     let settled;
     try {
       settled = await settleSavedUpgradeRun(run);

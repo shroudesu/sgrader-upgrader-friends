@@ -473,17 +473,17 @@ begin
     v_complete := true;
   elsif v_run.outcome = 'miss' then
     if v_run.stage = 1 then
-      -- Keep the original stake if the first golden roll misses.
-      v_award := v_run.initial_item;
-      v_award_kind := 'return';
+      -- Stage x2 is guaranteed: the first roll only decides whether the
+      -- player may continue to a higher stage, not whether x2 is awarded.
+      v_award := v_run.target_item;
     else
       v_award := v_run.current_item;
-      if coalesce(v_award ->> 'catalogType', 'skin') = 'balance' then
-        v_award_kind := 'balance';
-      else
-        v_award_kind := 'win';
-        v_is_new_prize := true;
-      end if;
+    end if;
+    if coalesce(v_award ->> 'catalogType', 'skin') = 'balance' then
+      v_award_kind := 'balance';
+    else
+      v_award_kind := 'win';
+      v_is_new_prize := true;
     end if;
     v_complete := true;
   else
