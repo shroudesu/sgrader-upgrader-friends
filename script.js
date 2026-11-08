@@ -222,7 +222,7 @@ function stableCatalogFactor(value) {
 // Market.CSGO publishes a public RUB snapshot with the cheapest active offer
 // for each market hash name. The browser cache is reduced to our catalog names.
 const MARKET_PRICE_URL = 'market-prices.json';
-const MARKET_PRICE_CACHE_KEY = 'cs2up_market_csgo_rub_v1';
+const MARKET_PRICE_CACHE_KEY = 'cs2up_market_csgo_rub_v2';
 const MARKET_PRICE_CACHE_TTL_MS = 5 * 60 * 1000;
 const MARKET_PRICE_POLL_MS = 5 * 60 * 1000;
 const MARKET_PRICE_TIMEOUT_MS = 12000;

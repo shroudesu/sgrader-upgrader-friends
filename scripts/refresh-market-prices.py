@@ -113,6 +113,36 @@ def current_items() -> dict[str, dict]:
     for key, price in prices.items():
         for name in catalog[key]:
             result[name] = {"market_hash_name": name, "price": format(price, ".2f")}
+
+    # Keep manually verified rare-item prices stable across scheduled feed
+    # refreshes. The override file stores site prices in RUB.
+    override_file = ROOT / "market-price-overrides.json"
+    if override_file.is_file():
+        overrides = json.loads(override_file.read_text(encoding="utf-8"))
+        if str(overrides.get("currency", "")).upper() != "RUB":
+            raise RuntimeError("market-price-overrides.json must use RUB")
+        for row in overrides.get("items", []):
+            name = str(row.get("market_hash_name") or "").strip()
+            key = normalize_name(name)
+            price = parse_price(row.get("price"))
+            if not key or price is None:
+                continue
+            for existing_name in list(result):
+                if normalize_name(existing_name) == key:
+                    del result[existing_name]
+            result[name] = {"market_hash_name": name, "price": format(price, ".2f")}
+
+    # Some Market.CSGO graffiti quotes are obvious outliers in the tens of
+    # millions. Keep them in the catalogue but cap those quotes at 400,000 RUB.
+    graffiti_names = {
+        normalize_name(item.get("market_hash_name") or item.get("marketHashName") or item.get("name"))
+        for item in read_catalog_file("graffiti.json")
+    }
+    for name, row in result.items():
+        price = parse_price(row.get("price"))
+        if normalize_name(name) in graffiti_names and price is not None and price > Decimal("10000000"):
+            row["price"] = "400000.00"
+
     timestamp = payload.get("time") or int(time.time())
     return {
         "success": True,

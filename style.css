@@ -402,7 +402,7 @@ input[type="range"]:active::-moz-range-thumb { transform: scale(1.12); }
 }
 .catalog-toggle:hover { border-color: var(--white); box-shadow: 0 0 12px var(--neon-soft); }
 .catalog-toggle iconify-icon { font-size: 20px; }
-.catalog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.upgrade-my-inventory,.catalog-grid,#targetGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .upgrade-my-inventory { max-height: 560px !important; }
 .upgrade-my-inventory .inv-card[role="button"]:focus-visible { outline: 2px solid var(--success); outline-offset: 1px; }
 .inventory-load-more { grid-column: 1/-1; justify-self: center; margin: 8px 0; }
@@ -1464,6 +1464,7 @@ select.native-select-source,
   .case-reel-item img { width: 94px; }
 }
 @media (max-width: 600px) {
+  .upgrade-my-inventory,.catalog-grid,#targetGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .case-detail-banner { min-height: 112px; gap: 12px; padding: 10px; }
   .case-detail-banner-image { width: 112px; height: 90px; flex-basis: 112px; }
   .case-detail-controls { grid-template-columns: 1fr; grid-template-areas: "quantity" "open" "skip"; }
