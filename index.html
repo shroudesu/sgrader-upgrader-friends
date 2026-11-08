@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
   <link rel="icon" type="image/png" href="newlogo.png">
-  <link rel="stylesheet" href="style.css?v=20261108-r21">
+  <link rel="stylesheet" href="style.css?v=20261108-r22">
 </head>
 <body>
 
@@ -60,6 +60,7 @@
     <button class="nav-tab active" data-tab="upgrade">Апгрейд</button>
     <button class="nav-tab" data-tab="battles">Батлы</button>
     <button class="nav-tab" data-tab="cases">Кейсы</button>
+    <button class="nav-tab ladder-nav-tab" data-tab="ladder">Ладдер</button>
     <button class="nav-tab" data-tab="profile">Профиль</button>
     <button class="nav-tab" data-tab="admin" id="adminNav" style="display:none">Админка</button>
   </nav>
@@ -338,6 +339,25 @@
     </section>
   </section>
 
+  <!-- ЛАДДЕР -->
+  <section class="tab-page" id="page-ladder">
+    <h1 class="title ladder-title">Ладдер</h1>
+    <p class="ladder-subtitle">Топ игроков SGRADER · обновляй рейтинг и смотри первые 100 мест</p>
+    <div class="panel ladder-panel">
+      <div class="ladder-toolbar">
+        <div class="ladder-tabs" role="tablist" aria-label="Тип рейтинга">
+          <button type="button" class="ladder-tab active" data-ladder-type="total" role="tab" aria-selected="true">Общий баланс</button>
+          <button type="button" class="ladder-tab" data-ladder-type="money" role="tab" aria-selected="false">Денежный баланс</button>
+          <button type="button" class="ladder-tab" data-ladder-type="skins" role="tab" aria-selected="false">Баланс скинов</button>
+        </div>
+        <button type="button" class="btn-small ladder-refresh" id="ladderRefreshBtn"><iconify-icon icon="mdi:refresh"></iconify-icon> Обновить</button>
+      </div>
+      <div class="ladder-description" id="ladderDescription">Сумма денежного баланса и стоимости всех скинов в инвентаре.</div>
+      <div class="ladder-status" id="ladderStatus" role="status" aria-live="polite">Загружаю рейтинг…</div>
+      <div class="ladder-list" id="ladderList" aria-live="polite"></div>
+    </div>
+  </section>
+
   <!-- ПРОФИЛЬ -->
   <section class="tab-page" id="page-profile">
     <h1 class="title">Профиль</h1>
@@ -610,6 +630,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
-<script src="script.js?v=20261108-r25"></script>
+<script src="script.js?v=20261108-r26"></script>
 </body>
 </html>

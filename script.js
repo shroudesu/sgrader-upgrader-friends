@@ -566,6 +566,11 @@ const pendingCaseActions = document.getElementById('pendingCaseActions');
 const pendingCaseClaimAllBtn = document.getElementById('pendingCaseClaimAllBtn');
 const pendingCaseSellAllBtn = document.getElementById('pendingCaseSellAllBtn');
 const onlineUsersCount = document.getElementById('onlineUsersCount');
+const ladderList = document.getElementById('ladderList');
+const ladderStatus = document.getElementById('ladderStatus');
+const ladderDescription = document.getElementById('ladderDescription');
+const ladderRefreshBtn = document.getElementById('ladderRefreshBtn');
+const ladderTypeButtons = [...document.querySelectorAll('[data-ladder-type]')];
 const adminUsersEl = document.getElementById('adminUsers');
 const adminRefreshAllBtn = document.getElementById('adminRefreshAllBtn');
 const adminFeedback = document.getElementById('adminFeedback');
@@ -758,6 +763,9 @@ let pendingConfirm = null;
 let activeAdminInventoryPlayerId = null;
 let adminInventoryOperationInFlight = false;
 let forcedPageRefreshPending = false;
+let activeLadderType = 'total';
+let leaderboardData = null;
+let leaderboardLoadInFlight = false;
 let activeAdminModerationPlayerId = null;
 let suspensionCountdownTimer = null;
 let presenceHeartbeatTimer = null;
@@ -1413,6 +1421,7 @@ currencySelect.addEventListener('change', () => {
     updateCaseOpenButton();
   }
   renderInventory(); renderTargets(); renderMyInventory();
+  if ($('page-ladder').classList.contains('active')) renderLeaderboards();
   updateChance();
 });
 
@@ -1888,8 +1897,90 @@ function activateTab(page) {
   if (page === 'admin') void loadCustomCatalogSkins();
   if (page === 'cases' || page === 'admin') void loadCases();
   if (page === 'cases') void loadPendingCaseRewards();
+  if (page === 'ladder') void loadLeaderboards();
   if (page === 'battles') { drawBattleWheel(); void loadBattles(); renderBattleList(); renderBattleArchive(); }
 }
+
+const LADDER_DESCRIPTIONS = {
+  total: 'Сумма денежного баланса и стоимости всех скинов в инвентаре.',
+  money: 'Только денежный баланс игрока.',
+  skins: 'Общая стоимость всех предметов в инвентаре игрока.'
+};
+
+function renderLeaderboards() {
+  if (!leaderboardData || !ladderList) return;
+  const rows = Array.isArray(leaderboardData[activeLadderType]) ? leaderboardData[activeLadderType] : [];
+  ladderDescription.textContent = LADDER_DESCRIPTIONS[activeLadderType];
+  ladderTypeButtons.forEach(button => {
+    const selected = button.dataset.ladderType === activeLadderType;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+  if (!rows.length) {
+    ladderList.innerHTML = '<div class="ladder-empty">Пока нет игроков в этом рейтинге.</div>';
+    return;
+  }
+  ladderList.innerHTML = rows.map(row => {
+    const place = Number(row.place || 0);
+    const avatar = String(row.avatar || '').trim();
+    const rowClass = place <= 3 ? `rank-${place}` : '';
+    const isSelf = String(row.player_id) === String(currentUser?.playerId || '');
+    const medalIcon = place === 1 ? 'mdi:crown' : place === 2 ? 'mdi:medal-outline' : place === 3 ? 'mdi:medal-outline' : '';
+    return `<article class="ladder-row ${rowClass}${isSelf ? ' is-self' : ''}">
+      <div class="ladder-rank">${medalIcon ? `<iconify-icon icon="${medalIcon}" aria-hidden="true"></iconify-icon>` : ''}<span>#${place}</span></div>
+      <div class="ladder-avatar"><iconify-icon icon="mdi:account-circle-outline" aria-hidden="true"></iconify-icon>${avatar ? `<img src="${escapeHtml(avatar)}" alt="" loading="lazy" decoding="async">` : ''}</div>
+      <div class="ladder-player"><strong title="${escapeHtml(row.username || 'Игрок')}">${escapeHtml(row.username || 'Игрок')}</strong><small>ID игрока: ${escapeHtml(row.player_id)}</small></div>
+      <strong class="ladder-value">${fmt(Number(row.amount || 0))}</strong>
+    </article>`;
+  }).join('');
+  ladderList.querySelectorAll('.ladder-avatar img').forEach(image => {
+    image.addEventListener('error', () => image.remove(), { once: true });
+  });
+}
+
+async function loadLeaderboards() {
+  if (!currentUser || !supabaseClient || leaderboardLoadInFlight) return;
+  leaderboardLoadInFlight = true;
+  ladderRefreshBtn.disabled = true;
+  ladderStatus.classList.remove('error');
+  ladderStatus.textContent = 'Обновляю топ игроков…';
+  const requestedUserId = currentUser.id;
+  try {
+    const { data, error } = await supabaseClient.rpc('get_player_leaderboards');
+    if (currentUser?.id !== requestedUserId) return;
+    if (error) {
+      ladderList.innerHTML = '';
+      ladderStatus.classList.add('error');
+      ladderStatus.textContent = /get_player_leaderboards|function|schema cache|does not exist/i.test(String(error.message || ''))
+        ? 'Примени supabase/leaderboards.sql в SQL Editor, чтобы включить рейтинг.'
+        : 'Не удалось загрузить рейтинг. Проверь подключение и попробуй ещё раз.';
+      console.error('Could not load player leaderboards:', error);
+      return;
+    }
+    leaderboardData = data || {};
+    const count = Math.max(...['total', 'money', 'skins'].map(type => Array.isArray(leaderboardData[type]) ? leaderboardData[type].length : 0));
+    ladderStatus.textContent = count === 100
+      ? 'Показаны первые 100 игроков · рейтинг обновлён.'
+      : `Показаны ${count} игроков · максимум 100.`;
+    renderLeaderboards();
+  } catch (error) {
+    ladderList.innerHTML = '';
+    ladderStatus.classList.add('error');
+    ladderStatus.textContent = 'Не удалось загрузить рейтинг. Проверь подключение и попробуй ещё раз.';
+    console.error('Could not load player leaderboards:', error);
+  } finally {
+    leaderboardLoadInFlight = false;
+    ladderRefreshBtn.disabled = false;
+  }
+}
+
+ladderTypeButtons.forEach(button => {
+  button.addEventListener('click', () => {
+    activeLadderType = button.dataset.ladderType || 'total';
+    renderLeaderboards();
+  });
+});
+ladderRefreshBtn.addEventListener('click', () => void loadLeaderboards());
 
 async function requestAdminPageRefresh(playerId = null, button = null) {
   if (!currentUser || currentUser.role !== 'admin' || !supabaseClient) return;
