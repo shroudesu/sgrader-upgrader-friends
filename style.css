@@ -1595,3 +1595,74 @@ select.native-select-source,
   .battle-category-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
   .battle-category-tab { padding: 9px 6px; font-size: 10px; }
 }
+
+/* Ketro v2 B&W Dark cursor theme */
+:root,
+body,
+body * {
+  cursor: url("cursors/ketro-v2/-Normal Select.cur") 10 8, auto !important;
+}
+a,
+button,
+select,
+summary,
+label[for],
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+input[type="file"],
+[data-cursor="link"] {
+  cursor: url("cursors/ketro-v2/-Link Select.cur") 10 8, pointer !important;
+}
+input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):not([type="range"]),
+textarea,
+[contenteditable="true"] {
+  cursor: url("cursors/ketro-v2/-Text Select.cur") 16 16, text !important;
+}
+button:disabled,
+select:disabled,
+input:disabled,
+[aria-disabled="true"] {
+  cursor: url("cursors/ketro-v2/-Unavailable.cur") 16 16, not-allowed !important;
+}
+abbr[title],
+[data-cursor="help"] {
+  cursor: url("cursors/ketro-v2/-Help Select.cur") 16 16, help !important;
+}
+[draggable="true"],
+.drag-handle,
+[data-cursor="move"] {
+  cursor: url("cursors/ketro-v2/-Move.cur") 16 16, move !important;
+}
+[data-cursor="precision"] {
+  cursor: url("cursors/ketro-v2/-Precision Select.cur") 16 16, crosshair !important;
+}
+[data-cursor="location"] {
+  cursor: url("cursors/ketro-v2/-Location Select.cur") 15 22, crosshair !important;
+}
+[data-cursor="person"] {
+  cursor: url("cursors/ketro-v2/-Person Select.cur") 16 16, pointer !important;
+}
+[data-cursor="alternate"] {
+  cursor: url("cursors/ketro-v2/-Alternate Select.cur") 15 3, default !important;
+}
+[data-cursor="handwriting"] {
+  cursor: url("cursors/ketro-v2/-Handwriting.cur") 8 23, text !important;
+}
+[data-cursor="resize-horizontal"],
+.resize-horizontal {
+  cursor: url("cursors/ketro-v2/-Horizontal Resize.cur") 16 16, ew-resize !important;
+}
+[data-cursor="resize-vertical"],
+.resize-vertical {
+  cursor: url("cursors/ketro-v2/-Vertical Resize.cur") 16 16, ns-resize !important;
+}
+[data-cursor="resize-diagonal-1"],
+.resize-diagonal-1 {
+  cursor: url("cursors/ketro-v2/-Diagonal Resize 1.cur") 16 16, nwse-resize !important;
+}
+[data-cursor="resize-diagonal-2"],
+.resize-diagonal-2 {
+  cursor: url("cursors/ketro-v2/-Diagonal Resize 2.cur") 16 16, nesw-resize !important;
+}
