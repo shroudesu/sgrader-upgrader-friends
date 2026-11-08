@@ -4703,10 +4703,13 @@ function renderSlot(slotEl, item) {
   slotEl.style.setProperty('--item-rarity-color', itemRarityColor(rarityItem));
   const title = item.items?.length > 1
     ? `${item.items.length} скина: ${item.items.slice(0, 2).map(skin => escapeHtml(skinDisplayName(skin.name))).join(' + ')}${item.items.length > 2 ? ' …' : ''}`
-    : escapeHtml(skinDisplayName(item.name));
+    : escapeHtml(item.catalogType === 'balance' ? 'Денежный баланс' : skinDisplayName(item.name));
+  const itemVisual = item.catalogType === 'balance'
+    ? '<div class="slot-balance-icon" aria-label="Денежный баланс"><iconify-icon icon="mdi:cash-multiple"></iconify-icon></div>'
+    : `<img src="${escapeHtml(item.img || '')}" alt="">`;
   slotEl.innerHTML = `
     <button type="button" class="slot-remove" data-slot-remove="${slotEl === betSlot ? 'bet' : 'target'}" aria-label="Убрать выбранный скин" title="Убрать скин"><iconify-icon icon="mdi:close"></iconify-icon></button>
-    <img src="${item.img}" alt="">
+    ${itemVisual}
     <span class="slot-quality-glow" aria-hidden="true"></span>
     <div class="item-name">${title}</div>
     <div class="item-price">${fmt(item.price)}</div>
@@ -6586,6 +6589,7 @@ function paintUpgradeRun(run) {
 
 function buildBonusCandidatePool(currentItem) {
   const currentPrice = Number(currentItem?.price || 0);
+  if (currentItem?.catalogType === 'balance') return [];
   const currentCatalogId = String(currentItem?.catalogId ?? currentItem?.id ?? '');
   const expectedPrice = currentPrice * 2;
   const nearDouble = SKINS_CATALOG.filter(item => item.catalogType === 'skin'

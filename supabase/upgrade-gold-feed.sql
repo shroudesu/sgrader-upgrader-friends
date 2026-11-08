@@ -16,13 +16,16 @@ security definer
 set search_path = ''
 as $$
 begin
-  if new.status = 'bonus_ready'
+  if old.status = 'bonus_pending'
+     and new.status = 'bonus_ready'
      and new.stage > old.stage
-     and new.current_item is distinct from old.current_item then
+     and new.current_item is distinct from old.current_item
+     and coalesce(new.current_item ->> 'catalogType', 'skin') = 'skin' then
     perform public.record_skin_upgrade_award(new.user_id, new.current_item);
   elsif new.status = 'complete'
      and new.award_kind = 'win'
-     and new.awarded_item is not null then
+     and new.awarded_item is not null
+     and coalesce(new.awarded_item ->> 'catalogType', 'skin') = 'skin' then
     perform public.record_skin_upgrade_award(new.user_id, new.awarded_item);
   end if;
 

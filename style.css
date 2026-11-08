@@ -511,6 +511,8 @@ input[type="range"]:active::-moz-range-thumb { transform: scale(1.12); }
 }
 .slot-card.has-item { border-color: rgba(255,255,255,0.3); box-shadow: 0 0 16px var(--neon-soft); }
 .slot-card img { max-width: 90%; max-height: 78px; object-fit: contain; filter: grayscale(0%); margin-bottom: 5px; transition: filter 0.3s; }
+.slot-balance-icon { width: 90%; height: 78px; display: grid; place-items: center; margin-bottom: 5px; color: var(--success); }
+.slot-balance-icon iconify-icon { font-size: 48px; filter: drop-shadow(0 0 12px rgba(53, 213, 122, .28)); }
 .slot-quality-glow { width: min(82%,120px); height: 4px; flex: 0 0 4px; margin: -1px 0 4px; border-radius: 999px; background: var(--item-rarity-color,#b0c3d9); box-shadow: 0 0 9px color-mix(in srgb,var(--item-rarity-color,#b0c3d9) 75%,transparent),0 0 20px color-mix(in srgb,var(--item-rarity-color,#b0c3d9) 32%,transparent); }
 .slot-card .item-name { max-width: 95%; font-size: 10px; line-height: 1.25; color: var(--white); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .slot-card .item-price { font-size: 10px; color: var(--text-dim); margin-top: 3px; }

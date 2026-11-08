@@ -17,10 +17,28 @@ create table if not exists public.skin_upgrade_runs (
   spin_duration_ms integer not null default 4200 check (spin_duration_ms between 4200 and 9000),
   spin_started_at timestamptz not null default now(),
   awarded_item jsonb,
-  award_kind text check (award_kind is null or award_kind in ('win', 'return')),
+  award_kind text check (award_kind is null or award_kind in ('win', 'return', 'balance')),
   created_at timestamptz not null default now(),
   completed_at timestamptz
 );
+
+-- Keep existing projects compatible with the cash-prize bonus path.
+alter table public.skin_upgrade_runs
+  add column if not exists awarded_balance numeric(14, 2) not null default 0;
+alter table public.skin_upgrade_runs
+  drop constraint if exists skin_upgrade_runs_award_kind_check;
+alter table public.skin_upgrade_runs
+  add constraint skin_upgrade_runs_award_kind_check
+    check (award_kind is null or award_kind in ('win', 'return', 'balance'));
+
+alter table public.wallet_transactions
+  drop constraint if exists wallet_transactions_reason_check;
+alter table public.wallet_transactions
+  add constraint wallet_transactions_reason_check
+    check (reason in (
+      'admin_grant', 'admin_debit', 'game_sale', 'game_purchase', 'case_open',
+      'battle_stake', 'battle_prize', 'battle_refund', 'upgrade_bonus_cash'
+    ));
 
 create unique index if not exists skin_upgrade_runs_one_active_per_user
   on public.skin_upgrade_runs (user_id)
@@ -282,6 +300,8 @@ declare
   v_full_spins integer;
   v_duration integer;
   v_index integer;
+  v_is_cash boolean := false;
+  v_award jsonb;
 begin
   if v_user_id is null then raise exception 'Sign in required'; end if;
   select state into v_state from public.game_states where user_id = v_user_id for update;
@@ -293,18 +313,30 @@ begin
   if v_run.status <> 'bonus_ready' then raise exception 'Bonus stage is not ready'; end if;
   if jsonb_typeof(p_candidates) <> 'array' then raise exception 'Candidate list is invalid'; end if;
 
-  if jsonb_array_length(p_candidates) = 0 then
-    v_inventory := coalesce(v_state -> 'inventory', '[]'::jsonb) || jsonb_build_array(v_run.current_item);
+  if v_run.stage < 1 or v_run.stage > 5 then raise exception 'Bonus stage is invalid'; end if;
+  v_stake_price := coalesce((v_run.current_item ->> 'price')::numeric, 0);
+  if v_stake_price <= 0 then raise exception 'Bonus starting value is invalid'; end if;
+
+  -- The first golden stage is based on the ordinary target selected by the
+  -- player. Once the market cap prevents a skin target, the chain continues
+  -- with server-priced balance prizes instead of stopping early.
+  v_is_cash := coalesce(v_run.current_item ->> 'catalogType', 'skin') = 'balance'
+    or (jsonb_array_length(p_candidates) = 0 and v_stake_price * 2 > 8888888)
+    or (jsonb_array_length(p_candidates) = 1 and p_candidates -> 0 ->> 'catalogType' = 'balance');
+
+  if jsonb_array_length(p_candidates) = 0 and not v_is_cash then
+    v_award := case when v_run.stage > 1 then v_run.current_item else v_run.initial_item end;
+    v_inventory := coalesce(v_state -> 'inventory', '[]'::jsonb) || jsonb_build_array(v_award);
     v_state := jsonb_set(v_state, '{inventory}', v_inventory, true);
     v_state := jsonb_set(v_state, '{betItemIds}', '[]'::jsonb, true);
     v_state := jsonb_set(v_state, '{betId}', 'null'::jsonb, true);
     v_state := jsonb_set(v_state, '{targetName}', 'null'::jsonb, true);
     update public.game_states set state = v_state, updated_at = now() where user_id = v_user_id;
-    update public.skin_upgrade_runs set status = 'complete', awarded_item = current_item,
+    update public.skin_upgrade_runs set status = 'complete', awarded_item = v_award,
       award_kind = case when stage > 1 then 'win' else 'return' end,
-      completed_at = now(), outcome = null
+      awarded_balance = 0, completed_at = now(), outcome = null
      where id = p_run_id returning * into v_run;
-    if v_run.award_kind = 'win' then
+    if v_run.award_kind = 'win' and coalesce(v_run.awarded_item ->> 'catalogType', 'skin') = 'skin' then
       if coalesce((v_state -> 'bestDrop' ->> 'price')::numeric, 0) < coalesce((v_run.awarded_item ->> 'price')::numeric, 0) then
         v_state := jsonb_set(v_state, '{bestDrop}', jsonb_build_object(
           'name', v_run.awarded_item ->> 'name', 'price', (v_run.awarded_item ->> 'price')::numeric,
@@ -316,24 +348,37 @@ begin
     return to_jsonb(v_run);
   end if;
   if jsonb_array_length(p_candidates) > 250 then raise exception 'Too many bonus candidates'; end if;
-  if v_run.stage < 1 or v_run.stage > 5 then raise exception 'Bonus stage is invalid'; end if;
-
-  v_stake_price := (v_run.current_item ->> 'price')::numeric;
-  v_index := floor(random() * jsonb_array_length(p_candidates))::integer;
-  v_candidate := p_candidates -> v_index;
-  if jsonb_typeof(v_candidate) <> 'object' or v_candidate ->> 'catalogType' <> 'skin' then
-    raise exception 'Bonus candidate must be a skin';
+  if v_is_cash then
+    if coalesce(v_run.current_item ->> 'catalogType', 'skin') <> 'balance'
+       and v_stake_price * 2 <= 8888888 then
+      raise exception 'Balance prizes are only available past the market price cap';
+    end if;
+    v_target := jsonb_build_object(
+      'id', 'upgrade-balance-prize',
+      'catalogId', 'upgrade-balance-prize',
+      'instanceId', gen_random_uuid()::text,
+      'name', 'Денежный баланс',
+      'catalogType', 'balance',
+      'price', round(v_stake_price * 2, 2),
+      'img', ''
+    );
+  else
+    if jsonb_array_length(p_candidates) = 0 then raise exception 'Bonus target is unavailable'; end if;
+    v_index := floor(random() * jsonb_array_length(p_candidates))::integer;
+    v_candidate := p_candidates -> v_index;
+    if jsonb_typeof(v_candidate) <> 'object' or v_candidate ->> 'catalogType' <> 'skin' then
+      raise exception 'Bonus candidate must be a skin';
+    end if;
+    v_price := (v_candidate ->> 'price')::numeric;
+    if v_price < v_stake_price * 1.5 or v_price > v_stake_price * 2.5 then
+      raise exception 'Bonus target must be near twice the current wager';
+    end if;
+    if coalesce(v_candidate ->> 'id', '') = coalesce(v_run.current_item ->> 'catalogId', v_run.current_item ->> 'id', '') then
+      raise exception 'Bonus target cannot repeat the wager skin';
+    end if;
+    v_target := jsonb_set(v_candidate, '{catalogId}', coalesce(v_candidate -> 'id', v_candidate -> 'catalogId'), true);
+    v_target := jsonb_set(v_target, '{instanceId}', to_jsonb(gen_random_uuid()::text), true);
   end if;
-  v_price := (v_candidate ->> 'price')::numeric;
-  if v_price < v_stake_price * 1.5 or v_price > v_stake_price * 2.5 then
-    raise exception 'Bonus target must be near twice the current wager';
-  end if;
-  if coalesce(v_candidate ->> 'id', '') = coalesce(v_run.current_item ->> 'catalogId', v_run.current_item ->> 'id', '') then
-    raise exception 'Bonus target cannot repeat the wager skin';
-  end if;
-
-  v_target := jsonb_set(v_candidate, '{catalogId}', coalesce(v_candidate -> 'id', v_candidate -> 'catalogId'), true);
-  v_target := jsonb_set(v_target, '{instanceId}', to_jsonb(gen_random_uuid()::text), true);
   v_odds := (array[50, 45, 40, 35, 15]::numeric[])[v_run.stage];
   v_run.outcome := case when random() * 100 < v_odds then 'hit' else 'miss' end;
   v_win_angle := v_odds * 3.6;
@@ -372,6 +417,7 @@ declare
   v_run public.skin_upgrade_runs%rowtype;
   v_award jsonb;
   v_award_kind text;
+  v_awarded_balance numeric(14, 2) := 0;
   v_complete boolean := false;
   v_is_new_prize boolean := false;
 begin
@@ -396,7 +442,9 @@ begin
   end if;
 
   if v_run.status = 'base_pending' and v_run.outcome = 'bonus' then
-    update public.skin_upgrade_runs set status = 'bonus_ready', stage = 1, target_item = null
+    -- The ordinary target is the starting value for the golden chain.
+    update public.skin_upgrade_runs set status = 'bonus_ready', stage = 1,
+      current_item = target_item, target_item = null
      where id = p_run_id returning * into v_run;
     return to_jsonb(v_run);
   end if;
@@ -416,13 +464,27 @@ begin
     return to_jsonb(v_run);
   elsif v_run.outcome = 'hit' then
     v_award := v_run.target_item;
-    v_award_kind := 'win';
-    v_is_new_prize := true;
+    if coalesce(v_award ->> 'catalogType', 'skin') = 'balance' then
+      v_award_kind := 'balance';
+    else
+      v_award_kind := 'win';
+      v_is_new_prize := true;
+    end if;
     v_complete := true;
   elsif v_run.outcome = 'miss' then
-    v_award := v_run.current_item;
-    v_award_kind := case when v_run.stage = 1 then 'return' else 'win' end;
-    v_is_new_prize := v_run.stage > 1;
+    if v_run.stage = 1 then
+      -- Keep the original stake if the first golden roll misses.
+      v_award := v_run.initial_item;
+      v_award_kind := 'return';
+    else
+      v_award := v_run.current_item;
+      if coalesce(v_award ->> 'catalogType', 'skin') = 'balance' then
+        v_award_kind := 'balance';
+      else
+        v_award_kind := 'win';
+        v_is_new_prize := true;
+      end if;
+    end if;
     v_complete := true;
   else
     v_complete := true;
@@ -430,7 +492,17 @@ begin
 
   if v_complete then
     v_inventory := coalesce(v_state -> 'inventory', '[]'::jsonb);
-    if v_award is not null then v_inventory := v_inventory || jsonb_build_array(v_award); end if;
+    if v_award_kind = 'balance' then
+      v_awarded_balance := round(coalesce((v_award ->> 'price')::numeric, 0), 2);
+      if v_awarded_balance <= 0 then raise exception 'Balance prize amount is invalid'; end if;
+      update public.wallets set balance = balance + v_awarded_balance, updated_at = now()
+       where user_id = v_user_id;
+      if not found then raise exception 'Player wallet not found'; end if;
+      insert into public.wallet_transactions (user_id, actor_user_id, amount, bonus, reason)
+      values (v_user_id, null, v_awarded_balance, 0, 'upgrade_bonus_cash');
+    elsif v_award is not null then
+      v_inventory := v_inventory || jsonb_build_array(v_award);
+    end if;
     v_state := jsonb_set(v_state, '{inventory}', v_inventory, true);
     v_state := jsonb_set(v_state, '{betItemIds}', '[]'::jsonb, true);
     v_state := jsonb_set(v_state, '{betId}', 'null'::jsonb, true);
@@ -444,7 +516,7 @@ begin
     update public.game_states set state = v_state, updated_at = now() where user_id = v_user_id;
 
     update public.skin_upgrade_runs set status = 'complete', awarded_item = v_award,
-      award_kind = v_award_kind, completed_at = now()
+      award_kind = v_award_kind, awarded_balance = v_awarded_balance, completed_at = now()
      where id = p_run_id returning * into v_run;
     if v_is_new_prize and v_award is not null then
       perform public.record_skin_upgrade_award(v_user_id, v_award);
@@ -473,5 +545,32 @@ $$;
 
 revoke all on function public.get_active_skin_upgrade() from public, anon;
 grant execute on function public.get_active_skin_upgrade() to authenticated;
+
+-- A cash prize is a wallet credit, never a skin entry in the shared drop feed.
+create or replace function public.publish_skin_upgrade_stage_to_feed()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.status = 'bonus_pending'
+     and new.status = 'bonus_ready'
+     and new.stage > old.stage
+     and new.current_item is distinct from old.current_item
+     and coalesce(new.current_item ->> 'catalogType', 'skin') = 'skin' then
+    perform public.record_skin_upgrade_award(new.user_id, new.current_item);
+  elsif new.status = 'complete'
+     and new.award_kind = 'win'
+     and new.awarded_item is not null
+     and coalesce(new.awarded_item ->> 'catalogType', 'skin') = 'skin' then
+    perform public.record_skin_upgrade_award(new.user_id, new.awarded_item);
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.publish_skin_upgrade_stage_to_feed() from public, anon, authenticated;
 
 notify pgrst, 'reload schema';
