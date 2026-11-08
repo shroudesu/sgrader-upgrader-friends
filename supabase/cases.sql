@@ -58,7 +58,10 @@ alter table public.wallet_transactions
   drop constraint if exists wallet_transactions_reason_check;
 alter table public.wallet_transactions
   add constraint wallet_transactions_reason_check
-  check (reason in ('admin_grant', 'admin_debit', 'game_sale', 'game_purchase', 'case_open'));
+  check (reason in (
+    'admin_grant', 'admin_debit', 'game_sale', 'game_purchase', 'case_open',
+    'battle_stake', 'battle_prize', 'battle_refund'
+  ));
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('case-designs', 'case-designs', true, 5242880, array['image/png']::text[])

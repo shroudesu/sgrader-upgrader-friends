@@ -47,8 +47,9 @@ input:not([type="range"]), textarea, [contenteditable="true"] { -webkit-user-sel
 }
 .auth-screen.hide { display: none; }
 .auth-stage { width: min(100%,650px); display: grid; grid-template-columns: 220px 1px minmax(0,380px); align-items: center; justify-content: center; gap: 24px; }
-.auth-brand { width: 220px; aspect-ratio: 1; overflow: hidden; border: 1px solid rgba(255,255,255,.32); border-radius: 50%; background: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.48); }
-.auth-brand img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: contain; }
+.auth-brand { width: 220px; min-height: 220px; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 18px; border: 1px solid rgba(245,205,99,.38); border-radius: 14px; background: radial-gradient(ellipse at top left,rgba(245,205,99,.1),transparent 65%),var(--bg-2); box-shadow: 0 12px 40px rgba(0,0,0,.32); text-align: left; }
+.auth-brand p strong { color: #f2d078; font-size: 13px; letter-spacing: .02em; }
+.auth-brand p { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.45; }
 .auth-divider { width: 1px; height: min(360px,70vh); background: linear-gradient(transparent,rgba(255,255,255,.45),transparent); }
 
 .auth-box {
@@ -505,6 +506,7 @@ input[type="range"]:active::-moz-range-thumb { transform: scale(1.12); }
 }
 .slot-card.has-item { border-color: rgba(255,255,255,0.3); box-shadow: 0 0 16px var(--neon-soft); }
 .slot-card img { max-width: 90%; max-height: 78px; object-fit: contain; filter: grayscale(0%); margin-bottom: 5px; transition: filter 0.3s; }
+.slot-quality-glow { width: min(82%,120px); height: 4px; flex: 0 0 4px; margin: -1px 0 4px; border-radius: 999px; background: var(--item-rarity-color,#b0c3d9); box-shadow: 0 0 9px color-mix(in srgb,var(--item-rarity-color,#b0c3d9) 75%,transparent),0 0 20px color-mix(in srgb,var(--item-rarity-color,#b0c3d9) 32%,transparent); }
 .slot-card .item-name { max-width: 95%; font-size: 10px; line-height: 1.25; color: var(--white); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .slot-card .item-price { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
 .slot-remove { position: absolute; top: 5px; right: 5px; z-index: 2; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: rgba(0,0,0,.72); color: var(--text-dim); cursor: pointer; }
@@ -1239,11 +1241,17 @@ iconify-icon { display: inline-block; width: 1em; height: 1em; vertical-align: m
 }
 @media (max-width: 960px) {
   .auth-stage { width: min(100%,580px); grid-template-columns: minmax(90px,140px) 1px minmax(0,380px); gap: 18px; }
-  .auth-brand { width: min(140px,100%); }
+  .auth-brand { width: min(140px,100%); min-height: 0; padding: 12px; gap: 8px; }
+  .auth-brand strong { font-size: 13px; }
+  .auth-brand p { font-size: 9px; }
 }
 @media (max-width: 560px) {
-  .auth-stage { width: min(100%,380px); display: block; }
-  .auth-brand,.auth-divider { display: none; }
+  .auth-screen { overflow-y: auto; align-items: flex-start; }
+  .auth-stage { width: min(100%,380px); display: flex; flex-direction: column; gap: 10px; margin: auto 0; }
+  .auth-brand { width: 100%; min-height: 0; gap: 6px; padding: 10px 12px; }
+  .auth-brand strong { font-size: 12px; }
+  .auth-brand p { font-size: 8px; }
+  .auth-divider { display: none; }
 }
 @media (max-width: 430px) {
   .battle-room-heading { align-items: flex-start; }
@@ -1556,4 +1564,34 @@ select.native-select-source,
 .case-result-rewards::-webkit-scrollbar-thumb { border: 2px solid #111; border-radius: 999px; background: linear-gradient(180deg,#505050,#303030); }
 @media (max-width: 700px) {
   .case-result-rewards { width: 100%; max-height: 70vh; }
+}
+
+/* Battle categories, balance stakes, and upgrade slots */
+.battle-category-tabs { display: flex; justify-content: center; gap: 8px; margin: 0 auto 14px; }
+.battle-category-tab,.battle-create-type { padding: 9px 15px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); color: var(--text-dim); font-size: 11px; font-weight: 800; cursor: pointer; transition: border-color .16s,background .16s,color .16s,box-shadow .16s; }
+.battle-category-tab:hover,.battle-create-type:hover { border-color: rgba(74,222,128,.55); color: var(--white); }
+.battle-category-tab.active,.battle-create-type.active { border-color: rgba(74,222,128,.85); background: rgba(74,222,128,.12); color: var(--success); box-shadow: 0 0 12px rgba(74,222,128,.12); }
+.battle-category-tab[data-battle-category="balance"].active { border-color: rgba(245,205,99,.85); background: rgba(245,205,99,.1); color: #f2d078; box-shadow: 0 0 12px rgba(245,205,99,.12); }
+.battle-create-types { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin: 4px 0 12px; }
+.battle-create-types[hidden],.battle-balance-fields[hidden],#battleSkinFields[hidden] { display: none !important; }
+.battle-balance-fields { display: grid; gap: 8px; margin: 10px 0 14px; }
+.battle-balance-fields label { color: var(--text-dim); font-size: 10px; }
+.battle-balance-input-wrap { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-3); }
+.battle-balance-input-wrap input { width: 100%; min-width: 0; padding: 11px 0; border: 0; outline: 0; background: transparent; color: var(--white); font-size: 15px; font-weight: 800; }
+.battle-balance-input-wrap input:focus { outline: none; }
+.battle-balance-input-wrap span { color: var(--success); font-weight: 800; }
+.battle-balance-fields p { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.5; }
+.battle-cash-stake { display: grid; min-height: 42px; place-items: center; padding: 8px; border: 1px solid rgba(245,205,99,.23); border-radius: 8px; background: rgba(245,205,99,.06); color: #f2d078; font-size: 10px; font-weight: 800; text-align: center; }
+.battle-card-tags { display: flex; align-items: center; gap: 7px; }
+.battle-type-pill { padding: 3px 7px; border: 1px solid rgba(74,222,128,.3); border-radius: 999px; color: var(--success); font-size: 9px; font-weight: 800; }
+.battle-card-balance .battle-type-pill { border-color: rgba(245,205,99,.4); color: #f2d078; }
+.battle-side-winner { border: 1px solid rgba(74,222,128,.9) !important; box-shadow: inset 0 0 18px rgba(74,222,128,.11),0 0 14px rgba(74,222,128,.16); }
+.battle-archive .battle-card-actions { display: none; }
+.target-shortcuts { margin-top: 15px; }
+.slot { max-width: 190px; }
+.slot-card { height: 158px; }
+.slot-card img { max-height: 84px; }
+@media (max-width: 560px) {
+  .battle-category-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .battle-category-tab { padding: 9px 6px; font-size: 10px; }
 }

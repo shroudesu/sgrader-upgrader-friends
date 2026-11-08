@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SGRADER UP | CS2</title>
   <link rel="icon" type="image/png" href="newlogo.png">
-  <link rel="stylesheet" href="style.css?v=20261108-r22">
+  <link rel="stylesheet" href="style.css?v=20261108-r23">
 </head>
 <body>
 
@@ -16,10 +16,13 @@
     <div class="upgrade-feed" id="authUpgradeFeed" aria-live="polite"><div class="feed-empty">Загрузка ленты…</div></div>
   </aside>
   <div class="auth-stage">
-    <div class="auth-brand" aria-hidden="true"><img src="newlogo.png" alt=""></div>
+    <div class="auth-brand" aria-label="Информация о платформе">
+      <p><strong>SGRADER.UP -</strong> Игровая платформа на основе upgrade проектов в которых используются скины с игры CS2.</p>
+      <p>Никакие деньги/скины и прочее не связаны с реальными переводами и обменами.</p>
+      <p>Любое упоминание валюты реального мира является неофициальным и не воспринимается в серьез.</p>
+    </div>
     <div class="auth-divider" role="separator" aria-orientation="vertical"></div>
     <div class="auth-box">
-    <div class="auth-logo">SGRADER<span></span></div>
     <h1 class="auth-title" id="authTitle">Вход</h1>
 
     <div class="auth-tabs">
@@ -205,7 +208,7 @@
         <div class="upgrade-bonus-status" id="upgradeBonusStatus" hidden></div>
 
         <button class="btn-upgrade" id="upgradeBtn" disabled>
-          <span class="btn-text">КРУТИТЬ</span>
+          <span class="btn-text">ПРОКАЧАТЬ</span>
         </button>
 
         <div class="spin-settings">
@@ -265,14 +268,18 @@
 
   <!-- БАТЛЫ СКИНОВ -->
   <section class="tab-page" id="page-battles">
-    <h1 class="title">Батлы скинов</h1>
-    <div class="battle-toolbar"><p>Для входа нужен предмет стоимостью не меньше 95% ставки создателя.</p><button type="button" class="battle-create-btn" id="openCreateBattleBtn"><iconify-icon icon="mdi:plus-circle-outline"></iconify-icon> Создать батл</button></div>
+    <h1 class="title">Батлы</h1>
+    <div class="battle-toolbar"><p id="battleCategoryHelp">Для входа нужен предмет стоимостью не меньше 95% ставки создателя.</p><button type="button" class="battle-create-btn" id="openCreateBattleBtn"><iconify-icon icon="mdi:plus-circle-outline"></iconify-icon> Создать батл</button></div>
+    <div class="battle-category-tabs" role="tablist" aria-label="Категория батлов">
+      <button type="button" class="battle-category-tab active" data-battle-category="skins" role="tab" aria-selected="true">Батлы на скины</button>
+      <button type="button" class="battle-category-tab" data-battle-category="balance" role="tab" aria-selected="false">Батлы на баланс</button>
+    </div>
     <div class="panel battle-list-panel">
-      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Открытые батлы</h2><button type="button" class="btn-small" id="refreshBattlesBtn">Обновить</button></div>
+      <div class="panel-title-row"><h2 class="panel-title" id="battleOpenTitle" style="margin-bottom:0">Открытые батлы на скины</h2><button type="button" class="btn-small" id="refreshBattlesBtn">Обновить</button></div>
       <div class="battle-list" id="battleList"><div class="battle-empty">Загружаю батлы…</div></div>
     </div>
     <div class="panel battle-list-panel">
-      <div class="panel-title-row"><h2 class="panel-title" style="margin-bottom:0">Мой архив батлов</h2><button type="button" class="btn-small danger" id="clearBattleArchiveBtn">Очистить архив</button></div>
+      <div class="panel-title-row"><h2 class="panel-title" id="battleArchiveTitle" style="margin-bottom:0">Мой архив батлов на скины</h2><button type="button" class="btn-small danger" id="clearBattleArchiveBtn">Очистить архив</button></div>
       <div class="battle-list battle-archive" id="myBattleArchive"><div class="battle-empty">Завершённые батлы появятся здесь.</div></div>
     </div>
     <div class="battle-feedback" id="battleFeedback" role="status" aria-live="polite"></div>
@@ -525,8 +532,19 @@
   <div class="modal-overlay" id="battlePickerModal" aria-hidden="true">
     <div class="modal battle-picker-modal" role="dialog" aria-modal="true" aria-labelledby="battlePickerTitle">
       <h3 class="modal-title" id="battlePickerTitle">Выбери скин</h3>
-      <p class="battle-picker-help" id="battlePickerHelp">Скин будет временно заблокирован до исхода батла.</p>
-      <div class="battle-picker-grid" id="battlePickerGrid"></div>
+      <div class="battle-create-types" id="battleCreateTypes" role="group" aria-label="Тип ставки">
+        <button type="button" class="battle-create-type active" data-battle-create-type="skins">Сыграть на скины</button>
+        <button type="button" class="battle-create-type" data-battle-create-type="balance">Сыграть на баланс</button>
+      </div>
+      <div id="battleSkinFields">
+        <p class="battle-picker-help" id="battlePickerHelp">Скин будет временно заблокирован до исхода батла.</p>
+        <div class="battle-picker-grid" id="battlePickerGrid"></div>
+      </div>
+      <div class="battle-balance-fields" id="battleBalanceFields" hidden>
+        <label for="battleBalanceStake">Ставка (минимум <span id="battleMinStakeLabel">100 ₽</span>)</label>
+        <div class="battle-balance-input-wrap"><input type="number" id="battleBalanceStake" min="100" step="0.01" inputmode="decimal"><span id="battleBalanceCurrency">₽</span></div>
+        <p>Ставка спишется при создании. Соперник внесёт такую же сумму; победитель получит общий банк.</p>
+      </div>
       <div class="battle-picker-status" id="battlePickerStatus">Выбери предмет</div>
       <div class="battle-feedback" id="battlePickerFeedback" role="status" aria-live="polite"></div>
       <div class="modal-actions">
@@ -630,6 +648,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
 <script src="supabase-config.js"></script>
-<script src="script.js?v=20261108-r26"></script>
+<script src="script.js?v=20261108-r27"></script>
 </body>
 </html>

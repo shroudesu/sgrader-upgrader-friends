@@ -622,6 +622,17 @@ const battlePickerStatus = document.getElementById('battlePickerStatus');
 const battlePickerFeedback = document.getElementById('battlePickerFeedback');
 const battlePickerCancel = document.getElementById('battlePickerCancel');
 const battlePickerConfirm = document.getElementById('battlePickerConfirm');
+const battleCreateTypes = document.getElementById('battleCreateTypes');
+const battleCreateTypeButtons = [...document.querySelectorAll('[data-battle-create-type]')];
+const battleSkinFields = document.getElementById('battleSkinFields');
+const battleBalanceFields = document.getElementById('battleBalanceFields');
+const battleBalanceStakeInput = document.getElementById('battleBalanceStake');
+const battleMinStakeLabel = document.getElementById('battleMinStakeLabel');
+const battleBalanceCurrency = document.getElementById('battleBalanceCurrency');
+const battleCategoryButtons = [...document.querySelectorAll('[data-battle-category]')];
+const battleOpenTitle = document.getElementById('battleOpenTitle');
+const battleArchiveTitle = document.getElementById('battleArchiveTitle');
+const battleCategoryHelp = document.getElementById('battleCategoryHelp');
 const battleRoomModal = document.getElementById('battleRoomModal');
 const battleRoomMinimize = document.getElementById('battleRoomMinimize');
 const battleRoomStatus = document.getElementById('battleRoomStatus');
@@ -827,6 +838,8 @@ let customCatalogSignature = null;
 let selectedBattleSkinIds = new Set();
 let battlePickerMode = 'create';
 let battlePickerBattleId = null;
+let battleCreateType = 'skins';
+let activeBattleCategory = 'skins';
 let activeBattleRoom = null;
 let battleCountdownInterval = null;
 let battleRoomCloseTimer = null;
@@ -859,6 +872,15 @@ function amountToRub(amount) {
   return Math.round((displayCurrency === 'USD' ? numeric * RUB_PER_USD : numeric) * 100) / 100;
 }
 
+function minimumBalanceBattleInput() {
+  return displayCurrency === 'USD' ? Math.ceil((100 / RUB_PER_USD) * 100) / 100 : 100;
+}
+
+function minimumBalanceBattleLabel() {
+  const amount = minimumBalanceBattleInput();
+  return fmt(displayCurrency === 'USD' ? amount * RUB_PER_USD : amount);
+}
+
 function maxTransactionAmountForCurrency() {
   return displayCurrency === 'USD'
     ? (MAX_DEMO_TRANSACTION_RUB / RUB_PER_USD).toFixed(2)
@@ -872,6 +894,12 @@ function renderCurrencyLabels() {
     element.placeholder = `${element.dataset.pricePlaceholder} ${symbol}`;
   });
   if (topupAmountInput) topupAmountInput.max = maxTransactionAmountForCurrency();
+  if (battleBalanceStakeInput) {
+    battleBalanceStakeInput.min = String(minimumBalanceBattleInput());
+    battleBalanceStakeInput.max = maxTransactionAmountForCurrency();
+    battleBalanceCurrency.textContent = symbol;
+    battleMinStakeLabel.textContent = minimumBalanceBattleLabel();
+  }
 }
 
 function formatChance(percent) {
@@ -4599,16 +4627,20 @@ targetShortcutButtons.forEach(button => {
 function renderSlot(slotEl, item) {
   if (!item) {
     slotEl.classList.remove('has-item');
+    slotEl.style.removeProperty('--item-rarity-color');
     slotEl.innerHTML = '<div class="slot-empty">—</div>';
     return;
   }
   slotEl.classList.add('has-item');
+  const rarityItem = item.items?.length ? item.items[0] : item;
+  slotEl.style.setProperty('--item-rarity-color', itemRarityColor(rarityItem));
   const title = item.items?.length > 1
     ? `${item.items.length} скина: ${item.items.slice(0, 2).map(skin => escapeHtml(skinDisplayName(skin.name))).join(' + ')}${item.items.length > 2 ? ' …' : ''}`
     : escapeHtml(skinDisplayName(item.name));
   slotEl.innerHTML = `
     <button type="button" class="slot-remove" data-slot-remove="${slotEl === betSlot ? 'bet' : 'target'}" aria-label="Убрать выбранный скин" title="Убрать скин"><iconify-icon icon="mdi:close"></iconify-icon></button>
     <img src="${item.img}" alt="">
+    <span class="slot-quality-glow" aria-hidden="true"></span>
     <div class="item-name">${title}</div>
     <div class="item-price">${fmt(item.price)}</div>
   `;
@@ -5076,12 +5108,22 @@ function renderMyInventory() {
 function openBattlePicker(mode, battleId = null) {
   battlePickerMode = mode === 'join' ? 'join' : 'create';
   battlePickerBattleId = battlePickerMode === 'join' ? battleId : null;
+  if (battlePickerMode === 'create') battleCreateType = activeBattleCategory === 'balance' ? 'balance' : 'skins';
   selectedBattleSkinIds.clear();
   battlePickerTitle.textContent = battlePickerMode === 'join' ? 'Выбери скины для входа' : 'Создать батл';
   const battle = latestBattles.find(item => item.id === battlePickerBattleId);
   battlePickerHelp.textContent = battlePickerMode === 'join'
     ? `Выбери от 1 до 5 скинов. Общая ставка должна быть не меньше 95% ставки создателя (${fmt(minimumGuestStake(getBattleStakeTotal(battle?.creator_skin)))}).`
     : 'Выбери от 1 до 5 скинов. Предметы будут заблокированы до отмены или завершения батла.';
+  battleCreateTypes.hidden = battlePickerMode === 'join';
+  battleCreateTypeButtons.forEach(button => button.classList.toggle('active', button.dataset.battleCreateType === battleCreateType));
+  battleSkinFields.hidden = battlePickerMode === 'create' && battleCreateType === 'balance';
+  battleBalanceFields.hidden = battlePickerMode !== 'create' || battleCreateType !== 'balance';
+  battleBalanceStakeInput.value = '';
+  battleBalanceStakeInput.min = String(minimumBalanceBattleInput());
+  battleBalanceStakeInput.max = maxTransactionAmountForCurrency();
+  battleBalanceCurrency.textContent = displayCurrency === 'USD' ? '$' : '₽';
+  battleMinStakeLabel.textContent = minimumBalanceBattleLabel();
   battlePickerFeedback.textContent = '';
   battlePickerStatus.textContent = 'Выбери от 1 до 5 предметов';
   battlePickerConfirm.textContent = battlePickerMode === 'join' ? 'Вступить в батл' : 'Создать батл';
@@ -5097,7 +5139,21 @@ function closeBattlePicker() {
 }
 
 function renderBattlePicker() {
+  if (battlePickerMode === 'create' && battleCreateType === 'balance') {
+    battlePickerGrid.innerHTML = '';
+    const stake = amountToRub(Number(battleBalanceStakeInput.value));
+    const validStake = Number.isFinite(stake) && stake >= 100 && stake <= MAX_DEMO_TRANSACTION_RUB;
+    const enoughBalance = validStake && stake <= Number(state.balance || 0);
+    battlePickerStatus.textContent = validStake
+      ? `Ставка ${fmt(stake)} · банк победителя ${fmt(stake * 2)} · баланс ${fmt(Number(state.balance || 0))}`
+    : `Минимальная ставка — ${minimumBalanceBattleLabel()}. Укажи сумму в пределах лимита.`;
+    if (validStake && !enoughBalance) battlePickerStatus.textContent = `Для ставки ${fmt(stake)} не хватает баланса. Доступно ${fmt(Number(state.balance || 0))}.`;
+    battlePickerConfirm.textContent = 'Создать батл на баланс';
+    battlePickerConfirm.disabled = !enoughBalance;
+    return;
+  }
   const battle = latestBattles.find(item => item.id === battlePickerBattleId);
+  battlePickerConfirm.textContent = battlePickerMode === 'join' ? 'Вступить в батл' : 'Создать батл';
   const requiredPrice = battlePickerMode === 'join' ? minimumGuestStake(getBattleStakeTotal(battle?.creator_skin)) : 0;
   const available = state.inventory;
   const availableIds = new Set(available.map(item => item.instanceId));
@@ -5136,6 +5192,16 @@ function renderBattlePicker() {
 }
 
 openCreateBattleBtn.addEventListener('click', () => openBattlePicker('create'));
+battleCreateTypeButtons.forEach(button => button.addEventListener('click', () => {
+  if (battlePickerMode !== 'create') return;
+  battleCreateType = button.dataset.battleCreateType === 'balance' ? 'balance' : 'skins';
+  battleCreateTypeButtons.forEach(option => option.classList.toggle('active', option === button));
+  battleSkinFields.hidden = battleCreateType === 'balance';
+  battleBalanceFields.hidden = battleCreateType !== 'balance';
+  battlePickerFeedback.textContent = '';
+  renderBattlePicker();
+}));
+battleBalanceStakeInput.addEventListener('input', renderBattlePicker);
 battlePickerCancel.addEventListener('click', closeBattlePicker);
 battlePickerModal.addEventListener('click', event => { if (event.target === battlePickerModal) closeBattlePicker(); });
 
@@ -5151,6 +5217,42 @@ function getBattleStakeItems(stake) {
 function getBattleStakeTotal(stake) {
   return getBattleStakeItems(stake).reduce((sum, item) => sum + Number(item.price || 0), 0);
 }
+
+function isBalanceBattle(battle) {
+  return battle?.battle_type === 'balance';
+}
+
+function getBattleSideStake(battle, side) {
+  if (isBalanceBattle(battle)) return Number((side === 'creator' ? battle.creator_cash_stake : battle.guest_cash_stake) || 0);
+  return getBattleStakeTotal(side === 'creator' ? battle?.creator_skin : battle?.guest_skin);
+}
+
+function getBattleDisplayBankValue(battle) {
+  if (isBalanceBattle(battle) && battle.status === 'waiting') return Number(battle.creator_cash_stake || battle.bank_value || 0) * 2;
+  return Number(battle.bank_value || getBattleStakeTotal(battle?.creator_skin) + getBattleStakeTotal(battle?.guest_skin));
+}
+
+function updateBattleCategoryUi() {
+  const isBalance = activeBattleCategory === 'balance';
+  battleCategoryButtons.forEach(button => {
+    const selected = button.dataset.battleCategory === activeBattleCategory;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+  battleOpenTitle.textContent = isBalance ? 'Открытые батлы на баланс' : 'Открытые батлы на скины';
+  battleArchiveTitle.textContent = isBalance ? 'Мой архив батлов на баланс' : 'Мой архив батлов на скины';
+  battleCategoryHelp.textContent = isBalance
+    ? `Ставка от ${minimumBalanceBattleLabel()}. Создатель и гость ставят одинаковую сумму; победитель получает банк.`
+    : 'Для входа нужен предмет стоимостью не меньше 95% ставки создателя.';
+}
+
+battleCategoryButtons.forEach(button => button.addEventListener('click', () => {
+  activeBattleCategory = button.dataset.battleCategory === 'balance' ? 'balance' : 'skins';
+  updateBattleCategoryUi();
+  renderBattleList();
+  renderBattleArchive();
+}));
+updateBattleCategoryUi();
 
 function renderBattleStakeItems(stake, emptyText = 'Ожидает входа') {
   const items = getBattleStakeItems(stake);
@@ -5280,17 +5382,24 @@ function setBattleAvatar(imageId, fallbackId, avatarUrl) {
 async function renderBattleRoom(battle) {
   if (!battle) return;
   activeBattleRoom = battle;
-  battleRoomBank.textContent = fmt(Number(battle.bank_value || getBattleStakeTotal(battle.creator_skin) + getBattleStakeTotal(battle.guest_skin)));
+  const balanceBattle = isBalanceBattle(battle);
+  $('battleRoomTitle').textContent = balanceBattle ? 'Батл на баланс' : 'Батл на скины';
+  battleRoomBank.textContent = fmt(getBattleDisplayBankValue(battle));
   const creatorProfile = await getBattleParticipantProfile(battle.creator_user_id).catch(() => null);
   const guestProfile = battle.guest_user_id ? await getBattleParticipantProfile(battle.guest_user_id).catch(() => null) : null;
   $('battleCreatorName').textContent = creatorProfile?.username || battle.creator_name || 'Создатель';
   setBattleAvatar('battleCreatorAvatar', 'battleCreatorAvatarFallback', creatorProfile?.avatar);
-  $('battleCreatorSkins').innerHTML = renderBattleStakeItems(battle.creator_skin, 'Нет скинов');
-  $('battleCreatorSkinPrice').textContent = fmt(getBattleStakeTotal(battle.creator_skin));
+  $('battleCreatorSkins').innerHTML = balanceBattle
+    ? `<div class="battle-cash-stake">Денежная ставка ${fmt(getBattleSideStake(battle, 'creator'))}</div>`
+    : renderBattleStakeItems(battle.creator_skin, 'Нет скинов');
+  $('battleCreatorSkinPrice').textContent = balanceBattle ? '' : fmt(getBattleSideStake(battle, 'creator'));
   $('battleGuestName').textContent = guestProfile?.username || battle.guest_name || 'Ждём гостя';
   setBattleAvatar('battleGuestAvatar', 'battleGuestAvatarFallback', guestProfile?.avatar);
-  $('battleGuestSkins').innerHTML = renderBattleStakeItems(battle.guest_skin);
-  $('battleGuestSkinPrice').textContent = battle.guest_skin ? fmt(getBattleStakeTotal(battle.guest_skin)) : '—';
+  $('battleGuestSkins').innerHTML = balanceBattle
+    ? (battle.guest_cash_stake ? `<div class="battle-cash-stake">Денежная ставка ${fmt(getBattleSideStake(battle, 'guest'))}</div>` : '<span>Гость внесёт такую же ставку</span>')
+    : renderBattleStakeItems(battle.guest_skin);
+  $('battleGuestSkinPrice').textContent = balanceBattle ? '' : battle.guest_skin ? fmt(getBattleSideStake(battle, 'guest')) : '—';
+  battleRoomCancel.textContent = balanceBattle ? 'Отменить батл и вернуть ставку' : 'Отменить батл и вернуть скин';
   battleRoomCancel.hidden = battle.status !== 'waiting' || battle.creator_user_id !== currentUser?.id;
   if (battle.status === 'waiting') {
     battleRoomStatus.textContent = 'Ожидание соперника';
@@ -5419,53 +5528,62 @@ function showBattleOutcome(battle) {
 }
 
 function renderBattleCard(battle, archived = false) {
+  const balanceBattle = isBalanceBattle(battle);
   const creatorSkins = getBattleStakeItems(battle.creator_skin);
   const guestSkins = getBattleStakeItems(battle.guest_skin);
   const waiting = battle.status === 'waiting';
   const ownBattle = battle.creator_user_id === currentUser.id;
   const outcomeDeferred = battle.status === 'completed' && deferredBattleResults.has(battle.id);
-  const bankValue = Number(battle.bank_value || getBattleStakeTotal(battle.creator_skin) + getBattleStakeTotal(battle.guest_skin));
+  const bankValue = getBattleDisplayBankValue(battle);
+  const creatorStake = getBattleSideStake(battle, 'creator');
+  const guestStake = getBattleSideStake(battle, 'guest');
+  const creatorWinner = battle.status === 'completed' && battle.winner_side === 'creator';
+  const guestWinner = battle.status === 'completed' && battle.winner_side === 'guest';
   let action = '';
   if (waiting && ownBattle) {
     action = `<button type="button" class="btn-small" data-battle-action="view" data-battle-id="${escapeHtml(battle.id)}">Открыть свою комнату</button>`;
   } else if (waiting) {
     action = `<button type="button" class="btn-small battle-join-btn" data-battle-id="${escapeHtml(battle.id)}">Присоединиться</button>`;
-  } else if (battle.status === 'completed') {
+  } else if (!archived && battle.status === 'completed') {
     action = `<div class="battle-winner-line">${outcomeDeferred ? 'Ждём полной остановки колеса…' : `Победитель: ${escapeHtml(battle.winner_name || '—')}`}</div>`;
-  } else {
+  } else if (!archived && battle.status === 'cancelled') {
     action = '<div class="battle-winner-line">Батл отменён</div>';
   }
-  const guestContent = guestSkins.length
-    ? renderBattleStakeItems(guestSkins)
-    : '<span>Ожидает гостя</span>';
+  const creatorContent = balanceBattle
+    ? `<div class="battle-cash-stake">Денежная ставка ${fmt(creatorStake)}</div>`
+    : renderBattleStakeItems(creatorSkins, 'Нет скинов');
+  const guestContent = balanceBattle
+    ? (battle.guest_cash_stake ? `<div class="battle-cash-stake">Денежная ставка ${fmt(guestStake)}</div>` : '<span>Гость внесёт такую же ставку</span>')
+    : guestSkins.length ? renderBattleStakeItems(guestSkins) : '<span>Ожидает гостя</span>';
   const stateLabel = waiting ? (ownBattle ? 'Ожидание' : 'Открыт') : (outcomeDeferred ? 'Колесо крутится…' : battle.status === 'completed' ? 'Завершён' : 'Отменён');
-  return `<article class="battle-card ${waiting ? 'battle-open' : 'battle-finished'} ${archived ? 'archive-card' : ''}">
-    <div class="battle-card-head"><span>Батл ${escapeHtml(String(battle.id).slice(0, 8))}</span><span>${stateLabel}</span></div>
+  return `<article class="battle-card ${waiting ? 'battle-open' : 'battle-finished'} ${balanceBattle ? 'battle-card-balance' : 'battle-card-skins'} ${archived ? 'archive-card' : ''}">
+    <div class="battle-card-head"><span>Батл ${escapeHtml(String(battle.id).slice(0, 8))}</span><span class="battle-card-tags"><span class="battle-type-pill">${balanceBattle ? 'На баланс' : 'На скины'}</span><span>${stateLabel}</span></span></div>
     <div class="battle-matchup">
-      <div class="battle-side creator-side"><span class="battle-side-label">Создатель · зелёная</span><strong>${escapeHtml(battle.creator_name || 'Игрок')}</strong>${renderBattleStakeItems(creatorSkins, 'Нет скинов')}<small>Ставка ${fmt(getBattleStakeTotal(creatorSkins))}</small></div>
+      <div class="battle-side creator-side${creatorWinner ? ' battle-side-winner' : ''}"><span class="battle-side-label">Создатель · зелёная</span><strong>${escapeHtml(battle.creator_name || 'Игрок')}</strong>${creatorContent}<small>Ставка ${fmt(creatorStake)}</small></div>
       <div class="battle-vs"><strong>VS</strong><span>Банк<br>${fmt(bankValue)}</span></div>
-      <div class="battle-side guest-side ${guestSkins.length ? '' : 'waiting-side'}"><span class="battle-side-label">Гость · белая</span><strong>${escapeHtml(battle.guest_name || 'Гость')}</strong>${guestContent}${guestSkins.length ? `<small>Ставка ${fmt(getBattleStakeTotal(guestSkins))}</small>` : ''}</div>
+      <div class="battle-side guest-side ${guestSkins.length || battle.guest_cash_stake ? '' : 'waiting-side'}${guestWinner ? ' battle-side-winner' : ''}"><span class="battle-side-label">Гость · белая</span><strong>${escapeHtml(battle.guest_name || 'Гость')}</strong>${guestContent}${guestSkins.length || battle.guest_cash_stake ? `<small>Ставка ${fmt(guestStake)}</small>` : ''}</div>
     </div>
-    <div class="battle-card-actions">${action}</div>
+    ${action ? `<div class="battle-card-actions">${action}</div>` : ''}
   </article>`;
 }
 
 function renderBattleList() {
-  const open = latestBattles.filter(battle => battle.status === 'waiting');
+  const open = latestBattles.filter(battle => battle.status === 'waiting' && (isBalanceBattle(battle) ? 'balance' : 'skins') === activeBattleCategory);
   battleList.innerHTML = open.length
     ? open.map(battle => renderBattleCard(battle)).join('')
-    : '<div class="battle-empty">Открытых батлов пока нет. Создай первый!</div>';
+    : `<div class="battle-empty">Открытых батлов ${activeBattleCategory === 'balance' ? 'на баланс' : 'на скины'} пока нет. Создай первый!</div>`;
 }
 
 function renderBattleArchive() {
   if (!currentUser) return;
   const mine = latestBattles.filter(battle =>
     (battle.creator_user_id === currentUser.id || battle.guest_user_id === currentUser.id) &&
-    battle.status !== 'waiting' && !hiddenBattleArchiveIds.has(String(battle.id))
+    battle.status !== 'waiting' && !hiddenBattleArchiveIds.has(String(battle.id)) &&
+    (isBalanceBattle(battle) ? 'balance' : 'skins') === activeBattleCategory
   );
   myBattleArchive.innerHTML = mine.length
     ? mine.map(battle => renderBattleCard(battle, true)).join('')
-    : '<div class="battle-empty">Завершённые батлы появятся здесь.</div>';
+    : `<div class="battle-empty">Здесь появятся завершённые батлы ${activeBattleCategory === 'balance' ? 'на баланс' : 'на скины'}.</div>`;
 }
 
 async function loadBattles() {
@@ -5476,7 +5594,7 @@ async function loadBattles() {
       .select('battle_id').eq('user_id', currentUser.id);
     if (!hiddenError) hiddenBattleArchiveIds = new Set((hiddenRows || []).map(row => String(row.battle_id)));
     const { data, error } = await supabaseClient.from('skin_battles')
-      .select('id, creator_user_id, creator_name, creator_skin, guest_user_id, guest_name, guest_skin, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
+      .select('id, creator_user_id, creator_name, creator_skin, creator_cash_stake, guest_user_id, guest_name, guest_skin, guest_cash_stake, battle_type, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
       .order('created_at', { ascending: false }).limit(100);
     if (error) throw error;
     latestBattles = data || [];
@@ -5495,7 +5613,7 @@ async function loadBattles() {
     startNextBattleOutcome();
   } catch (error) {
     console.error('Could not load battles:', error);
-    battleList.innerHTML = '<div class="battle-empty">Батлы пока не подключены к базе. Примените файл supabase/skin-battles.sql.</div>';
+    battleList.innerHTML = '<div class="battle-empty">Примените supabase/battle-balance.sql в SQL Editor, чтобы включить выбор типа батла.</div>';
   } finally {
     battlePollInFlight = false;
   }
@@ -5505,7 +5623,8 @@ clearBattleArchiveBtn.addEventListener('click', () => {
   if (!currentUser || !supabaseClient) return;
   const mine = latestBattles.filter(battle =>
     (battle.creator_user_id === currentUser.id || battle.guest_user_id === currentUser.id) &&
-    battle.status !== 'waiting' && !hiddenBattleArchiveIds.has(String(battle.id))
+    battle.status !== 'waiting' && !hiddenBattleArchiveIds.has(String(battle.id)) &&
+    (isBalanceBattle(battle) ? 'balance' : 'skins') === activeBattleCategory
   );
   if (!mine.length) {
     battleFeedback.textContent = 'В архиве уже нет завершённых батлов.';
@@ -5531,7 +5650,7 @@ clearBattleArchiveBtn.addEventListener('click', () => {
 
 async function recoverBattleAfterCancelFailure(room) {
   const { data: freshBattle, error } = await supabaseClient.from('skin_battles')
-    .select('id, creator_user_id, creator_name, creator_skin, guest_user_id, guest_name, guest_skin, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
+    .select('id, creator_user_id, creator_name, creator_skin, creator_cash_stake, guest_user_id, guest_name, guest_skin, guest_cash_stake, battle_type, status, winner_user_id, winner_name, winner_side, bank_value, created_at')
     .eq('id', room.id).single();
   if (error) throw error;
   latestBattles = [freshBattle, ...latestBattles.filter(item => item.id !== freshBattle.id)];
@@ -5557,10 +5676,57 @@ async function recoverBattleAfterCancelFailure(room) {
   restoreSlotsFromState();
   renderBattleList();
   renderBattleArchive();
-  battleFeedback.textContent = 'Батл уже отменён, скин возвращён в инвентарь.';
+  battleFeedback.textContent = isBalanceBattle(freshBattle) ? 'Батл отменён, ставка возвращена.' : 'Батл уже отменён, скин возвращён в инвентарь.';
 }
 
 battlePickerConfirm.addEventListener('click', async () => {
+  if (battlePickerMode === 'create' && battleCreateType === 'balance') {
+    const stake = amountToRub(Number(battleBalanceStakeInput.value));
+    if (!Number.isFinite(stake) || stake < 100 || stake > MAX_DEMO_TRANSACTION_RUB) {
+      battlePickerStatus.textContent = `Ставка должна быть от ${minimumBalanceBattleLabel()} до ${fmt(MAX_DEMO_TRANSACTION_RUB)}.`;
+      return;
+    }
+    if (stake > Number(state.balance || 0)) {
+      battlePickerStatus.textContent = `Недостаточно баланса. Доступно ${fmt(Number(state.balance || 0))}.`;
+      return;
+    }
+    battlePickerConfirm.disabled = true;
+    battlePickerFeedback.textContent = 'Создаю батл на баланс…';
+    let battleId;
+    try {
+      const { data, error } = await supabaseClient.rpc('create_balance_battle', { p_amount: stake });
+      if (error) {
+        const message = String(error.message || '').toLowerCase();
+        battlePickerFeedback.textContent = /create_balance_battle|function|schema cache|does not exist/i.test(message)
+          ? 'Примени supabase/battle-balance.sql в SQL Editor.'
+          : message.includes('insufficient')
+            ? 'На денежном балансе недостаточно средств для этой ставки.'
+            : `Не удалось создать батл. Ставка должна быть от ${minimumBalanceBattleLabel()}.`;
+        battlePickerConfirm.disabled = false;
+        return;
+      }
+      battleId = data;
+    } catch (error) {
+      console.error('Could not create a balance battle:', error);
+      battlePickerFeedback.textContent = 'Не удалось создать батл. Проверь подключение и попробуй ещё раз.';
+      battlePickerConfirm.disabled = false;
+      return;
+    }
+    closeBattlePicker();
+    activeBattleCategory = 'balance';
+    updateBattleCategoryUi();
+    try { await loadUserState(); } catch (error) { console.warn('Balance battle was created but balance refresh failed:', error); }
+    updateBalanceUI();
+    renderMyInventory();
+    renderProfile();
+    await loadBattles();
+    const battle = latestBattles.find(item => String(item.id) === String(battleId)) || {
+      id: battleId, creator_user_id: currentUser.id, creator_name: currentUser.username,
+      creator_skin: [], creator_cash_stake: stake, battle_type: 'balance', bank_value: stake, status: 'waiting'
+    };
+    openBattleRoom(battle);
+    return;
+  }
   const selectedStakes = state.inventory.filter(item => selectedBattleSkinIds.has(item.instanceId));
   const selectedTotal = selectedStakes.reduce((sum, item) => sum + Number(item.price || 0), 0);
   if (!selectedStakes.length || selectedStakes.length > 5) return;
@@ -5577,6 +5743,8 @@ battlePickerConfirm.addEventListener('click', async () => {
       return;
     }
     closeBattlePicker();
+    activeBattleCategory = 'skins';
+    updateBattleCategoryUi();
     await loadUserState();
     renderMyInventory();
     renderProfile();
@@ -5613,14 +5781,55 @@ battlePickerConfirm.addEventListener('click', async () => {
   }
 });
 
+async function joinBalanceBattle(battle) {
+  const stake = getBattleSideStake(battle, 'creator');
+  if (!battle || battle.status !== 'waiting' || !isBalanceBattle(battle)) return;
+  if (Number(state.balance || 0) < stake) {
+    battleFeedback.textContent = `Для входа нужно ${fmt(stake)}. Сейчас на балансе ${fmt(Number(state.balance || 0))}.`;
+    return;
+  }
+  openConfirm(
+    'Вступить в батл на баланс?',
+    `Со счёта спишется ${fmt(stake)}. При победе ты получишь банк ${fmt(stake * 2)}.`,
+    async () => {
+      battleFeedback.textContent = 'Вступаю в батл на баланс…';
+      let data;
+      let error;
+      try {
+        ({ data, error } = await supabaseClient.rpc('join_balance_battle', { p_battle_id: battle.id }));
+      } catch (requestError) {
+        console.error('Could not join a balance battle:', requestError);
+        battleFeedback.textContent = 'Не удалось вступить: проверь подключение и попробуй ещё раз.';
+        return;
+      }
+      if (error) {
+        const message = String(error.message || '').toLowerCase();
+        battleFeedback.textContent = /join_balance_battle|function|schema cache|does not exist/i.test(message)
+          ? 'Примени supabase/battle-balance.sql в SQL Editor.'
+          : message.includes('insufficient')
+            ? 'На денежном балансе недостаточно средств для ставки.'
+            : 'Не удалось вступить: батл мог уже закрыться.';
+        console.error('Could not join a balance battle:', error);
+        return;
+      }
+      showBattleOutcome(data);
+      openBattleRoom(data);
+      try { await loadUserState(); } catch (refreshError) { console.warn('Balance battle finished but balance refresh failed:', refreshError); }
+      updateBalanceUI();
+      renderProfile();
+      await loadBattles();
+    }
+  );
+}
+
 battleRoomCancel.addEventListener('click', async () => {
   if (!activeBattleRoom || activeBattleRoom.status !== 'waiting') return;
   const room = activeBattleRoom;
   battleRoomCancel.disabled = true;
-  battleRoomStatus.textContent = 'Отменяю батл и возвращаю скин…';
+  battleRoomStatus.textContent = isBalanceBattle(room) ? 'Отменяю батл и возвращаю ставку…' : 'Отменяю батл и возвращаю скин…';
   battleFeedback.textContent = '';
   try {
-    const { data, error } = await supabaseClient.rpc('cancel_skin_battle', { p_battle_id: room.id });
+    const { data, error } = await supabaseClient.rpc(isBalanceBattle(room) ? 'cancel_balance_battle' : 'cancel_skin_battle', { p_battle_id: room.id });
     if (error || data !== true) {
       await recoverBattleAfterCancelFailure(room);
       return;
@@ -5639,7 +5848,7 @@ battleRoomCancel.addEventListener('click', async () => {
       renderMyInventory();
       renderProfile();
       restoreSlotsFromState();
-      battleFeedback.textContent = 'Батл отменён, скин возвращён.';
+      battleFeedback.textContent = isBalanceBattle(room) ? 'Батл отменён, ставка возвращена.' : 'Батл отменён, скин возвращён.';
     } catch (refreshError) {
       battleFeedback.textContent = 'Батл отменён. Обнови страницу, чтобы перечитать инвентарь.';
       console.error('Battle was cancelled, but player state could not be refreshed:', refreshError);
@@ -5668,7 +5877,8 @@ battleList.addEventListener('click', event => {
   if (!battleId) return;
   const battle = latestBattles.find(item => item.id === battleId);
   if (!battle) return;
-  if (joinButton) openBattlePicker('join', battleId);
+  if (joinButton && isBalanceBattle(battle)) void joinBalanceBattle(battle);
+  else if (joinButton) openBattlePicker('join', battleId);
   else openBattleRoom(battle);
 });
 
